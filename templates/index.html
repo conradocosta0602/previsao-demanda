@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Previsao de Demanda</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Sistema de Previsao de Demanda</h1>
+            <p>Multi-Loja + Centro de Distribuicao</p>
+        </header>
+
+        <div class="upload-section card">
+            <h2>1. Upload do Arquivo</h2>
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="file-input">
+                    <label for="file">Arquivo Excel com historico de vendas:</label>
+                    <input type="file" id="file" name="file" accept=".xlsx,.xls" required>
+                    <p class="hint">Colunas obrigatorias: Mes, Loja, SKU, Vendas, Dias_Com_Estoque, Origem</p>
+                </div>
+
+                <div class="config-section">
+                    <h3>Configuracoes</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="meses_previsao">Meses de Previsao:</label>
+                            <input type="number" id="meses_previsao" name="meses_previsao"
+                                   value="6" min="1" max="24">
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary">
+                    Processar Previsao
+                </button>
+            </form>
+        </div>
+
+        <div id="progress" class="progress-section card" style="display:none;">
+            <h2>2. Processamento</h2>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p id="progressText">Processando...</p>
+        </div>
+
+        <div id="results" class="results-section card" style="display:none;">
+            <h2>3. Resultados</h2>
+            <div id="resumo" class="resumo-cards"></div>
+            <div id="alertas" class="alertas"></div>
+            <div class="download-section">
+                <a id="downloadBtn" class="btn-success" download>
+                    Download Excel Completo
+                </a>
+            </div>
+        </div>
+
+        <div id="error" class="error-section card" style="display:none;">
+            <h2>Erro</h2>
+            <p id="errorMessage"></p>
+            <button onclick="location.reload()" class="btn-secondary">Tentar Novamente</button>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
