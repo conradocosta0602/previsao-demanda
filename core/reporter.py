@@ -51,8 +51,7 @@ class ExcelReporter:
         self.workbook.remove(self.workbook.active)
 
         # Criar abas
-        self._criar_aba_previsao_lojas()
-        self._criar_aba_previsao_cd()
+        self._criar_aba_previsoes_unificada()
         self._criar_aba_metodos()
         self._criar_aba_rupturas()
         self._criar_aba_caracteristicas()
@@ -63,45 +62,47 @@ class ExcelReporter:
 
         return caminho_saida
 
-    def _criar_aba_previsao_lojas(self):
+    def _criar_aba_previsoes_unificada(self):
         """
-        Cria aba PREVISAO_LOJAS com previsões por loja e SKU
+        Cria aba PREVISOES com previsões de lojas e CD unificadas
         """
-        if 'previsoes_lojas' not in self.resultados:
+        dfs = []
+
+        # Adicionar previsões das lojas
+        if 'previsoes_lojas' in self.resultados and not self.resultados['previsoes_lojas'].empty:
+            df_lojas = self.resultados['previsoes_lojas'].copy()
+            # Padronizar colunas
+            df_lojas = df_lojas.rename(columns={'Mes_Previsao': 'Periodo', 'Previsao': 'Previsao'})
+            if 'Loja' not in df_lojas.columns:
+                df_lojas['Loja'] = ''
+            dfs.append(df_lojas)
+
+        # Adicionar previsões do CD
+        if 'previsoes_cd' in self.resultados and not self.resultados['previsoes_cd'].empty:
+            df_cd = self.resultados['previsoes_cd'].copy()
+            # Padronizar colunas para combinar com lojas
+            df_cd['Loja'] = 'CD'
+            df_cd = df_cd.rename(columns={'Mes_Previsao': 'Periodo', 'Previsao_CD': 'Previsao'})
+            # Selecionar colunas compatíveis
+            colunas = ['Loja', 'SKU', 'Periodo', 'Previsao', 'Metodo', 'Confianca']
+            df_cd = df_cd[[c for c in colunas if c in df_cd.columns]]
+            dfs.append(df_cd)
+
+        if not dfs:
             return
 
-        df = self.resultados['previsoes_lojas']
+        # Unir DataFrames
+        df_unificado = pd.concat(dfs, ignore_index=True)
 
-        if df.empty:
-            return
+        # Ordenar: primeiro por SKU, depois Loja (CD por último), depois Periodo
+        df_unificado['Ordem_Loja'] = df_unificado['Loja'].apply(lambda x: 'ZZZ' if x == 'CD' else x)
+        df_unificado = df_unificado.sort_values(['SKU', 'Ordem_Loja', 'Periodo'])
+        df_unificado = df_unificado.drop(columns=['Ordem_Loja'])
 
-        ws = self.workbook.create_sheet("PREVISAO_LOJAS")
-
-        # Ordenar dados
-        df = df.sort_values(['Loja', 'SKU', 'Mes_Previsao'])
+        ws = self.workbook.create_sheet("PREVISOES")
 
         # Escrever dados
-        self._escrever_dataframe(ws, df)
-
-    def _criar_aba_previsao_cd(self):
-        """
-        Cria aba PREVISAO_CD com previsões agregadas do CD
-        """
-        if 'previsoes_cd' not in self.resultados:
-            return
-
-        df = self.resultados['previsoes_cd']
-
-        if df.empty:
-            return
-
-        ws = self.workbook.create_sheet("PREVISAO_CD")
-
-        # Ordenar dados
-        df = df.sort_values(['SKU', 'Mes_Previsao'])
-
-        # Escrever dados
-        self._escrever_dataframe(ws, df)
+        self._escrever_dataframe(ws, df_unificado)
 
     def _criar_aba_metodos(self):
         """
