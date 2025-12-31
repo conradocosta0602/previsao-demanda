@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Reabastecimento</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .flow-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            color: white;
+            text-decoration: none;
+            display: block;
+            transition: transform 0.3s, box-shadow 0.3s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .flow-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.2);
+        }
+        .flow-card h2 {
+            margin: 0 0 10px 0;
+            font-size: 1.5em;
+        }
+        .flow-card p {
+            margin: 0;
+            opacity: 0.9;
+            font-size: 0.95em;
+        }
+        .flow-card.blue {
+            background: linear-gradient(135deg, #0070f3 0%, #00d4ff 100%);
+        }
+        .flow-card.purple {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .flow-card.pink {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        .menu-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        @media (min-width: 768px) {
+            .menu-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header-compact">
+            <div class="logo-section">
+                <h1>Sistema de Reabastecimento v3.0</h1>
+                <p>Escolha o tipo de fluxo para processar</p>
+            </div>
+        </div>
+
+        <!-- Menu de Seleção -->
+        <div class="menu-grid">
+            <!-- Pedidos ao Fornecedor -->
+            <a href="/pedido_fornecedor" class="flow-card blue">
+                <h2>📦 Fornecedor</h2>
+                <p>Compras de fornecedores para CD ou Lojas</p>
+                <ul style="margin-top: 15px; padding-left: 20px; font-size: 0.9em;">
+                    <li>Ciclo: 30 dias (CD)</li>
+                    <li>Ciclo: 14 dias (Loja)</li>
+                    <li>Consolidação de carga</li>
+                    <li>Múltiplos de palete</li>
+                </ul>
+            </a>
+
+            <!-- Pedidos CD → Lojas -->
+            <a href="/pedido_cd" class="flow-card purple">
+                <h2>🏢 CD → Lojas</h2>
+                <p>Distribuição do Centro de Distribuição</p>
+                <ul style="margin-top: 15px; padding-left: 20px; font-size: 0.9em;">
+                    <li>Ciclo: 2-3 dias</li>
+                    <li>Estoque de gôndola</li>
+                    <li>Valida estoque CD</li>
+                    <li>Alertas de falta</li>
+                </ul>
+            </a>
+
+            <!-- Transferências entre Lojas -->
+            <a href="/transferencias" class="flow-card pink">
+                <h2>🔄 Transferências</h2>
+                <p>Transferências entre Lojas</p>
+                <ul style="margin-top: 15px; padding-left: 20px; font-size: 0.9em;">
+                    <li>Ciclo: 1 dia (urgente)</li>
+                    <li>Identifica excesso</li>
+                    <li>Análise de viabilidade</li>
+                    <li>Priorização automática</li>
+                </ul>
+            </a>
+        </div>
+
+        <!-- Informações Adicionais -->
+        <div style="max-width: 800px; margin: 40px auto; padding: 0 20px;">
+            <div class="card-compact">
+                <h3>💡 Como funciona o sistema</h3>
+                <ol style="line-height: 1.8;">
+                    <li><strong>Escolha o tipo de fluxo</strong> acima (Fornecedor, CD ou Transferências)</li>
+                    <li><strong>Baixe o arquivo exemplo</strong> específico para aquele fluxo</li>
+                    <li><strong>Preencha com seus dados</strong> seguindo as instruções do arquivo</li>
+                    <li><strong>Faça upload</strong> do arquivo preenchido</li>
+                    <li><strong>Receba o pedido otimizado</strong> pronto para emissão</li>
+                </ol>
+            </div>
+
+            <div class="card-compact" style="margin-top: 20px;">
+                <h3>📚 Outros Módulos</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 15px;">
+                    <a href="/pedido_quantidade" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 12px; background: #28a745; color: white;">
+                        📦 Pedido por Quantidade
+                    </a>
+                    <a href="/pedido_cobertura" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 12px; background: #17a2b8; color: white;">
+                        📅 Pedido por Cobertura
+                    </a>
+                    <a href="/" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 12px; background: #6c757d; color: white;">
+                        🔮 Previsão de Demanda
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

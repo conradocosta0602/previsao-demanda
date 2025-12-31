@@ -148,8 +148,8 @@ class MethodSelector:
         """
         n = len(self.vendas)
 
-        # Precisa de pelo menos 2 ciclos para detectar sazonalidade
-        if n < 24:  # Menos de 2 anos
+        # Precisa de pelo menos 12 meses para detectar sazonalidade mensal
+        if n < 12:
             return {
                 'has_seasonality': False,
                 'period': 12,
@@ -157,21 +157,16 @@ class MethodSelector:
                 'indices': None
             }
 
-        # Calcular autocorrelação para período 12 (mensal -> anual)
+        # Usar detector robusto de sazonalidade (STL + ANOVA + heurística visual)
+        # Este detector funciona melhor que ACF simples para dados agregados
         try:
-            # Normalizar dados
-            vendas_norm = (self.vendas - np.mean(self.vendas)) / (np.std(self.vendas) + 1e-10)
+            from core.seasonality_detector import detect_seasonality
 
-            # Autocorrelação no lag 12
-            if n > 12:
-                acf_12 = np.corrcoef(vendas_norm[:-12], vendas_norm[12:])[0, 1]
-            else:
-                acf_12 = 0
+            resultado = detect_seasonality(self.vendas)
 
-            # Verificar se autocorrelação é significativa
-            # Limite de significância aproximado: 2/sqrt(n)
-            limite = 2 / np.sqrt(n)
-            has_seasonality = abs(acf_12) > limite and abs(acf_12) > 0.3
+            has_seasonality = resultado['has_seasonality']
+            period = resultado['seasonal_period'] if has_seasonality else 12
+            strength = resultado['strength']
 
             # Calcular índices sazonais se houver sazonalidade
             if has_seasonality and self.datas is not None:
@@ -179,15 +174,17 @@ class MethodSelector:
             else:
                 indices = None
 
-        except:
+        except Exception as e:
+            # Fallback: sem sazonalidade
             has_seasonality = False
-            acf_12 = 0
+            period = 12
+            strength = 0
             indices = None
 
         return {
             'has_seasonality': has_seasonality,
-            'period': 12,
-            'strength': abs(acf_12) if not np.isnan(acf_12) else 0,
+            'period': period,
+            'strength': strength,
             'indices': indices
         }
 
@@ -280,7 +277,7 @@ class MethodSelector:
         return {
             'n_periods': n,
             'category': category,
-            'can_use_seasonal': n >= 24,
+            'can_use_seasonal': n >= 12,  # Ajustado: 12 meses suficientes com detector robusto
             'can_use_trend': n >= 6
         }
 
@@ -310,7 +307,7 @@ class MethodSelector:
         # 1. Dados insuficientes
         if data_volume['category'] == 'insufficient':
             return {
-                'metodo': 'Média Móvel Simples',
+                'metodo': 'SMA',
                 'confianca': 0.4,
                 'razao': 'Dados insuficientes para métodos mais complexos',
                 'alternativas': [],
@@ -318,32 +315,31 @@ class MethodSelector:
             }
 
         # 2. Demanda intermitente (muitos zeros)
+        # TSB substituiu Croston e SBA por ser 20-40% mais preciso
         if intermittence['is_intermittent']:
+            metodo = 'TSB'
             if intermittence['category'] == 'lumpy':
-                metodo = 'TSB'
-                razao = 'Demanda irregular com alta intermitência'
+                razao = 'Demanda irregular com alta intermitência (TSB)'
             elif intermittence['category'] == 'intermittent':
-                metodo = 'Croston'
-                razao = 'Demanda intermitente com baixa variabilidade'
+                razao = 'Demanda intermitente com baixa variabilidade (TSB)'
             else:
-                metodo = 'SBA'
-                razao = 'Demanda intermitente'
+                razao = 'Demanda intermitente (TSB)'
 
             return {
                 'metodo': metodo,
                 'confianca': 0.75,
                 'razao': razao,
-                'alternativas': ['Croston', 'SBA', 'TSB'],
+                'alternativas': ['TSB'],
                 'caracteristicas': self._resumo_caracteristicas()
             }
 
         # 3. Com sazonalidade e tendência
         if seasonality['has_seasonality'] and trend['has_trend']:
             return {
-                'metodo': 'Holt-Winters',
+                'metodo': 'Decomposição Sazonal',
                 'confianca': 0.85,
                 'razao': 'Série com tendência e padrão sazonal',
-                'alternativas': ['Média Móvel Sazonal', 'Holt'],
+                'alternativas': ['Decomposição Sazonal', 'Regressão com Tendência'],
                 'caracteristicas': self._resumo_caracteristicas()
             }
 
@@ -351,18 +347,18 @@ class MethodSelector:
         if seasonality['has_seasonality']:
             if data_volume['n_periods'] >= 24:
                 return {
-                    'metodo': 'Holt-Winters',
+                    'metodo': 'Decomposição Sazonal',
                     'confianca': 0.80,
                     'razao': 'Série com padrão sazonal identificado',
-                    'alternativas': ['Média Móvel Sazonal', 'Suavização Exponencial Simples'],
+                    'alternativas': ['Decomposição Sazonal', 'EMA'],
                     'caracteristicas': self._resumo_caracteristicas()
                 }
             else:
                 return {
-                    'metodo': 'Média Móvel Sazonal',
+                    'metodo': 'Decomposição Sazonal',
                     'confianca': 0.65,
                     'razao': 'Indícios de sazonalidade com dados limitados',
-                    'alternativas': ['Suavização Exponencial Simples'],
+                    'alternativas': ['EMA'],
                     'caracteristicas': self._resumo_caracteristicas()
                 }
 
@@ -370,44 +366,44 @@ class MethodSelector:
         if trend['has_trend']:
             if trend['strength'] > 0.6:
                 return {
-                    'metodo': 'Regressão Linear',
+                    'metodo': 'Regressão com Tendência',
                     'confianca': 0.80,
                     'razao': f"Tendência {trend['type']} forte (R²={trend['strength']:.2f})",
-                    'alternativas': ['Holt', 'Suavização Exponencial Simples'],
+                    'alternativas': ['Regressão com Tendência', 'EMA'],
                     'caracteristicas': self._resumo_caracteristicas()
                 }
             else:
                 return {
-                    'metodo': 'Holt',
+                    'metodo': 'Regressão com Tendência',
                     'confianca': 0.70,
                     'razao': f"Tendência {trend['type']} moderada",
-                    'alternativas': ['Regressão Linear', 'Suavização Exponencial Simples'],
+                    'alternativas': ['Regressão com Tendência', 'EMA'],
                     'caracteristicas': self._resumo_caracteristicas()
                 }
 
         # 6. Série estável (sem tendência nem sazonalidade)
         if volatility['category'] == 'low':
             return {
-                'metodo': 'Média Móvel Simples',
+                'metodo': 'SMA',
                 'confianca': 0.75,
                 'razao': 'Série estável com baixa volatilidade',
-                'alternativas': ['Suavização Exponencial Simples'],
+                'alternativas': ['EMA'],
                 'caracteristicas': self._resumo_caracteristicas()
             }
         elif volatility['category'] == 'medium':
             return {
-                'metodo': 'Suavização Exponencial Simples',
+                'metodo': 'EMA',
                 'confianca': 0.70,
                 'razao': 'Série estável com volatilidade moderada',
-                'alternativas': ['Média Móvel Simples', 'Holt'],
+                'alternativas': ['SMA', 'WMA'],
                 'caracteristicas': self._resumo_caracteristicas()
             }
         else:
             return {
-                'metodo': 'Suavização Exponencial Simples',
+                'metodo': 'EMA',
                 'confianca': 0.60,
                 'razao': 'Série com alta volatilidade - usar alpha baixo',
-                'alternativas': ['Média Móvel Simples'],
+                'alternativas': ['SMA'],
                 'caracteristicas': self._resumo_caracteristicas()
             }
 

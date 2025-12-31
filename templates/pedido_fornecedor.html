@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedidos ao Fornecedor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header-compact">
+            <div class="logo-section">
+                <h1>📦 Pedidos ao Fornecedor</h1>
+                <p>Fornecedor → CD ou Lojas</p>
+            </div>
+        </div>
+
+        <!-- Grid Layout -->
+        <div class="main-grid">
+            <!-- Sidebar: Upload -->
+            <div class="sidebar-left">
+                <div class="upload-section-compact card-compact">
+                    <h3>Upload & Config</h3>
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="file-input-compact">
+                            <input type="file" id="file" name="file" accept=".xlsx,.xls" required>
+                        </div>
+
+                        <input type="hidden" id="nivel_servico" name="nivel_servico" value="0.95">
+                        <input type="hidden" id="revisao_dias" name="revisao_dias" value="7">
+
+                        <div style="padding: 10px; background: #e3f2fd; border-left: 3px solid #0070f3; border-radius: 4px; margin-bottom: 12px; font-size: 0.8em;">
+                            <strong>📦 Fluxo Fornecedor:</strong><br>
+                            - Ciclo padrão: 30 dias (CD) / 14 dias (Loja)<br>
+                            - Consolidação de carga (paletes/carretas)<br>
+                            - Lead time do fornecedor
+                        </div>
+
+                        <button type="submit" class="btn-primary-compact">
+                            Processar Pedidos
+                        </button>
+                    </form>
+
+                    <!-- Instruções -->
+                    <div style="margin-top: 20px; padding: 12px; background: #f0f9ff; border-radius: 8px; font-size: 0.85em;">
+                        <h4 style="margin-top: 0; color: #0070f3;">📋 Colunas necessárias:</h4>
+                        <ul style="margin: 8px 0; padding-left: 20px; font-size: 0.85em;">
+                            <li>Fornecedor</li>
+                            <li>SKU</li>
+                            <li>Destino (CD_PRINCIPAL ou LOJA_01)</li>
+                            <li>Tipo_Destino (CD ou LOJA)</li>
+                            <li>Lead_Time_Dias</li>
+                            <li>Ciclo_Pedido_Dias</li>
+                            <li>Multiplo_Palete, Multiplo_Carreta</li>
+                            <li>+ aba HISTORICO_VENDAS</li>
+                        </ul>
+                        <div style="padding: 8px; background: #e8f5e9; border-left: 3px solid #4caf50; margin: 10px 0; font-size: 0.85em;">
+                            <strong>🎯 Nível de Serviço Automático:</strong><br>
+                            Classe A (&gt;500 un/mês): 98%<br>
+                            Classe B (100-500 un/mês): 95%<br>
+                            Classe C (&lt;100 un/mês): 90%
+                        </div>
+                        <a href="/download/exemplo_pedido_fornecedor.xlsx" style="color: #0070f3; text-decoration: underline; font-size: 0.9em;">📥 Baixar arquivo exemplo</a>
+                    </div>
+
+                    <!-- Navegação -->
+                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                        <h4 style="font-size: 0.9em; margin-bottom: 8px; color: #666;">Outros Fluxos:</h4>
+                        <a href="/pedido_cd" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                            🏢 CD → Lojas
+                        </a>
+                        <a href="/transferencias" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 12px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white;">
+                            🔄 Transferências
+                        </a>
+                        <a href="/reabastecimento" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px;">
+                            ← Voltar
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="main-content">
+                <!-- Progress -->
+                <div id="progress" class="progress-section-compact card-compact" style="display:none;">
+                    <div class="progress-bar-compact">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <p id="progressText" class="progress-text-compact">Processando...</p>
+                </div>
+
+                <!-- Results -->
+                <div id="results" class="results-section-compact" style="display:none;">
+                    <div id="resumo" class="resumo-cards-compact"></div>
+                    <div id="alertas" class="alertas-compact"></div>
+
+                    <!-- Tabela de Resultados -->
+                    <div class="card-compact">
+                        <h3>📊 Pedidos Sugeridos ao Fornecedor</h3>
+                        <div style="overflow-x: auto;">
+                            <table id="resultadosTable" style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
+                                <tbody id="resultadosBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Download -->
+                    <div class="download-section-compact">
+                        <a id="downloadBtn" class="btn-download-compact" download>
+                            📥 Download Pedido Fornecedor
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Error -->
+                <div id="error" class="error-section-compact card-compact" style="display:none;">
+                    <h3>Erro</h3>
+                    <p id="errorMessage"></p>
+                    <button onclick="location.reload()" class="btn-secondary-compact">Tentar Novamente</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/pedido_fornecedor.js') }}"></script>
+</body>
+</html>

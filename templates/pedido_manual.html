@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedido Manual - Planilha</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .spreadsheet-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .toolbar-section {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .btn-add {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn-add:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(17, 153, 142, 0.3);
+        }
+
+        .btn-calculate {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95em;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn-calculate:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-clear {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+
+        .file-input-label {
+            background: #f0f0f0;
+            border: 2px solid #ddd;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: inline-block;
+        }
+
+        .file-input-label:hover {
+            background: #e0e0e0;
+            border-color: #11998e;
+        }
+
+        .spreadsheet-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+            margin-bottom: 20px;
+        }
+
+        .spreadsheet-table thead {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .spreadsheet-table th {
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: 600;
+            border-right: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .spreadsheet-table th:last-child {
+            border-right: none;
+        }
+
+        .spreadsheet-table tbody tr {
+            border-bottom: 1px solid #e5e5e5;
+            transition: background 0.2s;
+        }
+
+        .spreadsheet-table tbody tr:hover {
+            background: #f9f9f9;
+        }
+
+        .spreadsheet-table td {
+            padding: 10px 8px;
+            border-right: 1px solid #f0f0f0;
+        }
+
+        .spreadsheet-table td:last-child {
+            border-right: none;
+        }
+
+        .cell-input {
+            width: 100%;
+            border: 1px solid transparent;
+            padding: 6px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            background: transparent;
+            transition: all 0.2s;
+        }
+
+        .cell-input:focus {
+            outline: none;
+            border-color: #11998e;
+            background: white;
+        }
+
+        .cell-input:disabled {
+            background: #f9f9f9;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        .cell-readonly {
+            padding: 6px 8px;
+            border-radius: 4px;
+            background: #f9f9f9;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .risk-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .risk-safe {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .risk-warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .risk-danger {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .btn-delete {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75em;
+        }
+
+        .btn-delete:hover {
+            background: #d32f2f;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state h3 {
+            color: #11998e;
+            margin-bottom: 10px;
+        }
+
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .summary-card {
+            background: linear-gradient(135deg, #f0fdf4 0%, #fff 100%);
+            border: 2px solid #11998e;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .summary-card h4 {
+            margin: 0 0 8px 0;
+            font-size: 0.75em;
+            color: #666;
+            text-transform: uppercase;
+        }
+
+        .summary-card .value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #11998e;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 16px;
+            background: #f0f0f0;
+            border-radius: 6px;
+            text-decoration: none;
+            color: #333;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+
+        .back-link:hover {
+            background: #e0e0e0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header-compact">
+            <div class="logo-section">
+                <h1>Pedido Manual - Planilha Interativa</h1>
+                <p>Digite os pedidos campo a campo ou carregue arquivo Excel</p>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div style="max-width: 1400px; margin: 0 auto; padding: 20px;">
+            <!-- Toolbar -->
+            <div class="toolbar">
+                <div class="toolbar-section">
+                    <button class="btn-add" onclick="adicionarLinha()">➕ Adicionar Linha</button>
+                    <button class="btn-calculate" onclick="calcularTodos()">🔄 Calcular</button>
+                    <button class="btn-clear" onclick="limparTodos()">🗑️ Limpar Tudo</button>
+                </div>
+
+                <div class="toolbar-section" style="margin-left: auto;">
+                    <div class="file-input-wrapper">
+                        <input type="file" id="fileUpload" accept=".xlsx,.xls" onchange="carregarArquivo()">
+                        <label for="fileUpload" class="file-input-label">📁 Carregar Excel</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div id="summarySection" class="summary-cards" style="display: none;">
+                <div class="summary-card">
+                    <h4>Total de Itens</h4>
+                    <div class="value" id="summaryTotal">0</div>
+                </div>
+                <div class="summary-card">
+                    <h4>✅ Sem Risco</h4>
+                    <div class="value" id="summarySafe">0</div>
+                </div>
+                <div class="summary-card">
+                    <h4>⚠️ Atenção</h4>
+                    <div class="value" id="summaryWarning">0</div>
+                </div>
+                <div class="summary-card">
+                    <h4>🚨 Risco</h4>
+                    <div class="value" id="summaryDanger">0</div>
+                </div>
+            </div>
+
+            <!-- Spreadsheet -->
+            <div class="spreadsheet-container">
+                <table class="spreadsheet-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 5%;">#</th>
+                            <th style="width: 10%;">Loja</th>
+                            <th style="width: 10%;">SKU</th>
+                            <th style="width: 10%;">Qtd. Pedido</th>
+                            <th style="width: 10%;">Demanda Diária</th>
+                            <th style="width: 10%;">Estoque Atual</th>
+                            <th style="width: 10%;">Cobertura Atual</th>
+                            <th style="width: 10%;">Estoque Após</th>
+                            <th style="width: 10%;">Cobertura Após</th>
+                            <th style="width: 10%;">Status</th>
+                            <th style="width: 5%;">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="spreadsheetBody">
+                        <!-- Rows will be added dynamically -->
+                    </tbody>
+                </table>
+
+                <!-- Empty State -->
+                <div id="emptyState" class="empty-state">
+                    <h3>Nenhum item na planilha</h3>
+                    <p>Clique em "➕ Adicionar Linha" para começar ou carregue um arquivo Excel</p>
+                </div>
+            </div>
+
+            <!-- Back Link -->
+            <a href="/reabastecimento" class="back-link">← Voltar para Reabastecimento</a>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/pedido_manual.js') }}"></script>
+</body>
+</html>

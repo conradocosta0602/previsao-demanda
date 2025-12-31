@@ -7,15 +7,54 @@ import numpy as np
 from typing import List, Tuple, Optional
 from scipy import stats
 from sklearn.linear_model import LinearRegression
+from core.validation import validate_forecast_inputs, ValidationError
 
 
 class BaseForecaster:
     """Classe base para todos os modelos de previsão"""
 
-    def __init__(self):
+    def __init__(self, auto_clean_outliers: bool = False):
+        """
+        Args:
+            auto_clean_outliers: Se True, aplica detecção automática de outliers antes do fit
+        """
         self.fitted = False
         self.data = None
         self.params = {}
+        self.auto_clean_outliers = auto_clean_outliers
+        self.outlier_info = None
+
+    def _preprocess_data(self, data: List[float]) -> List[float]:
+        """
+        Pré-processa os dados antes do fit
+
+        Se auto_clean_outliers=True, detecta e trata outliers automaticamente
+        """
+        if not self.auto_clean_outliers:
+            # Não aplicar detecção, mas inicializar outlier_info como None
+            self.outlier_info = None
+            return data
+
+        # Aplicar detecção automática de outliers
+        from core.outlier_detector import auto_clean_outliers
+
+        result = auto_clean_outliers(data)
+        self.outlier_info = {
+            'outliers_detected': result['outliers_detected'],
+            'outliers_count': result['outliers_count'],
+            'method_used': result['method_used'],
+            'treatment': result['treatment'],
+            'reason': result['reason'],
+            'confidence': result['confidence'],
+            'original_values': result.get('original_values', []),
+            'replaced_values': result.get('replaced_values', [])
+        }
+
+        # Adicionar info de outliers aos params (SEMPRE, mesmo se não detectou)
+        # Isso garante que outlier_detection está presente em self.params
+        self.params['outlier_detection'] = self.outlier_info
+
+        return result['cleaned_data']
 
     def fit(self, data: List[float]) -> 'BaseForecaster':
         """Ajusta o modelo aos dados"""
@@ -35,16 +74,20 @@ class SimpleMovingAverage(BaseForecaster):
     Média Móvel Simples (SMA)
 
     Calcula a média dos últimos N períodos para fazer previsões.
+    Implementa janela adaptativa: N = max(3, total_períodos / 2)
     Bom para séries estáveis sem tendência ou sazonalidade.
     """
 
-    def __init__(self, window: int = 3):
+    def __init__(self, window: int = None, auto_clean_outliers: bool = False):
         """
         Args:
-            window: Número de períodos para a média móvel
+            window: Número de períodos para a média móvel.
+                   Se None, usa janela adaptativa: max(3, len(data) / 2)
+            auto_clean_outliers: Se True, detecta e trata outliers automaticamente
         """
-        super().__init__()
+        super().__init__(auto_clean_outliers=auto_clean_outliers)
         self.window = window
+        self.adaptive_window = None
 
     def fit(self, data: List[float]) -> 'SimpleMovingAverage':
         """
@@ -53,9 +96,32 @@ class SimpleMovingAverage(BaseForecaster):
         Args:
             data: Série temporal de dados históricos
         """
-        self.data = np.array(data)
+        # Pré-processar dados (detectar outliers se habilitado)
+        cleaned_data = self._preprocess_data(data)
+        self.data = np.array(cleaned_data)
+
+        # Calcular janela adaptativa conforme documentação
+        # N = max(3, total_períodos / 2)
+        if self.window is None:
+            total_periodos = len(self.data)
+            self.adaptive_window = max(3, total_periodos // 2)
+        else:
+            self.adaptive_window = self.window
+
         self.fitted = True
-        self.params = {'window': self.window}
+
+        # Preservar outlier_detection se já foi adicionado
+        outlier_info = self.params.get('outlier_detection')
+
+        self.params = {
+            'window': self.adaptive_window,
+            'window_type': 'adaptive' if self.window is None else 'fixed'
+        }
+
+        # Re-adicionar outlier_detection
+        if outlier_info is not None:
+            self.params['outlier_detection'] = outlier_info
+
         return self
 
     def predict(self, horizon: int = 1) -> List[float]:
@@ -75,9 +141,97 @@ class SimpleMovingAverage(BaseForecaster):
         dados_temp = list(self.data)
 
         for _ in range(horizon):
-            # Usar os últimos 'window' valores
-            janela = dados_temp[-self.window:]
+            # Usar os últimos 'adaptive_window' valores
+            janela = dados_temp[-self.adaptive_window:]
             previsao = np.mean(janela)
+            previsoes.append(max(0, previsao))  # Não permitir negativos
+            dados_temp.append(previsao)
+
+        return previsoes
+
+
+class WeightedMovingAverage(BaseForecaster):
+    """
+    Média Móvel Ponderada (WMA)
+
+    Atribui pesos lineares crescentes aos períodos, dando maior importância
+    aos dados mais recentes. Mais responsivo a mudanças que SMA.
+    Implementa janela adaptativa: N = max(3, total_períodos / 2)
+    """
+
+    def __init__(self, window: int = None, auto_clean_outliers: bool = False):
+        """
+        Args:
+            window: Número de períodos para a média móvel ponderada.
+                   Se None, usa janela adaptativa: max(3, len(data) / 2)
+            auto_clean_outliers: Se True, detecta e trata outliers automaticamente
+        """
+        super().__init__(auto_clean_outliers=auto_clean_outliers)
+        self.window = window
+        self.adaptive_window = None
+
+    def fit(self, data: List[float]) -> 'WeightedMovingAverage':
+        """
+        Ajusta o modelo aos dados
+
+        Args:
+            data: Série temporal de dados históricos
+        """
+        # Pré-processar dados (detectar outliers se habilitado)
+        cleaned_data = self._preprocess_data(data)
+        self.data = np.array(cleaned_data)
+
+        # Calcular janela adaptativa conforme documentação
+        # N = max(3, total_períodos / 2)
+        if self.window is None:
+            total_periodos = len(self.data)
+            self.adaptive_window = max(3, total_periodos // 2)
+        else:
+            self.adaptive_window = self.window
+
+        self.fitted = True
+
+        # Preservar outlier_detection se já foi adicionado
+        outlier_info = self.params.get('outlier_detection')
+
+        self.params = {
+            'window': self.adaptive_window,
+            'window_type': 'adaptive' if self.window is None else 'fixed'
+        }
+
+        # Re-adicionar outlier_detection
+        if outlier_info is not None:
+            self.params['outlier_detection'] = outlier_info
+
+        return self
+
+    def predict(self, horizon: int = 1) -> List[float]:
+        """
+        Gera previsões
+
+        Args:
+            horizon: Número de períodos futuros para prever
+
+        Returns:
+            Lista com previsões
+        """
+        if not self.fitted:
+            raise ValueError("Modelo não ajustado. Execute fit() primeiro.")
+
+        previsoes = []
+        dados_temp = list(self.data)
+
+        for _ in range(horizon):
+            # Usar os últimos 'adaptive_window' valores
+            janela = dados_temp[-self.adaptive_window:]
+            n = len(janela)
+
+            # Pesos lineares crescentes: [1, 2, 3, ..., n]
+            pesos = np.arange(1, n + 1)
+
+            # WMA = Σ(Vi × Pi) / Σ(Pi)
+            previsao = np.sum(janela * pesos) / np.sum(pesos)
+
             previsoes.append(max(0, previsao))  # Não permitir negativos
             dados_temp.append(previsao)
 
@@ -209,18 +363,19 @@ class HoltWinters(BaseForecaster):
     Bom para séries com tendência e padrão sazonal.
     """
 
-    def __init__(self, season_period: int = 12, alpha: float = 0.3,
+    def __init__(self, season_period: int = None, alpha: float = 0.3,
                  beta: float = 0.1, gamma: float = 0.1,
-                 seasonal: str = 'additive'):
+                 seasonal: str = 'additive', auto_clean_outliers: bool = False):
         """
         Args:
-            season_period: Período da sazonalidade (12 para mensal)
+            season_period: Período da sazonalidade (12 para mensal, None para auto-detectar)
             alpha: Fator de suavização do nível
             beta: Fator de suavização da tendência
             gamma: Fator de suavização da sazonalidade
             seasonal: Tipo de sazonalidade ('additive' ou 'multiplicative')
+            auto_clean_outliers: Se True, detecta e trata outliers automaticamente
         """
-        super().__init__()
+        super().__init__(auto_clean_outliers=auto_clean_outliers)
         self.season_period = season_period
         self.alpha = alpha
         self.beta = beta
@@ -229,14 +384,33 @@ class HoltWinters(BaseForecaster):
         self.level = None
         self.trend = None
         self.seasonals = None
+        self.seasonality_detected = None
 
     def fit(self, data: List[float]) -> 'HoltWinters':
         """
         Ajusta o modelo aos dados
         """
-        self.data = np.array(data)
+        # Pré-processar dados (detectar outliers se habilitado)
+        cleaned_data = self._preprocess_data(data)
+        self.data = np.array(cleaned_data)
         n = len(self.data)
-        m = self.season_period
+
+        # Auto-detectar período sazonal se não especificado
+        if self.season_period is None:
+            from core.seasonality_detector import detect_seasonality
+            seasonality_info = detect_seasonality(list(self.data))
+            self.seasonality_detected = seasonality_info
+
+            if seasonality_info['has_seasonality']:
+                m = seasonality_info['seasonal_period']
+            else:
+                # Fallback: usar 12 (mensal) como padrão
+                m = 12
+        else:
+            m = self.season_period
+            self.seasonality_detected = None
+
+        self.season_period = m  # Atualizar com o valor detectado
 
         if n < 2 * m:
             # Se não tem dados suficientes para sazonalidade, usar Holt simples
@@ -288,11 +462,31 @@ class HoltWinters(BaseForecaster):
                                              (1 - self.gamma) * self.seasonals[season_idx]
 
         self.fitted = True
+
+        # Preservar outlier_detection se já foi adicionado
+        outlier_info = self.params.get('outlier_detection')
+
         self.params = {
             'alpha': self.alpha, 'beta': self.beta, 'gamma': self.gamma,
             'season_period': self.season_period, 'seasonal': self.seasonal,
             'level': self.level, 'trend': self.trend, 'seasonals': self.seasonals
         }
+
+        # Re-adicionar outlier_detection
+        if outlier_info is not None:
+            self.params['outlier_detection'] = outlier_info
+
+        # Adicionar informação de sazonalidade detectada
+        if self.seasonality_detected is not None:
+            self.params['seasonality_detected'] = {
+                'has_seasonality': self.seasonality_detected['has_seasonality'],
+                'detected_period': self.seasonality_detected['seasonal_period'],
+                'strength': self.seasonality_detected['strength'],
+                'confidence': self.seasonality_detected['confidence'],
+                'method': self.seasonality_detected['method'],
+                'reason': self.seasonality_detected['reason']
+            }
+
         return self
 
     def predict(self, horizon: int = 1) -> List[float]:
@@ -461,6 +655,127 @@ class LinearRegressionForecast(BaseForecaster):
         return previsoes
 
 
+class AutoMethodSelector(BaseForecaster):
+    """
+    AUTO - Seleção Automática de Método
+
+    Não é um método de previsão em si, mas uma estratégia que analisa
+    automaticamente as características dos dados (intermitência, tendência,
+    sazonalidade, volatilidade) e seleciona o melhor entre os 6 métodos
+    estatísticos disponíveis.
+
+    Métodos disponíveis para seleção:
+    - SMA: Média Móvel Simples
+    - WMA: Média Móvel Ponderada
+    - EMA: Suavização Exponencial Simples
+    - Regressão com Tendência: Para séries com crescimento/queda
+    - Decomposição Sazonal: Para padrões sazonais
+    - TSB: Para demanda intermitente
+    """
+
+    def __init__(self, sku: str = None, loja: str = None):
+        super().__init__()
+        self.selected_method = None
+        self.method_name = None
+        self.recommendation = None
+        self.sku = sku
+        self.loja = loja
+        self.validation_result = None
+
+    def fit(self, data: List[float]) -> 'AutoMethodSelector':
+        """
+        Analisa os dados e seleciona automaticamente o melhor método
+
+        Args:
+            data: Série temporal de dados históricos
+        """
+        # Validação robusta de entrada
+        try:
+            self.validation_result = validate_forecast_inputs(
+                data=data,
+                horizon=1,  # Validação inicial, horizonte será definido no predict
+                method_name='AUTO'
+            )
+        except ValidationError as e:
+            # Registrar falha no log
+            from core.auto_logger import get_auto_logger
+            logger = get_auto_logger()
+            logger.log_selection(
+                metodo_selecionado='N/A',
+                confianca=0.0,
+                razao='Validação falhou',
+                caracteristicas={},
+                sku=self.sku,
+                loja=self.loja,
+                sucesso=False,
+                erro_msg=f"[{e.code}] {e.message}"
+            )
+
+            # Re-raise com contexto adicional
+            raise ValidationError(
+                code=e.code,
+                message=f"Validação falhou para AUTO: {e.message}",
+                suggestion=e.suggestion
+            )
+
+        # Evitar import circular
+        from core.method_selector import MethodSelector
+        from core.auto_logger import get_auto_logger
+
+        self.data = np.array(data)
+
+        # Usar MethodSelector para escolher o melhor método
+        selector = MethodSelector(list(data))
+        self.recommendation = selector.recomendar_metodo()
+
+        self.method_name = self.recommendation['metodo']
+
+        # Instanciar o método recomendado
+        self.selected_method = get_modelo(self.method_name)
+        self.selected_method.fit(data)
+
+        self.fitted = True
+        self.params = {
+            'strategy': 'AUTO',
+            'selected_method': self.method_name,
+            'confidence': self.recommendation['confianca'],
+            'reason': self.recommendation['razao'],
+            'alternatives': self.recommendation.get('alternativas', []),
+            'characteristics': self.recommendation.get('caracteristicas', {})
+        }
+
+        # Registrar seleção no log
+        logger = get_auto_logger()
+        logger.log_selection(
+            metodo_selecionado=self.method_name,
+            confianca=self.recommendation['confianca'],
+            razao=self.recommendation['razao'],
+            caracteristicas=self.recommendation.get('caracteristicas', {}),
+            alternativas=self.recommendation.get('alternativas', []),
+            data_stats=self.validation_result.get('statistics', {}).get('general', {}),
+            sku=self.sku,
+            loja=self.loja,
+            sucesso=True
+        )
+
+        return self
+
+    def predict(self, horizon: int = 1) -> List[float]:
+        """
+        Gera previsões usando o método automaticamente selecionado
+
+        Args:
+            horizon: Número de períodos futuros para prever
+
+        Returns:
+            Lista com previsões
+        """
+        if not self.fitted:
+            raise ValueError("Modelo não ajustado. Execute fit() primeiro.")
+
+        return self.selected_method.predict(horizon)
+
+
 class SeasonalMovingAverage(BaseForecaster):
     """
     Média Móvel Sazonal
@@ -511,17 +826,76 @@ class SeasonalMovingAverage(BaseForecaster):
         return previsoes
 
 
+class DecomposicaoSazonalMensal(BaseForecaster):
+    """
+    Decomposição Sazonal com Índices Mensais
+
+    Usa a função calcular_demanda_sazonal do DemandCalculator
+    que foi corrigida para capturar comportamento mensal real
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.data = None
+
+    def fit(self, data: List[float]) -> 'DecomposicaoSazonalMensal':
+        """Ajusta o modelo"""
+        self.data = np.array(data)
+        return self
+
+    def predict(self, n_periods: int = 1) -> List[float]:
+        """
+        Gera previsões usando o método sazonal corrigido
+
+        Args:
+            n_periods: Número de períodos a prever
+
+        Returns:
+            Lista com previsões
+        """
+        from core.demand_calculator import DemandCalculator
+
+        previsoes = []
+        vendas_temp = self.data.tolist()
+
+        # Gerar previsões uma a uma (necessário para método sazonal)
+        for _ in range(n_periods):
+            demanda, _ = DemandCalculator.calcular_demanda_sazonal(vendas_temp)
+            previsoes.append(demanda)
+            vendas_temp.append(demanda)  # Adicionar para próxima previsão
+
+        return previsoes
+
+
 # Mapeamento de métodos disponíveis
+# Nomenclatura conforme documentação oficial
+# 6 métodos estatísticos + AUTO (estratégia de seleção automática)
 METODOS = {
+    # Métodos estatísticos oficiais (nomenclatura da documentação)
+    'SMA': SimpleMovingAverage,
+    'WMA': WeightedMovingAverage,
+    'EMA': SimpleExponentialSmoothing,
+    'Regressão com Tendência': LinearRegressionForecast,
+    'Decomposição Sazonal': DecomposicaoSazonalMensal,  # Usando modelo corrigido!
+    'TSB': lambda: CrostonMethod(variant='tsb'),
+
+    # Estratégia de seleção automática (analisa dados e escolhe entre os 6 métodos)
+    'AUTO': AutoMethodSelector,
+
+    # Aliases para compatibilidade retroativa (serão convertidos pela função padronizar_metodo)
     'Média Móvel Simples': SimpleMovingAverage,
+    'Média Móvel Ponderada': WeightedMovingAverage,
     'Suavização Exponencial Simples': SimpleExponentialSmoothing,
     'Holt': HoltMethod,
     'Holt-Winters': HoltWinters,
-    'Croston': CrostonMethod,
-    'SBA': lambda: CrostonMethod(variant='sba'),
-    'TSB': lambda: CrostonMethod(variant='tsb'),
     'Regressão Linear': LinearRegressionForecast,
-    'Média Móvel Sazonal': SeasonalMovingAverage
+    'Média Móvel Sazonal': SeasonalMovingAverage,
+
+    # Aliases para compatibilidade com ML Selector
+    'MEDIA_MOVEL': SimpleMovingAverage,
+    'EXPONENCIAL': SimpleExponentialSmoothing,
+    'HOLT_WINTERS': DecomposicaoSazonalMensal,  # Usar nosso modelo sazonal corrigido!
+    'REGRESSAO': LinearRegressionForecast
 }
 
 

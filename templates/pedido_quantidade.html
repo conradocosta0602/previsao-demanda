@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedido por Quantidade</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        html, body {
+            height: 100%;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header-compact">
+            <div class="logo-section">
+                <h1>📦 Pedido por Quantidade</h1>
+                <p>Validação Automática de Múltiplo de Caixa</p>
+            </div>
+        </div>
+
+        <!-- Grid Layout -->
+        <div class="main-grid">
+            <!-- Sidebar: Upload -->
+            <div class="sidebar-left">
+                <div class="upload-section-compact card-compact">
+                    <h3>Upload do Pedido</h3>
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="file-input-compact">
+                            <input type="file" id="file" name="file" accept=".xlsx,.xls" required>
+                        </div>
+
+                        <button type="submit" class="btn-primary-compact">
+                            Processar Pedido
+                        </button>
+                    </form>
+
+                    <!-- Instruções -->
+                    <div style="margin-top: 20px; padding: 12px; background: #f0f9ff; border-radius: 8px; font-size: 0.85em;">
+                        <h4 style="margin-top: 0; color: #0070f3;">📋 Como usar:</h4>
+                        <ol style="margin: 8px 0; padding-left: 20px;">
+                            <li>Baixe o <a href="/download/exemplo_pedido_quantidade.xlsx" style="color: #0070f3;">arquivo exemplo</a></li>
+                            <li>Preencha: Loja, SKU, Quantidade_Desejada, Unidades_Por_Caixa</li>
+                            <li>Faça upload</li>
+                            <li>Sistema ajusta para múltiplo de caixa</li>
+                            <li>Baixe relatório para emissão</li>
+                        </ol>
+
+                        <h4 style="margin-top: 15px; color: #0070f3;">✨ O que o sistema faz:</h4>
+                        <ul style="margin: 8px 0; padding-left: 20px;">
+                            <li>✓ Valida múltiplo de caixa</li>
+                            <li>✓ Ajusta para cima se necessário</li>
+                            <li>✓ Calcula número de caixas</li>
+                            <li>✓ Calcula cobertura (se tiver demanda)</li>
+                        </ul>
+                    </div>
+
+                    <!-- Navegação -->
+                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                        <a href="/pedido_cobertura" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                            📅 Pedido por Cobertura
+                        </a>
+                        <a href="/reabastecimento" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px;">
+                            ← Voltar
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="main-content">
+                <!-- Progress -->
+                <div id="progress" class="progress-section-compact card-compact" style="display:none;">
+                    <div class="progress-bar-compact">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <p id="progressText" class="progress-text-compact">Processando...</p>
+                </div>
+
+                <!-- Results -->
+                <div id="results" class="results-section-compact" style="display:none;">
+                    <!-- Resumo -->
+                    <div id="resumo" class="resumo-cards-compact"></div>
+
+                    <!-- Tabela de Resultados -->
+                    <div class="card-compact">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3>📊 Resultado do Pedido</h3>
+                            <button id="downloadBtn" class="btn-primary-compact">
+                                ⬇ Baixar Excel
+                            </button>
+                        </div>
+
+                        <div style="overflow-x: auto;">
+                            <table id="resultTable" style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
+                                <thead style="background: #f0fdf4; color: #0070f3;">
+                                    <tr>
+                                        <th style="padding: 8px; text-align: left; border-bottom: 2px solid #0070f3;">Loja</th>
+                                        <th style="padding: 8px; text-align: left; border-bottom: 2px solid #0070f3;">SKU</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Qtd. Desejada</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Un/Caixa</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Qtd. Pedido</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Nº Caixas</th>
+                                        <th style="padding: 8px; text-align: center; border-bottom: 2px solid #0070f3;">Ajustado?</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Diferença</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Cobertura (dias)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resultTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Welcome Message -->
+                <div id="welcome" class="card-compact">
+                    <h3>Bem-vindo ao Pedido por Quantidade</h3>
+                    <p>Este módulo permite criar pedidos informando a quantidade desejada de cada item. O sistema garante automaticamente que as quantidades estejam em múltiplo de caixa.</p>
+
+                    <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+                        <h4 style="margin-top: 0; color: #856404;">💡 Exemplo:</h4>
+                        <p style="margin: 5px 0;">Você quer: <strong>100 unidades</strong></p>
+                        <p style="margin: 5px 0;">Embalagem: <strong>12 unidades/caixa</strong></p>
+                        <p style="margin: 5px 0;">Sistema ajusta para: <strong>108 unidades (9 caixas)</strong></p>
+                        <p style="margin: 5px 0; color: #28a745;">✓ Garantido múltiplo de caixa!</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const uploadForm = document.getElementById('uploadForm');
+        const progressDiv = document.getElementById('progress');
+        const resultsDiv = document.getElementById('results');
+        const welcomeDiv = document.getElementById('welcome');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+
+        let currentFileName = '';
+
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData(uploadForm);
+
+            // Mostrar progresso
+            welcomeDiv.style.display = 'none';
+            resultsDiv.style.display = 'none';
+            progressDiv.style.display = 'block';
+            progressFill.style.width = '30%';
+            progressText.textContent = 'Processando pedido...';
+
+            try {
+                const response = await fetch('/processar_pedido_quantidade', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                progressFill.style.width = '70%';
+                progressText.textContent = 'Gerando relatório...';
+
+                const data = await response.json();
+
+                if (data.success) {
+                    progressFill.style.width = '100%';
+                    progressText.textContent = 'Concluído!';
+
+                    setTimeout(() => {
+                        progressDiv.style.display = 'none';
+                        mostrarResultados(data);
+                    }, 500);
+                } else {
+                    throw new Error(data.erro || 'Erro desconhecido');
+                }
+            } catch (error) {
+                progressDiv.style.display = 'none';
+                alert('Erro ao processar: ' + error.message);
+                welcomeDiv.style.display = 'block';
+            }
+        });
+
+        function mostrarResultados(data) {
+            currentFileName = data.arquivo_saida;
+
+            // Resumo
+            const resumo = data.resumo;
+            const resumoHTML = `
+                <div class="card-compact" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                    <h3 style="margin-top: 0;">📦 Resumo do Pedido</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 15px;">
+                        <div>
+                            <div style="font-size: 0.9em; opacity: 0.9;">Total de Itens</div>
+                            <div style="font-size: 1.8em; font-weight: bold;">${resumo.total_itens}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.9em; opacity: 0.9;">Total de Caixas</div>
+                            <div style="font-size: 1.8em; font-weight: bold;">${resumo.total_caixas}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.9em; opacity: 0.9;">Total de Unidades</div>
+                            <div style="font-size: 1.8em; font-weight: bold;">${resumo.total_unidades.toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.9em; opacity: 0.9;">Itens Ajustados</div>
+                            <div style="font-size: 1.8em; font-weight: bold;">${resumo.itens_ajustados} <span style="font-size: 0.6em;">(${resumo.percentual_ajustado}%)</span></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('resumo').innerHTML = resumoHTML;
+
+            // Tabela
+            const tbody = document.getElementById('resultTableBody');
+            tbody.innerHTML = '';
+
+            data.dados_tabela.forEach(item => {
+                const row = tbody.insertRow();
+                const ajustadoBadge = item.Foi_Ajustado ?
+                    '<span style="background: #ffc107; color: #000; padding: 2px 8px; border-radius: 12px; font-size: 0.8em;">SIM</span>' :
+                    '<span style="background: #28a745; color: #fff; padding: 2px 8px; border-radius: 12px; font-size: 0.8em;">NÃO</span>';
+
+                row.innerHTML = `
+                    <td style="padding: 8px; border-bottom: 1px solid #eee;">${item.Loja}</td>
+                    <td style="padding: 8px; border-bottom: 1px solid #eee;">${item.SKU}</td>
+                    <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee;">${item.Quantidade_Desejada}</td>
+                    <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee;">${item.Unidades_Por_Caixa}</td>
+                    <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee; font-weight: bold;">${item.Quantidade_Pedido}</td>
+                    <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee; font-weight: bold;">${item.Numero_Caixas}</td>
+                    <td style="padding: 8px; text-align: center; border-bottom: 1px solid #eee;">${ajustadoBadge}</td>
+                    <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee; color: ${item.Diferenca_Ajuste > 0 ? '#ffc107' : '#28a745'};">${item.Diferenca_Ajuste > 0 ? '+' : ''}${item.Diferenca_Ajuste || 0}</td>
+                    <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee;">${item.Cobertura_Pedido_Dias ? item.Cobertura_Pedido_Dias.toFixed(1) : '-'}</td>
+                `;
+            });
+
+            // Download button
+            document.getElementById('downloadBtn').onclick = () => {
+                window.location.href = `/download/${currentFileName}`;
+            };
+
+            resultsDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>

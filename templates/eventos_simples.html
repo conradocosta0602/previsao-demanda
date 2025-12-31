@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eventos - Cadastro Simples</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 { color: #333; margin-top: 0; }
+        label {
+            display: block;
+            margin: 15px 0 5px;
+            font-weight: bold;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+        button:hover { background: #5568d3; }
+        .alert {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: bold;
+        }
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+            background: #6c757d;
+        }
+        .nav { margin-bottom: 20px; }
+        .nav a {
+            display: inline-block;
+            padding: 10px 15px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">← Voltar</a>
+        <a href="/eventos">Versão Completa</a>
+    </div>
+
+    <div class="card">
+        <h1>Cadastro de Eventos Sazonais</h1>
+
+        <div id="alertContainer"></div>
+
+        <form id="form">
+            <label>Tipo de Evento *</label>
+            <select id="tipo" required>
+                <option value="">Selecione...</option>
+                <option value="BLACK_FRIDAY">Black Friday</option>
+                <option value="NATAL">Natal</option>
+                <option value="ANO_NOVO">Ano Novo</option>
+                <option value="DIAS_MAES">Dia das Mães</option>
+                <option value="DIAS_PAIS">Dia dos Pais</option>
+                <option value="PASCOA">Páscoa</option>
+                <option value="VOLTA_AULAS">Volta às Aulas</option>
+                <option value="CUSTOM">Customizado</option>
+            </select>
+
+            <label>Data do Evento *</label>
+            <input type="date" id="data" required>
+
+            <label>Duração (dias) *</label>
+            <input type="number" id="duracao" value="7" min="1" max="90" required>
+
+            <label>Multiplicador *</label>
+            <input type="number" id="multiplicador" value="2.0" min="0.1" max="10" step="0.1" required>
+            <small>Ex: 2.0 = dobra a demanda, 1.5 = aumenta 50%</small>
+
+            <label>Observações</label>
+            <textarea id="obs" rows="3"></textarea>
+
+            <button type="submit">Cadastrar Evento</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Eventos Cadastrados</h2>
+        <div id="loading">Carregando...</div>
+        <table id="tabela" style="display:none;">
+            <thead>
+                <tr>
+                    <th>Tipo</th>
+                    <th>Data</th>
+                    <th>Duração</th>
+                    <th>Multiplicador</th>
+                    <th>Status</th>
+                    <th>Ações</th>
+                </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        function mostrarAlerta(msg, tipo) {
+            const container = document.getElementById('alertContainer');
+            container.innerHTML = `<div class="alert alert-${tipo}">${msg}</div>`;
+            setTimeout(() => container.innerHTML = '', 5000);
+        }
+
+        async function carregarEventos() {
+            try {
+                const res = await fetch('/eventos/listar');
+                const data = await res.json();
+
+                if (data.success) {
+                    const tbody = document.getElementById('tbody');
+                    tbody.innerHTML = data.eventos.map(e => `
+                        <tr>
+                            <td>${e.nome}</td>
+                            <td>${e.data_evento}</td>
+                            <td>${e.duracao_dias} dias</td>
+                            <td>${e.multiplicador_manual || '-'}x</td>
+                            <td>${e.ativo ? 'Ativo' : 'Inativo'}</td>
+                            <td>
+                                <button class="btn-small" onclick="excluirEvento(${e.id})">Excluir</button>
+                            </td>
+                        </tr>
+                    `).join('');
+
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('tabela').style.display = 'table';
+                } else {
+                    document.getElementById('loading').textContent = 'Erro: ' + data.erro;
+                }
+            } catch (erro) {
+                document.getElementById('loading').textContent = 'Erro ao carregar: ' + erro.message;
+            }
+        }
+
+        document.getElementById('form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const multiplicadorValue = document.getElementById('multiplicador').value;
+            const multiplicador = multiplicadorValue ? parseFloat(multiplicadorValue) : null;
+
+            const dados = {
+                tipo: document.getElementById('tipo').value,
+                data_evento: document.getElementById('data').value,
+                duracao_dias: parseInt(document.getElementById('duracao').value),
+                multiplicador_manual: multiplicador,
+                observacoes: document.getElementById('obs').value || null,
+                nome_custom: null
+            };
+
+            try {
+                const res = await fetch('/eventos/cadastrar', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(dados)
+                });
+
+                const result = await res.json();
+
+                if (result.success) {
+                    mostrarAlerta('Evento cadastrado com sucesso!', 'success');
+                    document.getElementById('form').reset();
+                    carregarEventos();
+                } else {
+                    mostrarAlerta('Erro: ' + result.erro, 'error');
+                }
+            } catch (erro) {
+                mostrarAlerta('Erro ao cadastrar: ' + erro.message, 'error');
+            }
+        });
+
+        // Função para excluir evento
+        async function excluirEvento(id) {
+            if (!confirm('Deseja realmente excluir este evento? Esta ação não pode ser desfeita.')) {
+                return;
+            }
+
+            try {
+                const res = await fetch('/eventos/excluir', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({evento_id: id})
+                });
+
+                const result = await res.json();
+
+                if (result.success) {
+                    mostrarAlerta('Evento excluído com sucesso!', 'success');
+                    carregarEventos();
+                } else {
+                    mostrarAlerta('Erro: ' + result.erro, 'error');
+                }
+            } catch (erro) {
+                mostrarAlerta('Erro ao excluir: ' + erro.message, 'error');
+            }
+        }
+
+        // Carregar ao abrir página
+        carregarEventos();
+    </script>
+</body>
+</html>

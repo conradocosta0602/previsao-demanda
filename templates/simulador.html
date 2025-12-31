@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Cenários - Previsão de Demanda</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .simulator-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .sim-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .sim-header h1 {
+            margin: 0 0 10px 0;
+            font-size: 2em;
+        }
+
+        .sim-header p {
+            margin: 0;
+            opacity: 0.9;
+        }
+
+        .sim-grid {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .sim-controls {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            height: fit-content;
+            position: sticky;
+            top: 20px;
+        }
+
+        .sim-results {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .control-section {
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .control-section:last-child {
+            border-bottom: none;
+        }
+
+        .control-section h3 {
+            margin: 0 0 15px 0;
+            font-size: 1.1em;
+            color: #333;
+        }
+
+        .scenario-btn {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 8px;
+            border: 2px solid #e9ecef;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.95em;
+            transition: all 0.3s;
+            text-align: left;
+        }
+
+        .scenario-btn:hover {
+            background: #f8f9fa;
+            border-color: #667eea;
+        }
+
+        .scenario-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .slider-control {
+            margin-bottom: 20px;
+        }
+
+        .slider-control label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #495057;
+        }
+
+        .slider-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .slider-wrapper input[type="range"] {
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider-wrapper input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+        }
+
+        .slider-value {
+            min-width: 60px;
+            text-align: right;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .select-control {
+            margin-bottom: 15px;
+        }
+
+        .select-control label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            color: #6c757d;
+        }
+
+        .select-control select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 0.95em;
+        }
+
+        .btn-primary-sim {
+            width: 100%;
+            padding: 14px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn-primary-sim:hover {
+            background: #5568d3;
+        }
+
+        .btn-secondary-sim {
+            width: 100%;
+            padding: 12px;
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            font-size: 0.95em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+
+        .btn-secondary-sim:hover {
+            background: #f8f9fa;
+        }
+
+        .impact-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .impact-total {
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        .impact-total h2 {
+            margin: 0 0 5px 0;
+            font-size: 2.5em;
+            color: #667eea;
+        }
+
+        .impact-total p {
+            margin: 0;
+            color: #6c757d;
+        }
+
+        .impact-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .impact-item {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .impact-item .label {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+
+        .impact-item .value {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .chart-container-sim {
+            position: relative;
+            height: 400px;
+            margin-bottom: 30px;
+        }
+
+        .loading-sim {
+            text-align: center;
+            padding: 60px 20px;
+            color: #6c757d;
+        }
+
+        .loading-sim .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .alert-sim {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .alert-sim.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert-sim.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .nav-buttons a {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            background: white;
+            color: #667eea;
+            text-decoration: none;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .nav-buttons a:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+            margin-top: 20px;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .comparison-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .positive { color: #28a745; }
+        .negative { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="simulator-container">
+        <!-- Header -->
+        <div class="sim-header">
+            <h1>🎯 Simulador de Cenários</h1>
+            <p>Ajuste as previsões e simule diferentes cenários de demanda</p>
+        </div>
+
+        <!-- Navegação -->
+        <div class="nav-buttons">
+            <a href="/">← Voltar para Previsão</a>
+            <a href="/reabastecimento">Ir para Reabastecimento →</a>
+        </div>
+
+        <!-- Aviso se não houver dados -->
+        <div id="noDataAlert" class="alert-sim warning" style="display: none;">
+            ⚠️ Nenhuma previsão disponível. Processe uma previsão na página principal primeiro.
+        </div>
+
+        <!-- Grid Principal -->
+        <div class="sim-grid" id="simulatorGrid" style="display: none;">
+
+            <!-- Controles (Sidebar Esquerdo) -->
+            <div class="sim-controls">
+
+                <!-- Cenários Pré-definidos -->
+                <div class="control-section">
+                    <h3>📋 Cenários Pré-definidos</h3>
+                    <button class="scenario-btn" onclick="aplicarCenarioPredefinido('otimista')">
+                        📈 Otimista (+20%)
+                    </button>
+                    <button class="scenario-btn" onclick="aplicarCenarioPredefinido('pessimista')">
+                        📉 Pessimista (-20%)
+                    </button>
+                    <button class="scenario-btn" onclick="aplicarCenarioPredefinido('conservador')">
+                        📊 Conservador (-10%)
+                    </button>
+                    <button class="scenario-btn" onclick="aplicarCenarioPredefinido('black_friday')">
+                        🎄 Black Friday + Natal
+                    </button>
+                    <button class="scenario-btn" onclick="aplicarCenarioPredefinido('verao')">
+                        ☀️ Pico de Verão
+                    </button>
+                </div>
+
+                <!-- Ajuste Global -->
+                <div class="control-section">
+                    <h3>🌐 Ajuste Global</h3>
+                    <div class="slider-control">
+                        <label>Percentual de Ajuste</label>
+                        <div class="slider-wrapper">
+                            <input type="range" id="globalSlider" min="-50" max="50" value="0" step="5">
+                            <span class="slider-value" id="globalValue">0%</span>
+                        </div>
+                    </div>
+                    <button class="btn-primary-sim" onclick="aplicarAjusteGlobal()">
+                        Aplicar Global
+                    </button>
+                </div>
+
+                <!-- Ajuste por Loja -->
+                <div class="control-section">
+                    <h3>🏪 Ajuste por Loja</h3>
+                    <div class="select-control">
+                        <label>Selecione a Loja</label>
+                        <select id="lojaSelect"></select>
+                    </div>
+                    <div class="slider-control">
+                        <label>Percentual</label>
+                        <div class="slider-wrapper">
+                            <input type="range" id="lojaSlider" min="-50" max="50" value="0" step="5">
+                            <span class="slider-value" id="lojaValue">0%</span>
+                        </div>
+                    </div>
+                    <button class="btn-primary-sim" onclick="aplicarAjustePorLoja()">
+                        Aplicar
+                    </button>
+                </div>
+
+                <!-- Ajuste por SKU -->
+                <div class="control-section">
+                    <h3>📦 Ajuste por SKU</h3>
+                    <div class="select-control">
+                        <label>Selecione o SKU</label>
+                        <select id="skuSelect"></select>
+                    </div>
+                    <div class="slider-control">
+                        <label>Percentual</label>
+                        <div class="slider-wrapper">
+                            <input type="range" id="skuSlider" min="-50" max="50" value="0" step="5">
+                            <span class="slider-value" id="skuValue">0%</span>
+                        </div>
+                    </div>
+                    <button class="btn-primary-sim" onclick="aplicarAjustePorSKU()">
+                        Aplicar
+                    </button>
+                </div>
+
+                <!-- Botões de Ação -->
+                <div class="control-section">
+                    <button class="btn-secondary-sim" onclick="resetarCenario()">
+                        🔄 Resetar para Original
+                    </button>
+                    <button class="btn-secondary-sim" onclick="exportarCenario()">
+                        💾 Exportar para Excel
+                    </button>
+                </div>
+            </div>
+
+            <!-- Resultados (Área Principal) -->
+            <div class="sim-results">
+
+                <!-- Loading -->
+                <div id="loadingSim" class="loading-sim">
+                    <div class="spinner"></div>
+                    <p>Carregando dados da previsão...</p>
+                </div>
+
+                <!-- Card de Impacto -->
+                <div id="impactoCard" class="impact-card" style="display: none;">
+                    <div class="impact-total">
+                        <h2 id="impactoPercentual">0%</h2>
+                        <p id="impactoDescricao">Baseline (Original)</p>
+                    </div>
+                    <div class="impact-grid">
+                        <div class="impact-item">
+                            <div class="label">Previsão Base</div>
+                            <div class="value" id="totalBase">0</div>
+                        </div>
+                        <div class="impact-item">
+                            <div class="label">Previsão Simulada</div>
+                            <div class="value" id="totalSimulado">0</div>
+                        </div>
+                        <div class="impact-item">
+                            <div class="label">Diferença Absoluta</div>
+                            <div class="value" id="diferencaAbsoluta">0</div>
+                        </div>
+                        <div class="impact-item">
+                            <div class="label">% Variação</div>
+                            <div class="value" id="diferencaPercentual">0%</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gráfico Comparativo -->
+                <div class="chart-container-sim">
+                    <canvas id="comparisonChart"></canvas>
+                </div>
+
+                <!-- Tabela de Detalhamento -->
+                <h3>📊 Detalhamento por Período</h3>
+                <div style="overflow-x: auto;">
+                    <table class="comparison-table" id="comparisonTable">
+                        <thead>
+                            <tr>
+                                <th>Mês</th>
+                                <th>Base</th>
+                                <th>Simulado</th>
+                                <th>Diferença</th>
+                                <th>% Var</th>
+                            </tr>
+                        </thead>
+                        <tbody id="comparisonTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/simulador.js') }}"></script>
+</body>
+</html>

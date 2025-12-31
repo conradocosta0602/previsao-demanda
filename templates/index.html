@@ -5,63 +5,184 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema de Previsao de Demanda</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Sistema de Previsao de Demanda</h1>
-            <p>Multi-Loja + Centro de Distribuicao</p>
-        </header>
+        <!-- Header Compacto -->
+        <div class="header-compact">
+            <div class="logo-section">
+                <h1>Previsao de Demanda</h1>
+                <p>Multi-Loja + CD</p>
+            </div>
+        </div>
 
-        <div class="upload-section card">
-            <h2>1. Upload do Arquivo</h2>
-            <form id="uploadForm" enctype="multipart/form-data">
-                <div class="file-input">
-                    <label for="file">Arquivo Excel com historico de vendas:</label>
-                    <input type="file" id="file" name="file" accept=".xlsx,.xls" required>
-                    <p class="hint">Colunas obrigatorias: Mes, Loja, SKU, Vendas, Dias_Com_Estoque, Origem</p>
-                </div>
+        <!-- Grid Layout Principal -->
+        <div class="main-grid">
+            <!-- Coluna Esquerda: Upload e Configurações -->
+            <div class="sidebar-left">
+                <div class="upload-section-compact card-compact">
+                    <h3>Upload & Config</h3>
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="file-input-compact">
+                            <input type="file" id="file" name="file" accept=".xlsx,.xls" required>
+                        </div>
 
-                <div class="config-section">
-                    <h3>Configuracoes</h3>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="meses_previsao">Meses de Previsao:</label>
+                        <div class="config-compact">
+                            <label for="meses_previsao">Meses:</label>
                             <input type="number" id="meses_previsao" name="meses_previsao"
                                    value="6" min="1" max="24">
                         </div>
+
+                        <button type="submit" class="btn-primary-compact">
+                            Processar
+                        </button>
+                    </form>
+
+                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                        <a href="/eventos_simples" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 8px;">
+                            📅 Gerenciar Eventos →
+                        </a>
+                        <a href="/simulador" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 8px;">
+                            🎯 Simulador de Cenários →
+                        </a>
+                        <a href="/reabastecimento" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px;">
+                            📦 Ir para Reabastecimento →
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Coluna Central e Direita: Conteúdo Principal -->
+            <div class="main-content">
+
+                <div id="progress" class="progress-section-compact card-compact" style="display:none;">
+                    <div class="progress-bar-compact">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <p id="progressText" class="progress-text-compact">Processando...</p>
+                </div>
+
+                <div id="results" class="results-section-compact" style="display:none;">
+                    <!-- Cards de Resumo Compactos - Layout Executivo -->
+                    <div id="resumo" class="resumo-cards-compact"></div>
+
+                    <!-- Explicação MAPE e BIAS -->
+                    <div class="card-compact" style="margin-top: 15px; padding: 15px; background-color: #f8f9fa;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 0.85em;">
+                            <div>
+                                <h4 style="margin: 0 0 8px 0; color: #0070f3; font-size: 0.95em;">📊 MAPE (Mean Absolute Percentage Error)</h4>
+                                <p style="margin: 0; line-height: 1.5; color: #555;">
+                                    <strong>Mede a acurácia</strong> das previsões em relação aos valores reais.<br>
+                                    <span style="color: #059669;">• &lt; 10%:</span> Excelente<br>
+                                    <span style="color: #d97706;">• 10-20%:</span> Bom<br>
+                                    <span style="color: #dc2626;">• &gt; 20%:</span> Requer atenção
+                                </p>
+                            </div>
+                            <div>
+                                <h4 style="margin: 0 0 8px 0; color: #0070f3; font-size: 0.95em;">📈 BIAS (Viés de Previsão)</h4>
+                                <p style="margin: 0; line-height: 1.5; color: #555;">
+                                    <strong>Identifica tendência</strong> sistemática de erro.<br>
+                                    <span style="color: #dc2626;">• Positivo (+):</span> Superestimação<br>
+                                    <span style="color: #059669;">• Próximo de 0:</span> Balanceado<br>
+                                    <span style="color: #0ea5e9;">• Negativo (-):</span> Subestimação
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Alertas Compactos -->
+                    <div id="alertas" class="alertas-compact"></div>
+
+                    <!-- Comparação YoY: Tabela + Gráfico -->
+                    <div class="grafico-section-compact card-compact">
+                        <div class="grafico-header">
+                            <h3>Comparação: Previsão vs Período Anterior</h3>
+                            <p style="font-size: 0.85em; color: #666; margin-top: 8px;">
+                                Análise mensal da variação YoY (+${data && data.resumo ? data.resumo.taxa_variabilidade_media_yoy : '0'}%)
+                            </p>
+                        </div>
+
+                        <!-- Tabela Comparativa ACIMA do Gráfico -->
+                        <div style="margin-bottom: 25px;">
+                            <table id="yoyComparisonTable" style="width: 100%; font-size: 0.75em; border-collapse: collapse; text-align: center;">
+                                <thead id="yoyComparisonHeader">
+                                    <!-- Preenchido dinamicamente pelo JavaScript -->
+                                </thead>
+                                <tbody id="yoyComparisonBody">
+                                    <!-- Preenchido dinamicamente pelo JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Gráfico ABAIXO da Tabela -->
+                        <div class="chart-container-compact" style="height: 300px;">
+                            <canvas id="yoyChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Tabela Fornecedor/Item -->
+                    <div class="card-compact">
+                        <h3>📊 Previsão por Fornecedor/Item</h3>
+
+                        <!-- Legenda dos Alertas -->
+                        <div style="margin-bottom: 15px; padding: 12px; background-color: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef;">
+                            <div style="font-weight: bold; color: #495057; margin-bottom: 8px; font-size: 0.9em;">
+                                🔍 Legenda dos Indicadores
+                            </div>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.85em;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 1.3em;">🔴</span>
+                                    <div>
+                                        <strong style="color: #dc2626;">Crítico</strong>
+                                        <div style="color: #666; font-size: 0.9em;">Requer ação imediata</div>
+                                    </div>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 1.3em;">🟡</span>
+                                    <div>
+                                        <strong style="color: #f59e0b;">Alerta</strong>
+                                        <div style="color: #666; font-size: 0.9em;">Variação &gt; 50%</div>
+                                    </div>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 1.3em;">🔵</span>
+                                    <div>
+                                        <strong style="color: #3b82f6;">Atenção</strong>
+                                        <div style="color: #666; font-size: 0.9em;">Variação &gt; 20%</div>
+                                    </div>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 1.3em;">🟢</span>
+                                    <div>
+                                        <strong style="color: #10b981;">Normal</strong>
+                                        <div style="color: #666; font-size: 0.9em;">Variação ≤ 20%</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="overflow-x: auto;">
+                            <table id="fornecedorItemTable" style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
+                                <tbody id="fornecedorItemBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Botão Download Compacto -->
+                    <div class="download-section-compact">
+                        <a id="downloadBtn" class="btn-download-compact" download>
+                            Download Excel
+                        </a>
                     </div>
                 </div>
 
-                <button type="submit" class="btn-primary">
-                    Processar Previsao
-                </button>
-            </form>
-        </div>
-
-        <div id="progress" class="progress-section card" style="display:none;">
-            <h2>2. Processamento</h2>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
+                <div id="error" class="error-section-compact card-compact" style="display:none;">
+                    <h3>Erro</h3>
+                    <p id="errorMessage"></p>
+                    <button onclick="location.reload()" class="btn-secondary-compact">Tentar Novamente</button>
+                </div>
             </div>
-            <p id="progressText">Processando...</p>
-        </div>
-
-        <div id="results" class="results-section card" style="display:none;">
-            <h2>3. Resultados</h2>
-            <div id="resumo" class="resumo-cards"></div>
-            <div id="alertas" class="alertas"></div>
-            <div class="download-section">
-                <a id="downloadBtn" class="btn-success" download>
-                    Download Excel Completo
-                </a>
-            </div>
-        </div>
-
-        <div id="error" class="error-section card" style="display:none;">
-            <h2>Erro</h2>
-            <p id="errorMessage"></p>
-            <button onclick="location.reload()" class="btn-secondary">Tentar Novamente</button>
         </div>
     </div>
 
