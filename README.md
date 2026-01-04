@@ -251,7 +251,8 @@ Este projeto está sob licença MIT. Veja [LICENSE](LICENSE) para mais detalhes.
 
 ## 👥 Autores
 
-- **Desenvolvedor Principal:** Conrado Costa
+- **Conrado Costa** ([@conradocosta0602](https://github.com/conradocosta0602)) - Desenvolvedor Principal
+- **Valter Lino** ([@valterlino01](https://github.com/valterlino01)) - Co-desenvolvedor
 - **Consultoria Técnica:** Claude Sonnet 4.5 (Anthropic)
 
 ## 📞 Suporte
