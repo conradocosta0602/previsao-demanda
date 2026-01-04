@@ -99,7 +99,7 @@ function mostrarResultados(data) {
     function getMapeColor(mape) {
         const value = parseFloat(mape);
         if (value < 10) return '#059669';  // Verde - Excelente
-        if (value <= 20) return '#d97706'; // Laranja - Bom
+        if (value <= 20) return '#3b82f6'; // Azul - Bom
         return '#dc2626';                  // Vermelho - Requer atenção
     }
 
