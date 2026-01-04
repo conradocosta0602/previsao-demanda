@@ -95,6 +95,26 @@ function mostrarResultados(data) {
         }
     }
 
+    // Função para determinar cor do MAPE baseado nos critérios
+    function getMapeColor(mape) {
+        const value = parseFloat(mape);
+        if (value < 10) return '#059669';  // Verde - Excelente
+        if (value <= 20) return '#d97706'; // Laranja - Bom
+        return '#dc2626';                  // Vermelho - Requer atenção
+    }
+
+    // Função para determinar cor do BIAS baseado nos critérios
+    function getBiasColor(bias) {
+        const value = Math.abs(parseFloat(bias));
+        if (value <= 20) return '#059669';  // Verde - Normal
+        if (value <= 50) return '#3b82f6';  // Azul - Atenção
+        if (value <= 100) return '#f59e0b'; // Amarelo - Alerta
+        return '#dc2626';                   // Vermelho - Crítico
+    }
+
+    const mapeColor = getMapeColor(mapeMedia);
+    const biasColor = getBiasColor(biasMedia);
+
     document.getElementById('resumo').innerHTML = `
         <div class="resumo-card-compact">
             <h4>SKUs</h4>
@@ -106,12 +126,12 @@ function mostrarResultados(data) {
         </div>
         <div class="resumo-card-compact">
             <h4>MAPE Médio</h4>
-            <p class="big-number-compact">${mapeMedia}%</p>
+            <p class="big-number-compact" style="color: ${mapeColor};">${mapeMedia}%</p>
             <p style="font-size: 0.7em; color: #666; margin-top: 4px;">Acurácia</p>
         </div>
         <div class="resumo-card-compact">
             <h4>BIAS Médio</h4>
-            <p class="big-number-compact">${biasMedia > 0 ? '+' : ''}${biasMedia}%</p>
+            <p class="big-number-compact" style="color: ${biasColor};">${biasMedia > 0 ? '+' : ''}${biasMedia}%</p>
             <p style="font-size: 0.7em; color: #666; margin-top: 4px;">Tendência</p>
         </div>
     `;
