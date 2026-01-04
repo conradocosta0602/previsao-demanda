@@ -565,14 +565,14 @@ function preencherTabelaYoY(comparacao_yoy) {
 
     // Criar cabeçalho completo - Compacto e sem scroll
     const mesesNomes = comparacao_yoy.map(d => d.mes_nome);
-    let headerRow = '<tr style="background-color: #f5f5f5; border-bottom: 2px solid #0070f3; font-size: 0.85em;">';
+    let headerRow = '<tr style="background-color: #f5f5f5; border-bottom: 2px solid #6C757D; font-size: 0.85em;">';
     headerRow += '<th style="padding: 6px 8px; text-align: left; border-right: 1px solid #ddd; white-space: nowrap;">Período</th>';
 
     mesesNomes.forEach(mes => {
         headerRow += `<th style="padding: 6px 4px; border-left: 1px solid #e5e5e5; white-space: nowrap; font-size: 0.85em;">${mes}</th>`;
     });
 
-    headerRow += '<th style="padding: 6px 8px; border-left: 2px solid #0070f3; background-color: #e6f3ff; font-weight: bold; white-space: nowrap;">Total</th>';
+    headerRow += '<th style="padding: 6px 8px; border-left: 2px solid #6C757D; background-color: #F8F9FA; font-weight: bold; white-space: nowrap;">Total</th>';
     headerRow += '</tr>';
     thead.innerHTML = headerRow;
 
@@ -592,7 +592,7 @@ function preencherTabelaYoY(comparacao_yoy) {
         const valor = d.previsao_atual || 0;
         rowPrevisao += `<td style="padding: 6px 4px; border-left: 1px solid #e5e5e5; font-weight: 500; font-size: 0.9em;">${formatNumber(valor)}</td>`;
     });
-    rowPrevisao += `<td style="padding: 6px 8px; border-left: 2px solid #0070f3; background-color: #e6f3ff; font-weight: bold;">${formatNumber(totalPrevisao)}</td>`;
+    rowPrevisao += `<td style="padding: 6px 8px; border-left: 2px solid #6C757D; background-color: #F8F9FA; font-weight: bold;">${formatNumber(totalPrevisao)}</td>`;
     rowPrevisao += '</tr>';
 
     // Linha 2: Ano Anterior (período passado) - Compacto
@@ -602,7 +602,7 @@ function preencherTabelaYoY(comparacao_yoy) {
         const valor = d.demanda_ano_anterior || 0;
         rowAnterior += `<td style="padding: 6px 4px; border-left: 1px solid #e5e5e5; font-weight: 500; font-size: 0.9em;">${formatNumber(valor)}</td>`;
     });
-    rowAnterior += `<td style="padding: 6px 8px; border-left: 2px solid #0070f3; background-color: #e6f3ff; font-weight: bold;">${formatNumber(totalAnterior)}</td>`;
+    rowAnterior += `<td style="padding: 6px 8px; border-left: 2px solid #6C757D; background-color: #F8F9FA; font-weight: bold;">${formatNumber(totalAnterior)}</td>`;
     rowAnterior += '</tr>';
 
     // Linha 3: Variação % - Compacto
@@ -623,7 +623,7 @@ function preencherTabelaYoY(comparacao_yoy) {
     const variacaoTotal = totalAnterior > 0 ? ((totalPrevisao - totalAnterior) / totalAnterior) * 100 : 0;
     const sinalTotal = variacaoTotal > 0 ? '+' : '';
     const corTotal = variacaoTotal > 0 ? '#059669' : (variacaoTotal < 0 ? '#dc2626' : '#666');
-    rowVariacao += `<td style="padding: 6px 8px; border-left: 2px solid #0070f3; background-color: #e6f3ff; font-weight: bold; color: ${corTotal};">${sinalTotal}${variacaoTotal.toFixed(1)}%</td>`;
+    rowVariacao += `<td style="padding: 6px 8px; border-left: 2px solid #6C757D; background-color: #F8F9FA; font-weight: bold; color: ${corTotal};">${sinalTotal}${variacaoTotal.toFixed(1)}%</td>`;
     rowVariacao += '</tr>';
 
     // Adicionar as linhas ao tbody
@@ -941,7 +941,7 @@ function exibirTabelaFornecedorItem(dados) {
 
         // Linha de cabeçalho do fornecedor com totalizadores
         html += `
-            <tr style="background: linear-gradient(135deg, #0070f3 0%, #00d4ff 100%); color: white;">
+            <tr style="background: linear-gradient(135deg, #6C757D 0%, #495057 100%); color: white;">
                 <td colspan="6" style="padding: 12px; font-weight: bold; font-size: 1.1em;">
                     📦 ${fornecedor}
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; font-size: 0.85em; font-weight: normal;">
@@ -966,13 +966,13 @@ function exibirTabelaFornecedorItem(dados) {
 
         // Cabeçalho da tabela repetido para cada fornecedor
         html += `
-            <tr style="background: #e3f2fd; color: #0070f3; font-weight: bold; font-size: 0.85em;">
-                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #0070f3; width: 30px;"></th>
-                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #0070f3;">SKU</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Demanda Prevista (un)</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Demanda Ano Anterior (un)</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Variação YoY (%)</th>
-                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #0070f3;">Método Estatístico</th>
+            <tr style="background: #F8F9FA; color: #6C757D; font-weight: bold; font-size: 0.85em;">
+                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #6C757D; width: 30px;"></th>
+                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #6C757D;">SKU</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Demanda Prevista (un)</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Demanda Ano Anterior (un)</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Variação YoY (%)</th>
+                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #6C757D;">Método Estatístico</th>
             </tr>
         `;
 

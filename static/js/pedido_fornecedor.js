@@ -174,7 +174,7 @@ function exibirResultados(dados) {
 
         // Linha de cabeçalho do fornecedor com totalizadores
         html += `
-            <tr style="background: linear-gradient(135deg, #0070f3 0%, #00d4ff 100%); color: white;">
+            <tr style="background: linear-gradient(135deg, #6C757D 0%, #495057 100%); color: white;">
                 <td colspan="13" style="padding: 12px; font-weight: bold; font-size: 1.1em;">
                     📦 ${fornecedor}
                     <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 8px; font-size: 0.85em; font-weight: normal;">
@@ -209,20 +209,20 @@ function exibirResultados(dados) {
 
         // Cabeçalho da tabela repetido para cada fornecedor
         html += `
-            <tr style="background: #e3f2fd; color: #0070f3; font-weight: bold; font-size: 0.85em;">
-                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #0070f3;">SKU</th>
-                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #0070f3;">Destino</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Demanda Média</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Estoque Atual</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Em Trânsito</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Pedidos Abertos</th>
-                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #0070f3;">Nível Serviço</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Cob. Atual (dias)</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Cob. Projetada (dias)</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Qtd. Pedido</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #0070f3;">Custo</th>
-                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #0070f3;">Método</th>
-                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #0070f3;">Pedir?</th>
+            <tr style="background: #F8F9FA; color: #6C757D; font-weight: bold; font-size: 0.85em;">
+                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #6C757D;">SKU</th>
+                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #6C757D;">Destino</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Demanda Média</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Estoque Atual</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Em Trânsito</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Pedidos Abertos</th>
+                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #6C757D;">Nível Serviço</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Cob. Atual (dias)</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Cob. Projetada (dias)</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Qtd. Pedido</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Custo</th>
+                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #6C757D;">Método</th>
+                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #6C757D;">Pedir?</th>
             </tr>
         `;
 
@@ -248,11 +248,11 @@ function exibirResultados(dados) {
                     <td style="padding: 6px; text-align: center;">${((item.Nivel_Servico || 0) * 100).toFixed(0)}%</td>
                     <td style="padding: 6px; text-align: right; color: ${(item.Cobertura_Dias_Atual || 0) < 7 ? '#dc3545' : '#11998e'};">${(item.Cobertura_Dias_Atual || 0).toFixed(1)}</td>
                     <td style="padding: 6px; text-align: right;">${(item.Cobertura_Dias_Apos_Pedido || 0).toFixed(1)}</td>
-                    <td style="padding: 6px; text-align: right; font-weight: bold; color: ${devePedir ? '#0070f3' : '#666'};">${quantidadePedido}</td>
+                    <td style="padding: 6px; text-align: right; font-weight: bold; color: ${devePedir ? '#6C757D' : '#666'};">${quantidadePedido}</td>
                     <td style="padding: 6px; text-align: right;">${custoLabel}</td>
                     <td style="padding: 6px; font-size: 0.75em;">${item.Metodo_Usado || 'N/A'}</td>
                     <td style="padding: 6px; text-align: center;">
-                        ${devePedir ? '<span style="color: #0070f3; font-weight: bold;">✓</span>' : '-'}
+                        ${devePedir ? '<span style="color: #6C757D; font-weight: bold;">✓</span>' : '-'}
                     </td>
                 </tr>
             `;

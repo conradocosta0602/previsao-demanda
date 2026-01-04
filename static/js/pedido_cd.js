@@ -200,7 +200,7 @@ function exibirResultados(dados) {
 
         // Linha de cabeçalho da loja com totalizadores
         html += `
-            <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+            <tr style="background: linear-gradient(135deg, #6C757D 0%, #495057 100%); color: white;">
                 <td colspan="13" style="padding: 12px; font-weight: bold; font-size: 1.1em;">
                     🏢 ${loja}
                     <div style="display: grid; grid-template-columns: ${temCustoInformado ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)'}; gap: 10px; margin-top: 8px; font-size: 0.85em; font-weight: normal;">
@@ -237,20 +237,20 @@ function exibirResultados(dados) {
 
         // Cabeçalho da tabela repetido para cada loja
         html += `
-            <tr style="background: #f3e5f5; color: #667eea; font-weight: bold; font-size: 0.85em;">
-                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #667eea;">CD Origem</th>
-                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #667eea;">SKU</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #667eea;">Demanda Diária</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #667eea;">Estoque Loja</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #667eea;">Estoque CD</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #667eea;">Em Trânsito</th>
-                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #667eea;">Nível Serviço</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #667eea;">Cob. Atual (dias)</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #667eea;">Cob. Projetada (dias)</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #667eea;">Qtd. Pedido</th>
-                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #667eea;">Custo</th>
-                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #667eea;">Método</th>
-                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #667eea;">Pedir?</th>
+            <tr style="background: #F8F9FA; color: #6C757D; font-weight: bold; font-size: 0.85em;">
+                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #6C757D;">CD Origem</th>
+                <th style="padding: 8px; text-align: left; border-bottom: 2px solid #6C757D;">SKU</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Demanda Diária</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Estoque Loja</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Estoque CD</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Em Trânsito</th>
+                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #6C757D;">Nível Serviço</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Cob. Atual (dias)</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Cob. Projetada (dias)</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Qtd. Pedido</th>
+                <th style="padding: 8px; text-align: right; border-bottom: 2px solid #6C757D;">Custo</th>
+                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #6C757D;">Método</th>
+                <th style="padding: 8px; text-align: center; border-bottom: 2px solid #6C757D;">Pedir?</th>
             </tr>
         `;
 
@@ -287,14 +287,14 @@ function exibirResultados(dados) {
                     <td style="padding: 6px; text-align: right;">${item.Estoque_CD !== null && item.Estoque_CD !== undefined ? item.Estoque_CD : '-'}</td>
                     <td style="padding: 6px; text-align: right;">${item.Estoque_Transito || 0}</td>
                     <td style="padding: 6px; text-align: center;">${((item.Nivel_Servico || 0) * 100).toFixed(0)}%</td>
-                    <td style="padding: 6px; text-align: right; color: ${(item.Cobertura_Dias_Atual || 0) < 3 ? '#dc3545' : '#667eea'};">${(item.Cobertura_Dias_Atual || 0).toFixed(1)}</td>
+                    <td style="padding: 6px; text-align: right; color: ${(item.Cobertura_Dias_Atual || 0) < 3 ? '#dc3545' : '#6C757D'};">${(item.Cobertura_Dias_Atual || 0).toFixed(1)}</td>
                     <td style="padding: 6px; text-align: right;">${(item.Cobertura_Dias_Apos_Pedido || 0).toFixed(1)}</td>
-                    <td style="padding: 6px; text-align: right; font-weight: bold; color: ${devePedir ? '#667eea' : '#666'};">${quantidadePedido}</td>
+                    <td style="padding: 6px; text-align: right; font-weight: bold; color: ${devePedir ? '#6C757D' : '#666'};">${quantidadePedido}</td>
                     <td style="padding: 6px; text-align: right;">${custoLabel}</td>
                     <td style="padding: 6px; font-size: 0.75em;">${item.Metodo_Usado || 'N/A'}</td>
                     <td style="padding: 6px; text-align: center;">
                         ${temAlerta ? '<span style="color: #dc3545;">⚠️</span>' :
-                          devePedir ? '<span style="color: #667eea; font-weight: bold;">✓</span>' : '-'}
+                          devePedir ? '<span style="color: #6C757D; font-weight: bold;">✓</span>' : '-'}
                     </td>
                 </tr>
             `;
