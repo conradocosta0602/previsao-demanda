@@ -1,131 +1,278 @@
-# Sistema de Previsao de Demanda V2
+# Sistema de Previsão de Demanda e Reabastecimento v3.0
 
-Sistema completo de previsao de demanda para varejo com multiplas lojas e Centro de Distribuicao (CD).
+Sistema completo para gestão de estoque multi-loja com Centro de Distribuição (CD), combinando métodos estatísticos avançados, machine learning e cálculos de reabastecimento baseados em níveis de serviço.
 
-## Funcionalidades
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Flask](https://img.shields.io/badge/flask-3.0.0-green.svg)](https://flask.palletsprojects.com/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-- Upload de arquivo Excel com historico de vendas
-- Tratamento automatico de rupturas de estoque (stockouts)
-- Selecao automatica do melhor metodo estatistico por (Loja + SKU) e (CD + SKU)
-- Previsoes mensais configuraves
-- Exportacao de resultados em Excel com multiplas abas
-- Interface web intuitiva (sem terminal)
+## 📋 Características Principais
 
-## Estrutura do Projeto
+### 🔮 Previsão de Demanda
+- **6 Métodos Estatísticos:**
+  - Simple Moving Average (SMA) com janela adaptativa
+  - Weighted Moving Average (WMA) adaptativo
+  - Simple Exponential Smoothing (SES)
+  - Linear Regression Forecast
+  - TSB (Trigg and Leach Smoothing with BIAS)
+  - Decomposição Sazonal Mensal (Híbrida)
 
+- **Seleção Automática Inteligente:**
+  - **Modo AUTO:** Baseado em características da demanda (CV, tendência, sazonalidade)
+  - **Modo ML:** Machine Learning (Random Forest) com 15+ features
+
+### 🎯 Recursos Avançados
+
+#### 🔍 Detecção Automática
+- **Sazonalidade:** Autocorrelação com lag de 12 meses
+- **Outliers:** Métodos IQR e Z-Score com substituição automática
+- **Tendências:** Análise de slope e R²
+
+#### 📊 Métricas e Alertas
+- **MAPE:** Mean Absolute Percentage Error (acurácia)
+- **BIAS:** Tendência sistemática de erro
+- **Alertas Inteligentes:** 4 níveis (🔴 Crítico, 🟡 Alerta, 🔵 Atenção, 🟢 Normal)
+- **YoY:** Comparação Year-over-Year
+
+#### 🛠️ Funcionalidades Operacionais
+- **Calendário Promocional:** Ajuste automático para eventos
+- **Simulador de Cenários:** What-If Analysis
+- **Logging Completo:** Auditoria de decisões
+- **Séries Curtas:** Tratamento especializado
+
+### 📦 Reabastecimento
+
+#### 3 Fluxos Suportados
+1. **Fornecedor → CD/Loja**
+   - Lead time do fornecedor
+   - Ciclo de pedido
+   - Múltiplos de palete/carreta
+
+2. **CD → Loja**
+   - Lead time interno
+   - Priorização por criticidade
+
+3. **Transferências entre Lojas**
+   - Identifica excesso vs ruptura
+   - Otimiza redistribuição
+
+#### Cálculos Implementados
+- **Estoque de Segurança:** `SS = Z × σ × √LT`
+- **Ponto de Pedido:** `ROP = (Demanda × LT) + SS`
+- **Nível de Serviço ABC:**
+  - Classe A (>500 un/mês): 98%
+  - Classe B (100-500 un/mês): 95%
+  - Classe C (<100 un/mês): 90%
+
+## 🚀 Instalação Rápida
+
+### Pré-requisitos
+- Python 3.8 ou superior
+- pip (gerenciador de pacotes Python)
+
+### Passo a Passo
+
+1. **Clone o repositório:**
+```bash
+git clone https://github.com/conradocosta0602/previsao-demanda.git
+cd previsao-demanda
 ```
-Previsao de Demanda V2/
-├── app.py                    # Aplicacao Flask principal
-├── core/                     # Modulos de processamento
-│   ├── data_loader.py       # Carrega e valida dados
-│   ├── stockout_handler.py  # Trata rupturas de estoque
-│   ├── forecasting_models.py # Modelos de previsao
-│   ├── method_selector.py   # Selecao automatica de metodo
-│   ├── aggregator.py        # Agregacao para CD
-│   └── reporter.py          # Geracao de relatorios Excel
-├── templates/               # Templates HTML
-├── static/                  # CSS e JavaScript
-├── uploads/                 # Arquivos enviados
-├── outputs/                 # Resultados gerados
-├── tests/                   # Dados de teste
-│   └── dados_teste.xlsx
-├── requirements.txt
-└── README.md
+
+2. **Instale as dependências:**
+```bash
+pip install flask pandas numpy scikit-learn statsmodels python-docx openpyxl
 ```
 
-## Instalacao
-
-1. Clone ou baixe o projeto
-
-2. Instale as dependencias:
+Ou usando requirements.txt (se disponível):
 ```bash
 pip install -r requirements.txt
 ```
 
-## Como Usar
-
-1. Execute o servidor:
+3. **Execute o sistema:**
 ```bash
 python app.py
 ```
 
-2. Acesse no navegador:
+4. **Acesse no navegador:**
 ```
 http://localhost:5000
 ```
 
-3. Faca upload do seu arquivo Excel
+## 📖 Como Usar
 
-4. Configure os parametros de previsao
+### 1️⃣ Previsão de Demanda
 
-5. Clique em "Processar Previsao"
+1. Acesse a tela principal
+2. Faça upload do arquivo Excel com histórico de vendas
+   - **Colunas necessárias:** `Local`, `SKU`, `Ano`, `Mes_Numero`, `Quantidade`
+3. Configure meses de previsão (1-24)
+4. Clique em "Processar"
+5. Analise resultados: cards, tabela YoY, gráfico, alertas
+6. Download do Excel com previsões
 
-6. Baixe o Excel com os resultados
+### 2️⃣ Cadastrar Eventos (Opcional)
 
-## Formato do Arquivo de Entrada
+1. Acesse "Gerenciar Eventos"
+2. Cadastre eventos promocionais (Black Friday, Natal, etc.)
+3. Configure impacto esperado (%)
+4. Sistema ajusta previsões automaticamente
 
-O arquivo Excel deve conter as seguintes colunas:
+### 3️⃣ Calcular Pedidos
 
-| Coluna | Descricao | Exemplo |
-|--------|-----------|---------|
-| Mes | Periodo (YYYY-MM) | 2024-01 |
-| Loja | Codigo da loja (L01-L09) | L01 |
-| SKU | Codigo do produto | PROD_001 |
-| Vendas | Quantidade vendida | 150 |
-| Dias_Com_Estoque | Dias com produto disponivel | 28 |
-| Origem | Origem do produto | CD ou DIRETO |
+1. **Escolha o fluxo:**
+   - Pedidos ao Fornecedor
+   - Pedidos CD → Loja
+   - Transferências entre Lojas
 
-## Metodos de Previsao
+2. Upload do arquivo com estoque atual e parâmetros
+3. Revise pedidos sugeridos
+4. Download do Excel de pedidos
 
-O sistema seleciona automaticamente o melhor metodo:
+### 4️⃣ Simulador (Opcional)
 
-| Metodo | Quando Usar |
-|--------|-------------|
-| Media Movel Simples | Demanda estavel |
-| Suavizacao Exponencial | Demanda com volatilidade moderada |
-| Holt | Demanda com tendencia |
-| Holt-Winters | Demanda com tendencia e sazonalidade |
-| Croston/SBA/TSB | Demanda intermitente |
-| Regressao Linear | Tendencia linear forte |
+1. Acesse "Simulador de Cenários"
+2. Teste diferentes parâmetros
+3. Compare resultados
 
-## Saida do Sistema
+## 📁 Estrutura do Projeto
 
-O Excel gerado contem as seguintes abas:
-
-1. **RESUMO_EXECUTIVO** - Visao geral dos resultados
-2. **PREVISAO_LOJAS** - Previsoes por loja e SKU
-3. **PREVISAO_CD** - Previsoes agregadas do CD
-4. **METODOS_UTILIZADOS** - Detalhes dos metodos selecionados
-5. **ANALISE_RUPTURAS** - Metricas de stockout
-6. **CARACTERISTICAS_DEMANDA** - Analise das series temporais
-
-## Testando com Dados de Exemplo
-
-Use o arquivo `tests/dados_teste.xlsx` incluso para testar o sistema.
-
-Para regenerar os dados de teste:
-```bash
-python gerar_dados_teste.py
+```
+previsao-demanda/
+├── app.py                          # Aplicação Flask principal
+├── core/                           # Módulos principais
+│   ├── forecasting_models.py      # 6 métodos de previsão
+│   ├── method_selector.py         # Seleção automática
+│   ├── ml_selector.py             # Machine Learning
+│   ├── seasonality_detector.py    # Detecção de sazonalidade
+│   ├── outlier_detector.py        # Detecção de outliers
+│   ├── auto_logger.py             # Logging automático
+│   ├── smart_alerts.py            # Alertas inteligentes
+│   ├── event_manager.py           # Gerenciador de eventos
+│   ├── scenario_simulator.py      # Simulador
+│   └── replenishment_calculator.py # Reabastecimento
+├── templates/                      # Templates HTML
+│   ├── index.html                 # Previsão
+│   ├── pedido_fornecedor.html     # Pedidos fornecedor
+│   ├── pedido_cd.html             # Pedidos CD
+│   ├── transferencias.html        # Transferências
+│   ├── eventos_simples.html       # Eventos
+│   └── simulador.html             # Simulador
+├── static/
+│   ├── css/style.css              # Estilos
+│   └── js/                        # JavaScript
+├── Documentacao_Sistema_Previsao_v3.0.docx  # Manual completo
+├── Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx
+└── README.md                       # Este arquivo
 ```
 
-## Requisitos
+## 📊 Formato de Arquivos
 
-- Python 3.8+
-- Flask 3.0.0
-- pandas 2.1.3
-- numpy 1.26.2
-- openpyxl 3.1.2
-- scipy 1.11.4
-- scikit-learn 1.3.2
-- matplotlib 3.8.2
+### Histórico de Vendas
+```
+Local,SKU,Ano,Mes_Numero,Quantidade
+LOJA_01,PROD001,2023,1,150
+LOJA_01,PROD001,2023,2,180
+```
 
-## Troubleshooting
+### Pedidos ao Fornecedor
+```
+Fornecedor,SKU,Destino,Tipo_Destino,Lead_Time_Dias,Ciclo_Pedido_Dias,Custo_Unitario,Estoque_Disponivel
+FORN_A,PROD001,CD_PRINCIPAL,CD,30,30,15.50,200
+```
 
-### Erro "Colunas faltantes"
-Verifique se seu arquivo tem todas as colunas obrigatorias: Mes, Loja, SKU, Vendas, Dias_Com_Estoque, Origem
+## 🔄 Changelog v3.0
 
-### Erro "Dados insuficientes"
-O sistema precisa de pelo menos 3 meses de historico por combinacao Loja+SKU
+### Melhorias Críticas Implementadas ✅
 
-### Erro de upload
-Verifique se o arquivo e .xlsx ou .xls e tem menos de 16MB
+1. ✅ **Correção do Cálculo YoY** - Comparação correta mesmo período ano anterior
+2. ✅ **Interface Reorganizada** - Layout executivo, tabela acima do gráfico
+3. ✅ **Exibição de Custos** - Custo unitário sempre visível
+4. ✅ **Modelo Sazonal Corrigido** - Híbrido (sazonalidade + tendência)
+5. ✅ **Compatibilidade ML Selector** - Aliases completos
+6. ✅ **Detecção Automática de Sazonalidade** - Autocorrelação lag 12
+7. ✅ **Detecção de Outliers** - IQR e Z-Score
+8. ✅ **Logging de Seleção AUTO** - Auditoria completa
+9. ✅ **Alertas Inteligentes** - 4 níveis visuais
+10. ✅ **Machine Learning** - Random Forest com 15+ features
+11. ✅ **Calendário Promocional** - Ajuste automático
+12. ✅ **Tratamento Séries Curtas** - Estratégias especializadas
+
+## 📖 Documentação Completa
+
+- **[Documentacao_Sistema_Previsao_v3.0.docx](Documentacao_Sistema_Previsao_v3.0.docx)** - Manual completo (30+ páginas)
+  - Visão geral do sistema
+  - Métodos estatísticos detalhados
+  - Telas e funcionalidades
+  - Conceitos de reabastecimento
+  - FAQ completo
+
+- **[Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx](Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx)** - Status das melhorias
+
+## 🛠️ Requisitos Técnicos
+
+```
+Python 3.8+
+Flask 3.0.0
+Pandas 2.1.3
+NumPy 1.26.2
+Scikit-learn 1.3.2
+Statsmodels 0.14.0
+python-docx 1.1.0
+openpyxl 3.1.2
+```
+
+## ❓ FAQ
+
+**P: Qual método devo usar: AUTO ou ML?**
+R: Use ML para melhor precisão. AUTO é mais rápido para análises exploratórias.
+
+**P: Quantos meses de histórico preciso?**
+R: Mínimo 12 meses. Ideal: 24+ meses para detecção de sazonalidade.
+
+**P: Como funciona a classificação ABC?**
+R: Automática baseada na demanda mensal média.
+
+**P: Posso usar dados diários?**
+R: Não. Agregue para mensal antes do upload.
+
+## 🤝 Contribuição
+
+Contribuições são bem-vindas!
+
+1. Fork o projeto
+2. Crie uma branch (`git checkout -b feature/NovaFuncionalidade`)
+3. Commit suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
+4. Push para a branch (`git push origin feature/NovaFuncionalidade`)
+5. Abra um Pull Request
+
+## 📝 Licença
+
+Este projeto está sob licença MIT. Veja [LICENSE](LICENSE) para mais detalhes.
+
+## 👥 Autores
+
+- **Desenvolvedor Principal:** Conrado Costa
+- **Consultoria Técnica:** Claude Sonnet 4.5 (Anthropic)
+
+## 📞 Suporte
+
+Para dúvidas ou problemas:
+- 📖 Consulte a documentação completa
+- 🐛 Abra uma [issue](https://github.com/conradocosta0602/previsao-demanda/issues)
+- 💬 Entre em contato via GitHub
+
+## 🌟 Features Planejadas
+
+- [ ] API REST para integração
+- [ ] Dashboard Power BI
+- [ ] Exportação de gráficos
+- [ ] Versionamento de previsões
+- [ ] Modo batch para grandes volumes
+
+---
+
+**Versão:** 3.0
+**Status:** Em Produção
+**Última Atualização:** Dezembro 2024
+
+**⭐ Se este projeto foi útil, considere dar uma estrela!**
