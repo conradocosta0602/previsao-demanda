@@ -6,7 +6,7 @@
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    background: linear-gradient(135deg, #DC143C 0%, #B91230 100%);
     min-height: 100vh;
     padding: 10px;
     overflow-x: hidden;
@@ -32,14 +32,14 @@ body {
 
 .logo-section h1 {
     font-size: 1.3em;
-    color: #11998e;
+    color: #DC143C;
     margin: 0;
     font-weight: 700;
 }
 
 .logo-section p {
     font-size: 0.75em;
-    color: #666;
+    color: #6C757D;
     margin: 0;
 }
 
@@ -74,12 +74,12 @@ header {
 
 header h1 {
     font-size: 2.2em;
-    color: #333;
+    color: #DC143C;
     margin-bottom: 10px;
 }
 
 header p {
-    color: #666;
+    color: #6C757D;
     font-size: 1.1em;
 }
 
@@ -92,7 +92,7 @@ header p {
 }
 
 .card h2 {
-    color: #11998e;
+    color: #DC143C;
     margin-bottom: 25px;
     padding-bottom: 15px;
     border-bottom: 2px solid #eee;
@@ -112,22 +112,22 @@ header p {
 .file-input input[type="file"] {
     width: 100%;
     padding: 20px;
-    border: 3px dashed #11998e;
+    border: 3px dashed #DC143C;
     border-radius: 15px;
     cursor: pointer;
-    background: #f0fdf4;
+    background: #FFF5F5;
     font-size: 1em;
     transition: all 0.3s;
 }
 
 .file-input input[type="file"]:hover {
-    border-color: #38ef7d;
-    background: #dcfce7;
+    border-color: #32CD32;
+    background: #F0FFF0;
 }
 
 .hint {
     font-size: 0.85em;
-    color: #888;
+    color: #6C757D;
     margin-top: 8px;
 }
 
@@ -174,7 +174,7 @@ header p {
 .form-group input:focus,
 .form-group select:focus {
     outline: none;
-    border-color: #11998e;
+    border-color: #DC143C;
 }
 
 .btn-primary,
@@ -194,23 +194,23 @@ header p {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    background: linear-gradient(135deg, #DC143C 0%, #B91230 100%);
     color: white;
 }
 
 .btn-primary:hover {
     transform: translateY(-3px);
-    box-shadow: 0 10px 30px rgba(17, 153, 142, 0.4);
+    box-shadow: 0 10px 30px rgba(220, 20, 60, 0.4);
 }
 
 .btn-success {
-    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    background: linear-gradient(135deg, #32CD32 0%, #228B22 100%);
     color: white;
 }
 
 .btn-success:hover {
     transform: translateY(-3px);
-    box-shadow: 0 10px 30px rgba(17, 153, 142, 0.4);
+    box-shadow: 0 10px 30px rgba(50, 205, 50, 0.4);
 }
 
 .btn-secondary {
@@ -233,7 +233,7 @@ header p {
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #11998e 0%, #38ef7d 100%);
+    background: linear-gradient(90deg, #DC143C 0%, #32CD32 100%);
     width: 0%;
     transition: width 0.4s ease;
     border-radius: 15px;
@@ -241,7 +241,7 @@ header p {
 
 #progressText {
     text-align: center;
-    color: #666;
+    color: #6C757D;
     font-size: 0.95em;
 }
 
@@ -253,15 +253,15 @@ header p {
 }
 
 .resumo-card {
-    background: linear-gradient(135deg, #f0fdf4 0%, #fff 100%);
+    background: linear-gradient(135deg, #FFF5F5 0%, #fff 100%);
     padding: 25px;
     border-radius: 15px;
     text-align: center;
-    border: 1px solid #bbf7d0;
+    border: 1px solid #FFCDD2;
 }
 
 .resumo-card h3 {
-    color: #11998e;
+    color: #DC143C;
     font-size: 0.95em;
     margin-bottom: 12px;
 }
@@ -329,7 +329,7 @@ header p {
 }
 
 .grafico-section h3 {
-    color: #11998e;
+    color: #DC143C;
     margin-bottom: 20px;
     font-size: 1.3em;
 }
@@ -367,7 +367,7 @@ header p {
 
 .filtro-group select:focus {
     outline: none;
-    border-color: #11998e;
+    border-color: #DC143C;
 }
 
 .chart-container {
@@ -390,7 +390,7 @@ header p {
 }
 
 .card-compact h3 {
-    color: #11998e;
+    color: #DC143C;
     font-size: 1em;
     margin: 0 0 12px 0;
     font-weight: 600;
@@ -404,17 +404,17 @@ header p {
 .file-input-compact input[type="file"] {
     width: 100%;
     padding: 10px;
-    border: 2px dashed #11998e;
+    border: 2px dashed #DC143C;
     border-radius: 8px;
     cursor: pointer;
-    background: #f0fdf4;
+    background: #FFF5F5;
     font-size: 0.85em;
     margin-bottom: 10px;
 }
 
 .file-input-compact input[type="file"]:hover {
-    border-color: #38ef7d;
-    background: #dcfce7;
+    border-color: #32CD32;
+    background: #F0FFF0;
 }
 
 .config-compact {
@@ -439,13 +439,13 @@ header p {
 
 .config-compact input:focus {
     outline: none;
-    border-color: #11998e;
+    border-color: #DC143C;
 }
 
 .btn-primary-compact {
     width: 100%;
     padding: 10px;
-    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    background: linear-gradient(135deg, #DC143C 0%, #B91230 100%);
     color: white;
     border: none;
     border-radius: 8px;
@@ -457,7 +457,7 @@ header p {
 
 .btn-primary-compact:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(17, 153, 142, 0.4);
+    box-shadow: 0 4px 12px rgba(220, 20, 60, 0.4);
 }
 
 /* Progress Compacto */
@@ -476,7 +476,7 @@ header p {
 
 .progress-text-compact {
     text-align: center;
-    color: #666;
+    color: #6C757D;
     font-size: 0.85em;
     margin: 0;
 }
@@ -490,15 +490,15 @@ header p {
 }
 
 .resumo-card-compact {
-    background: linear-gradient(135deg, #f0fdf4 0%, #fff 100%);
+    background: linear-gradient(135deg, #FFF5F5 0%, #fff 100%);
     padding: 12px;
     border-radius: 8px;
     text-align: center;
-    border: 1px solid #bbf7d0;
+    border: 1px solid #FFCDD2;
 }
 
 .resumo-card-compact h4 {
-    color: #11998e;
+    color: #DC143C;
     font-size: 0.75em;
     margin: 0 0 8px 0;
     font-weight: 600;
@@ -555,7 +555,7 @@ header p {
 
 .filtro-compact:focus {
     outline: none;
-    border-color: #11998e;
+    border-color: #DC143C;
 }
 
 .chart-container-compact {
@@ -575,7 +575,7 @@ header p {
 .btn-download-compact {
     display: inline-block;
     padding: 10px 25px;
-    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    background: linear-gradient(135deg, #32CD32 0%, #228B22 100%);
     color: white;
     text-decoration: none;
     border-radius: 8px;
@@ -586,7 +586,7 @@ header p {
 
 .btn-download-compact:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(17, 153, 142, 0.4);
+    box-shadow: 0 4px 12px rgba(50, 205, 50, 0.4);
 }
 
 /* Error Compacto */
