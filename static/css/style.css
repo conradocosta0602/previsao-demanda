@@ -6,7 +6,7 @@
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #DC143C 0%, #B91230 100%);
+    background: linear-gradient(135deg, #6C757D 0%, #495057 100%);
     min-height: 100vh;
     padding: 10px;
     overflow-x: hidden;
@@ -32,7 +32,7 @@ body {
 
 .logo-section h1 {
     font-size: 1.3em;
-    color: #DC143C;
+    color: #6C757D;
     margin: 0;
     font-weight: 700;
 }
@@ -74,7 +74,7 @@ header {
 
 header h1 {
     font-size: 2.2em;
-    color: #DC143C;
+    color: #6C757D;
     margin-bottom: 10px;
 }
 
@@ -92,7 +92,7 @@ header p {
 }
 
 .card h2 {
-    color: #DC143C;
+    color: #6C757D;
     margin-bottom: 25px;
     padding-bottom: 15px;
     border-bottom: 2px solid #eee;
@@ -112,10 +112,10 @@ header p {
 .file-input input[type="file"] {
     width: 100%;
     padding: 20px;
-    border: 3px dashed #DC143C;
+    border: 3px dashed #6C757D;
     border-radius: 15px;
     cursor: pointer;
-    background: #FFF5F5;
+    background: #F8F9FA;
     font-size: 1em;
     transition: all 0.3s;
 }
@@ -174,7 +174,7 @@ header p {
 .form-group input:focus,
 .form-group select:focus {
     outline: none;
-    border-color: #DC143C;
+    border-color: #6C757D;
 }
 
 .btn-primary,
@@ -194,13 +194,13 @@ header p {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #DC143C 0%, #B91230 100%);
+    background: linear-gradient(135deg, #6C757D 0%, #495057 100%);
     color: white;
 }
 
 .btn-primary:hover {
     transform: translateY(-3px);
-    box-shadow: 0 10px 30px rgba(220, 20, 60, 0.4);
+    box-shadow: 0 10px 30px rgba(108, 117, 125, 0.4);
 }
 
 .btn-success {
@@ -233,7 +233,7 @@ header p {
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #DC143C 0%, #32CD32 100%);
+    background: linear-gradient(90deg, #6C757D 0%, #32CD32 100%);
     width: 0%;
     transition: width 0.4s ease;
     border-radius: 15px;
@@ -253,15 +253,15 @@ header p {
 }
 
 .resumo-card {
-    background: linear-gradient(135deg, #FFF5F5 0%, #fff 100%);
+    background: linear-gradient(135deg, #F8F9FA 0%, #fff 100%);
     padding: 25px;
     border-radius: 15px;
     text-align: center;
-    border: 1px solid #FFCDD2;
+    border: 1px solid #DEE2E6;
 }
 
 .resumo-card h3 {
-    color: #DC143C;
+    color: #6C757D;
     font-size: 0.95em;
     margin-bottom: 12px;
 }
@@ -329,7 +329,7 @@ header p {
 }
 
 .grafico-section h3 {
-    color: #DC143C;
+    color: #6C757D;
     margin-bottom: 20px;
     font-size: 1.3em;
 }
@@ -367,7 +367,7 @@ header p {
 
 .filtro-group select:focus {
     outline: none;
-    border-color: #DC143C;
+    border-color: #6C757D;
 }
 
 .chart-container {
@@ -390,7 +390,7 @@ header p {
 }
 
 .card-compact h3 {
-    color: #DC143C;
+    color: #6C757D;
     font-size: 1em;
     margin: 0 0 12px 0;
     font-weight: 600;
@@ -404,10 +404,10 @@ header p {
 .file-input-compact input[type="file"] {
     width: 100%;
     padding: 10px;
-    border: 2px dashed #DC143C;
+    border: 2px dashed #6C757D;
     border-radius: 8px;
     cursor: pointer;
-    background: #FFF5F5;
+    background: #F8F9FA;
     font-size: 0.85em;
     margin-bottom: 10px;
 }
@@ -439,13 +439,13 @@ header p {
 
 .config-compact input:focus {
     outline: none;
-    border-color: #DC143C;
+    border-color: #6C757D;
 }
 
 .btn-primary-compact {
     width: 100%;
     padding: 10px;
-    background: linear-gradient(135deg, #DC143C 0%, #B91230 100%);
+    background: linear-gradient(135deg, #6C757D 0%, #495057 100%);
     color: white;
     border: none;
     border-radius: 8px;
@@ -457,7 +457,7 @@ header p {
 
 .btn-primary-compact:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(220, 20, 60, 0.4);
+    box-shadow: 0 4px 12px rgba(108, 117, 125, 0.4);
 }
 
 /* Progress Compacto */
@@ -490,15 +490,15 @@ header p {
 }
 
 .resumo-card-compact {
-    background: linear-gradient(135deg, #FFF5F5 0%, #fff 100%);
+    background: linear-gradient(135deg, #F8F9FA 0%, #fff 100%);
     padding: 12px;
     border-radius: 8px;
     text-align: center;
-    border: 1px solid #FFCDD2;
+    border: 1px solid #DEE2E6;
 }
 
 .resumo-card-compact h4 {
-    color: #DC143C;
+    color: #6C757D;
     font-size: 0.75em;
     margin: 0 0 8px 0;
     font-weight: 600;
@@ -555,7 +555,7 @@ header p {
 
 .filtro-compact:focus {
     outline: none;
-    border-color: #DC143C;
+    border-color: #6C757D;
 }
 
 .chart-container-compact {

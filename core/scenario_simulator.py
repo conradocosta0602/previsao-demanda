@@ -324,7 +324,7 @@ class ScenarioSimulator:
             cell = ws_comp.cell(row=1, column=col_num)
             cell.value = header
             cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.fill = PatternFill(start_color="6C757D", end_color="6C757D", fill_type="solid")
             cell.font = Font(color="FFFFFF", bold=True)
 
         # Dados

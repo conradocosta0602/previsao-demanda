@@ -19,9 +19,9 @@ class ExcelReporter:
     """
 
     # Estilos
-    HEADER_FILL = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    HEADER_FILL = PatternFill(start_color="6C757D", end_color="6C757D", fill_type="solid")
     HEADER_FONT = Font(bold=True, color="FFFFFF")
-    ALTERNATE_FILL = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+    ALTERNATE_FILL = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
     BORDER = Border(
         left=Side(style='thin'),
         right=Side(style='thin'),
