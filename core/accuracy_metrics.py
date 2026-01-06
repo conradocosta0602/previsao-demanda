@@ -10,7 +10,7 @@ from typing import List, Dict, Tuple, Optional
 from core.forecasting_models import get_modelo
 
 
-def calculate_mape(actual: List[float], predicted: List[float], min_value: float = 0.5) -> float:
+def calculate_mape(actual: List[float], predicted: List[float], min_value: float = 2.0) -> float:
     """
     Calcula MAPE (Mean Absolute Percentage Error)
 
@@ -22,8 +22,11 @@ def calculate_mape(actual: List[float], predicted: List[float], min_value: float
     Args:
         actual: Valores reais
         predicted: Valores previstos
-        min_value: Valor mínimo para considerar no cálculo (default: 0.5)
-                  Períodos com actual < min_value são ignorados
+        min_value: Valor mínimo para considerar no cálculo (default: 2.0)
+                  Períodos com actual < min_value são ignorados.
+                  Threshold de 2.0 é ideal para dados semanais, pois exclui
+                  semanas de vendas muito baixas (< 2 unidades) que causam
+                  erros percentuais desproporcionais (500-700%).
 
     Returns:
         MAPE em percentual (0-100+), ou None se não houver dados válidos
