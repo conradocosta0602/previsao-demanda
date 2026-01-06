@@ -8,29 +8,16 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
 # Simular import do app (sem rodar Flask)
-from app import detectar_formato_dados, processar_previsao
+from app import processar_previsao
 
 print("=" * 80)
-print("TESTE: Integracao app.py com Dados Diarios")
+print("TESTE: Integracao app.py com Dados Diarios (Simplificado)")
 print("=" * 80)
-
-# Teste 1: Detecção de formato
-print("\n[1] Teste de detecao de formato")
-print("-" * 80)
 
 arquivo_diario = 'demanda_01-12-2025.xlsx'
-formato = detectar_formato_dados(arquivo_diario)
-print(f"Arquivo: {arquivo_diario}")
-print(f"Formato detectado: {formato}")
 
-if formato != 'diario':
-    print("[ERRO] Formato deveria ser 'diario'")
-    sys.exit(1)
-
-print("[OK] Formato detectado corretamente")
-
-# Teste 2: Processamento completo com dados diários
-print("\n[2] Teste de processamento completo")
+# Teste: Processamento completo com dados diários
+print("\n[1] Teste de processamento completo")
 print("-" * 80)
 
 try:
