@@ -10,28 +10,40 @@ from typing import List, Dict, Tuple, Optional
 from core.forecasting_models import get_modelo
 
 
-def calculate_mape(actual: List[float], predicted: List[float], epsilon: float = 1e-10) -> float:
+def calculate_mape(actual: List[float], predicted: List[float], min_value: float = 0.5) -> float:
     """
     Calcula MAPE (Mean Absolute Percentage Error)
+
+    IMPORTANTE: Para dados semanais/diários, ignora períodos onde actual = 0
+    pois não faz sentido calcular erro percentual quando não houve venda real.
 
     MAPE = (1/n) * Σ |actual - predicted| / |actual| * 100
 
     Args:
         actual: Valores reais
         predicted: Valores previstos
-        epsilon: Valor pequeno para evitar divisão por zero
+        min_value: Valor mínimo para considerar no cálculo (default: 0.5)
+                  Períodos com actual < min_value são ignorados
 
     Returns:
-        MAPE em percentual (0-100+)
+        MAPE em percentual (0-100+), ou None se não houver dados válidos
     """
     actual_arr = np.array(actual)
     predicted_arr = np.array(predicted)
 
-    # Evitar divisão por zero: usar epsilon para valores muito pequenos
-    actual_safe = np.where(np.abs(actual_arr) < epsilon, epsilon, actual_arr)
+    # Filtrar apenas períodos onde houve venda significativa
+    # Isso evita divisões por zero e MAPEs absurdos
+    mask = actual_arr >= min_value
 
-    # Calcular erro percentual absoluto
-    ape = np.abs((actual_arr - predicted_arr) / actual_safe) * 100
+    if not mask.any():
+        # Se não houver nenhum período com venda, retornar None ou valor padrão
+        return None
+
+    actual_filtered = actual_arr[mask]
+    predicted_filtered = predicted_arr[mask]
+
+    # Calcular erro percentual absoluto apenas nos períodos válidos
+    ape = np.abs((actual_filtered - predicted_filtered) / actual_filtered) * 100
 
     # Retornar média
     return float(np.mean(ape))
@@ -158,6 +170,10 @@ def walk_forward_validation(
     mape = calculate_mape(actuals, predictions)
     bias = calculate_bias(actuals, predictions)
     mae = calculate_mae(actuals, predictions)
+
+    # Se MAPE é None (sem dados válidos), usar 999.9 para indicar métrica não calculável
+    if mape is None:
+        mape = 999.9
 
     return {
         'mape': mape,
