@@ -75,37 +75,54 @@ function mostrarResultados(data) {
     const resumo = data.resumo;
 
     // Calcular MAPE e BIAS médios das previsões
+    // IMPORTANTE: Exclui MAPEs = 999.9 (produtos muito esparsos sem dados suficientes)
     let mapeMedia = 0;
     let biasMedia = 0;
     let countMetrics = 0;
+    let countBias = 0;
 
     if (data.grafico_data && data.grafico_data.previsoes_lojas) {
         data.grafico_data.previsoes_lojas.forEach(p => {
-            if (p.MAPE !== null && p.MAPE !== undefined) {
+            // Incluir apenas MAPEs válidos (< 999.9)
+            // 999.9 indica produto muito esparso, sem períodos suficientes para cálculo
+            if (p.MAPE !== null && p.MAPE !== undefined && p.MAPE < 999.9) {
                 mapeMedia += p.MAPE;
                 countMetrics++;
             }
             if (p.BIAS !== null && p.BIAS !== undefined) {
                 biasMedia += p.BIAS;
+                countBias++;
             }
         });
         if (countMetrics > 0) {
             mapeMedia = (mapeMedia / countMetrics).toFixed(1);
-            biasMedia = (biasMedia / countMetrics).toFixed(1);
+        } else {
+            mapeMedia = 'N/A';  // Nenhum MAPE calculável
+        }
+        if (countBias > 0) {
+            biasMedia = (biasMedia / countBias).toFixed(1);
+        } else {
+            biasMedia = 'N/A';
         }
     }
 
     // Função para determinar cor do MAPE baseado nos critérios
     function getMapeColor(mape) {
+        if (mape === 'N/A') return '#6c757d';  // Cinza - Não aplicável
         const value = parseFloat(mape);
+        if (isNaN(value)) return '#6c757d';
         if (value < 10) return '#059669';  // Verde - Excelente
         if (value <= 20) return '#3b82f6'; // Azul - Bom
-        return '#dc2626';                  // Vermelho - Requer atenção
+        if (value <= 30) return '#f59e0b'; // Laranja - Aceitável
+        if (value <= 50) return '#dc2626'; // Vermelho - Fraca
+        return '#991b1b';                  // Vermelho escuro - Muito Fraca
     }
 
     // Função para determinar cor do BIAS baseado nos critérios
     function getBiasColor(bias) {
+        if (bias === 'N/A') return '#6c757d';  // Cinza - Não aplicável
         const value = Math.abs(parseFloat(bias));
+        if (isNaN(value)) return '#6c757d';
         if (value <= 20) return '#059669';  // Verde - Normal
         if (value <= 50) return '#3b82f6';  // Azul - Atenção
         if (value <= 100) return '#f59e0b'; // Amarelo - Alerta
@@ -126,12 +143,12 @@ function mostrarResultados(data) {
         </div>
         <div class="resumo-card-compact">
             <h4>MAPE Médio</h4>
-            <p class="big-number-compact" style="color: ${mapeColor};">${mapeMedia}%</p>
-            <p style="font-size: 0.7em; color: #666; margin-top: 4px;">Acurácia</p>
+            <p class="big-number-compact" style="color: ${mapeColor};">${mapeMedia === 'N/A' ? mapeMedia : mapeMedia + '%'}</p>
+            <p style="font-size: 0.7em; color: #666; margin-top: 4px;">Acurácia${mapeMedia !== 'N/A' ? '' : ' (SKUs válidos)'}</p>
         </div>
         <div class="resumo-card-compact">
             <h4>BIAS Médio</h4>
-            <p class="big-number-compact" style="color: ${biasColor};">${biasMedia > 0 ? '+' : ''}${biasMedia}%</p>
+            <p class="big-number-compact" style="color: ${biasColor};">${biasMedia === 'N/A' ? biasMedia : (biasMedia > 0 ? '+' : '') + biasMedia + '%'}</p>
             <p style="font-size: 0.7em; color: #666; margin-top: 4px;">Tendência</p>
         </div>
     `;

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Teste: Cálculo MAPE no Frontend</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            background: #f8f9fa;
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid #3b82f6;
+            border-radius: 4px;
+        }
+        .result {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .pass { color: #059669; }
+        .fail { color: #dc2626; }
+    </style>
+</head>
+<body>
+    <h1>Teste: Cálculo MAPE Médio (Excluindo 999.9)</h1>
+
+    <div class="test-section">
+        <h3>Cenário 1: Dataset Realista</h3>
+        <p>Simulando 2676 SKUs com 37.1% válidos (992 SKUs) e 62.9% = 999.9 (1684 SKUs)</p>
+        <div id="test1-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Cenário 2: Todos os MAPEs = 999.9</h3>
+        <p>Quando nenhum SKU tem dados suficientes</p>
+        <div id="test2-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Cenário 3: Mix de valores válidos</h3>
+        <p>Alguns MAPEs baixos, alguns altos, alguns 999.9</p>
+        <div id="test3-result"></div>
+    </div>
+
+    <script>
+        // Código da função de cálculo (extraído do app.js)
+        function calcularMAPEMedio(previsoes) {
+            let mapeMedia = 0;
+            let countMetrics = 0;
+
+            previsoes.forEach(p => {
+                // Incluir apenas MAPEs válidos (< 999.9)
+                if (p.MAPE !== null && p.MAPE !== undefined && p.MAPE < 999.9) {
+                    mapeMedia += p.MAPE;
+                    countMetrics++;
+                }
+            });
+
+            if (countMetrics > 0) {
+                return (mapeMedia / countMetrics).toFixed(1);
+            } else {
+                return 'N/A';
+            }
+        }
+
+        // Teste 1: Dataset realista
+        const test1Data = [];
+        // 992 SKUs com MAPEs válidos (média ~60.85%)
+        for (let i = 0; i < 20; i++) test1Data.push({ MAPE: Math.random() * 10 }); // Excelente
+        for (let i = 0; i < 8; i++) test1Data.push({ MAPE: 10 + Math.random() * 10 }); // Boa
+        for (let i = 0; i < 64; i++) test1Data.push({ MAPE: 20 + Math.random() * 10 }); // Aceitável
+        for (let i = 0; i < 440; i++) test1Data.push({ MAPE: 30 + Math.random() * 20 }); // Fraca
+        for (let i = 0; i < 384; i++) test1Data.push({ MAPE: 50 + Math.random() * 50 }); // Muito Fraca
+        for (let i = 0; i < 76; i++) test1Data.push({ MAPE: 100 + Math.random() * 200 }); // Crítica
+        // 1684 SKUs com MAPE = 999.9 (muito esparsos)
+        for (let i = 0; i < 1684; i++) test1Data.push({ MAPE: 999.9 });
+
+        const result1 = calcularMAPEMedio(test1Data);
+        const expected1 = 60.85; // Valor esperado
+        const pass1 = Math.abs(parseFloat(result1) - expected1) < 15; // Margem de 15%
+
+        document.getElementById('test1-result').innerHTML = `
+            <div class="result ${pass1 ? 'pass' : 'fail'}">
+                MAPE Médio: ${result1}%
+                <br>Esperado: ~${expected1}% (±15%)
+                <br>Total de previsões: ${test1Data.length}
+                <br>MAPEs válidos: ${test1Data.filter(p => p.MAPE < 999.9).length}
+                <br>MAPEs = 999.9: ${test1Data.filter(p => p.MAPE === 999.9).length}
+                <br><strong>${pass1 ? '✓ PASSOU' : '✗ FALHOU'}</strong>
+            </div>
+        `;
+
+        // Teste 2: Todos 999.9
+        const test2Data = [];
+        for (let i = 0; i < 100; i++) test2Data.push({ MAPE: 999.9 });
+
+        const result2 = calcularMAPEMedio(test2Data);
+        const pass2 = result2 === 'N/A';
+
+        document.getElementById('test2-result').innerHTML = `
+            <div class="result ${pass2 ? 'pass' : 'fail'}">
+                MAPE Médio: ${result2}
+                <br>Esperado: N/A
+                <br>Total de previsões: ${test2Data.length}
+                <br>MAPEs válidos: 0
+                <br><strong>${pass2 ? '✓ PASSOU' : '✗ FALHOU'}</strong>
+            </div>
+        `;
+
+        // Teste 3: Mix variado
+        const test3Data = [
+            { MAPE: 5.2 },
+            { MAPE: 15.8 },
+            { MAPE: 45.3 },
+            { MAPE: 999.9 },
+            { MAPE: 999.9 },
+            { MAPE: 999.9 },
+            { MAPE: 80.1 },
+            { MAPE: null },
+            { MAPE: undefined },
+            { MAPE: 25.4 }
+        ];
+
+        const result3 = calcularMAPEMedio(test3Data);
+        // Média dos válidos: (5.2 + 15.8 + 45.3 + 80.1 + 25.4) / 5 = 34.36
+        const expected3 = 34.4;
+        const pass3 = Math.abs(parseFloat(result3) - expected3) < 1;
+
+        document.getElementById('test3-result').innerHTML = `
+            <div class="result ${pass3 ? 'pass' : 'fail'}">
+                MAPE Médio: ${result3}%
+                <br>Esperado: ${expected3}%
+                <br>Total de previsões: ${test3Data.length}
+                <br>MAPEs válidos: ${test3Data.filter(p => p.MAPE != null && p.MAPE < 999.9).length}
+                <br>Valores válidos: 5.2, 15.8, 45.3, 80.1, 25.4
+                <br>Cálculo: (5.2 + 15.8 + 45.3 + 80.1 + 25.4) / 5 = ${((5.2 + 15.8 + 45.3 + 80.1 + 25.4) / 5).toFixed(1)}
+                <br><strong>${pass3 ? '✓ PASSOU' : '✗ FALHOU'}</strong>
+            </div>
+        `;
+    </script>
+</body>
+</html>
