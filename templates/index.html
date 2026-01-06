@@ -29,9 +29,33 @@
                         </div>
 
                         <div class="config-compact">
-                            <label for="meses_previsao">Meses:</label>
+                            <label for="meses_previsao">Períodos:</label>
                             <input type="number" id="meses_previsao" name="meses_previsao"
                                    value="6" min="1" max="24">
+                        </div>
+
+                        <div class="config-compact">
+                            <label for="granularidade">Granularidade:</label>
+                            <select id="granularidade" name="granularidade">
+                                <option value="semanal" selected>Semanal</option>
+                                <option value="mensal">Mensal</option>
+                            </select>
+                        </div>
+
+                        <div class="config-compact">
+                            <label for="filiais">Filiais (opcional):</label>
+                            <input type="text" id="filiais" name="filiais"
+                                   placeholder="Ex: 1,2,3 ou deixe vazio para todas"
+                                   style="font-size: 0.9em;">
+                            <small style="color: #666; font-size: 0.75em;">Separe por vírgula</small>
+                        </div>
+
+                        <div class="config-compact">
+                            <label for="produtos">Produtos (opcional):</label>
+                            <input type="text" id="produtos" name="produtos"
+                                   placeholder="Ex: 432212,432214 ou deixe vazio"
+                                   style="font-size: 0.9em;">
+                            <small style="color: #666; font-size: 0.75em;">Separe por vírgula</small>
                         </div>
 
                         <button type="submit" class="btn-primary-compact">

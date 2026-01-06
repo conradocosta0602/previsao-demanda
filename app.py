@@ -691,16 +691,52 @@ def upload_file():
         if not file.filename.endswith(('.xlsx', '.xls')):
             return jsonify({'success': False, 'erro': 'Arquivo deve ser Excel (.xlsx ou .xls)'}), 400
 
-        # Parâmetros
+        # Parâmetros básicos
         meses_previsao = int(request.form.get('meses_previsao', 6))
+        granularidade = request.form.get('granularidade', 'semanal')  # 'semanal' ou 'mensal'
+
+        # Filtros (podem vir como lista ou string separada por vírgula)
+        filiais_str = request.form.get('filiais', '')
+        produtos_str = request.form.get('produtos', '')
+
+        # Processar filtros de filiais
+        filiais_filtro = None
+        if filiais_str and filiais_str.strip():
+            try:
+                # Aceita tanto lista JSON quanto string separada por vírgula
+                if filiais_str.startswith('['):
+                    import json
+                    filiais_filtro = json.loads(filiais_str)
+                else:
+                    filiais_filtro = [int(f.strip()) for f in filiais_str.split(',') if f.strip()]
+            except:
+                pass  # Se falhar, não filtra
+
+        # Processar filtros de produtos
+        produtos_filtro = None
+        if produtos_str and produtos_str.strip():
+            try:
+                if produtos_str.startswith('['):
+                    import json
+                    produtos_filtro = json.loads(produtos_str)
+                else:
+                    produtos_filtro = [int(p.strip()) for p in produtos_str.split(',') if p.strip()]
+            except:
+                pass  # Se falhar, não filtra
 
         # Salvar arquivo
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
 
-        # Processar
-        resultados = processar_previsao(filepath, meses_previsao)
+        # Processar com filtros
+        resultados = processar_previsao(
+            filepath,
+            meses_previsao,
+            granularidade=granularidade,
+            filiais_filtro=filiais_filtro,
+            produtos_filtro=produtos_filtro
+        )
 
         # Armazenar dados para o simulador
         global ultima_previsao_data
