@@ -12,6 +12,7 @@ from datetime import datetime
 
 # Importar módulos do core
 from core.data_loader import DataLoader, ajustar_mes_corrente
+from core.data_adapter import DataAdapter
 from core.stockout_handler import processar_stockouts_dataframe, calcular_metricas_stockout
 from core.method_selector import MethodSelector
 from core.forecasting_models import get_modelo
@@ -27,45 +28,131 @@ app.config['OUTPUT_FOLDER'] = 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB máximo
 
 
-def processar_previsao(arquivo_excel: str, meses_previsao: int = 6) -> dict:
+def detectar_formato_dados(arquivo_excel: str) -> str:
+    """
+    Detecta o formato dos dados no arquivo Excel
+
+    Returns:
+        'diario' se formato novo (data, cod_empresa, codigo, qtd_venda, padrao_compra)
+        'mensal' se formato legado (Mes, Loja, SKU, Vendas, Dias_Com_Estoque, Origem)
+    """
+    try:
+        df = pd.read_excel(arquivo_excel, nrows=5)
+        colunas = df.columns.tolist()
+
+        # Verificar se é formato diário (novo)
+        colunas_diarias = ['data', 'cod_empresa', 'codigo', 'qtd_venda']
+        if all(col in colunas for col in colunas_diarias):
+            return 'diario'
+
+        # Verificar se é formato mensal (legado)
+        colunas_mensais = ['Mes', 'Loja', 'SKU', 'Vendas']
+        if all(col in colunas for col in colunas_mensais):
+            return 'mensal'
+
+        # Formato não reconhecido
+        return 'desconhecido'
+
+    except Exception as e:
+        print(f"Erro ao detectar formato: {e}")
+        return 'desconhecido'
+
+
+def processar_previsao(arquivo_excel: str,
+                      meses_previsao: int = 6,
+                      granularidade: str = 'semanal',
+                      filiais_filtro: list = None,
+                      produtos_filtro: list = None) -> dict:
     """
     Pipeline completo de processamento de previsão
+    Suporta tanto formato legado (mensal) quanto novo formato (diário)
 
     Args:
         arquivo_excel: Caminho para o arquivo Excel
-        meses_previsao: Número de meses para prever
+        meses_previsao: Número de meses/semanas para prever
+        granularidade: 'semanal' ou 'mensal' (apenas para formato diário)
+        filiais_filtro: Lista de códigos de filiais para filtrar (formato diário)
+        produtos_filtro: Lista de códigos de produtos para filtrar (formato diário)
 
     Returns:
         Dicionário com todos os resultados e arquivo gerado
     """
     alertas = []
+    metadados_extras = {}
+
+    # DETECTAR FORMATO DOS DADOS
+    formato = detectar_formato_dados(arquivo_excel)
+    print(f"Formato detectado: {formato}")
 
     # 1. CARREGAR E VALIDAR DADOS
     print("1. Carregando dados...")
-    loader = DataLoader(arquivo_excel)
-    df = loader.carregar()
 
-    valido, mensagens = loader.validar()
-    if not valido:
-        raise ValueError(f"Dados inválidos: {'; '.join(mensagens)}")
+    if formato == 'diario':
+        # Usar novo adaptador para dados diários
+        print("   [INFO] Usando adaptador de dados diários...")
+        adapter = DataAdapter(arquivo_excel)
 
-    # Adicionar avisos
-    for msg in mensagens:
-        if 'Aviso' in msg or 'Gap' in msg:
-            alertas.append({'tipo': 'warning', 'mensagem': msg})
+        valido, mensagens = adapter.carregar_e_validar()
+        if not valido:
+            raise ValueError(f"Dados inválidos: {'; '.join(mensagens)}")
 
-    df = loader.get_dados_validados()
+        # Converter para formato legado
+        df = adapter.converter_para_formato_legado(
+            granularidade=granularidade,
+            filiais=filiais_filtro,
+            produtos=produtos_filtro
+        )
 
-    # 2. AJUSTAR MÊS CORRENTE
-    print("2. Ajustando mês corrente...")
-    df = ajustar_mes_corrente(df)
+        # Adicionar metadados extras
+        metadados_extras = {
+            'formato_origem': 'diario',
+            'granularidade': granularidade,
+            'filiais_disponiveis': adapter.get_lista_filiais(),
+            'produtos_disponiveis': adapter.get_lista_produtos(),
+            'estatisticas': adapter.estatisticas_dados()
+        }
 
-    meses_projetados = df['Mes_Projetado'].sum()
-    if meses_projetados > 0:
-        alertas.append({
-            'tipo': 'info',
-            'mensagem': f'{meses_projetados} registros do mês atual foram projetados'
-        })
+        # Adicionar avisos
+        for msg in mensagens:
+            alertas.append({'tipo': 'info', 'mensagem': msg})
+
+    else:
+        # Usar loader legado para dados mensais
+        print("   [INFO] Usando loader de dados mensais (legado)...")
+        loader = DataLoader(arquivo_excel)
+        df = loader.carregar()
+
+        valido, mensagens = loader.validar()
+        if not valido:
+            raise ValueError(f"Dados inválidos: {'; '.join(mensagens)}")
+
+        # Adicionar avisos
+        for msg in mensagens:
+            if 'Aviso' in msg or 'Gap' in msg:
+                alertas.append({'tipo': 'warning', 'mensagem': msg})
+
+        df = loader.get_dados_validados()
+
+        # Ajustar mês corrente (apenas para formato mensal)
+        print("2. Ajustando mês corrente...")
+        df = ajustar_mes_corrente(df)
+
+        meses_projetados = df['Mes_Projetado'].sum()
+        if meses_projetados > 0:
+            alertas.append({
+                'tipo': 'info',
+                'mensagem': f'{meses_projetados} registros do mês atual foram projetados'
+            })
+
+        metadados_extras = {'formato_origem': 'mensal'}
+
+    print(f"   [OK] {len(df)} registros carregados")
+
+    # 2. TRATAR STOCKOUTS (apenas se tiver coluna Mes_Projetado)
+    if 'Mes_Projetado' not in df.columns:
+        df['Mes_Projetado'] = False
+        df['Taxa_Progresso'] = 1.0
+        df['Vendas_Original'] = df['Vendas']
 
     # 3. TRATAR STOCKOUTS
     print("3. Tratando stockouts...")
@@ -636,7 +723,8 @@ def processar_previsao(arquivo_excel: str, meses_previsao: int = 6) -> dict:
     generator.alertas = todos_alertas
     resumo_alertas = generator.get_summary()
 
-    return {
+    # Adicionar metadados extras ao resultado
+    resultado = {
         'success': True,
         'arquivo_saida': nome_arquivo,
         'resumo': resumo,
@@ -645,6 +733,12 @@ def processar_previsao(arquivo_excel: str, meses_previsao: int = 6) -> dict:
         'smart_alerts': todos_alertas,  # Alertas inteligentes
         'smart_alerts_summary': resumo_alertas  # Resumo dos alertas inteligentes
     }
+
+    # Adicionar metadados se houver (formato diário)
+    if metadados_extras:
+        resultado['metadados'] = metadados_extras
+
+    return resultado
 
 
 @app.route('/')
