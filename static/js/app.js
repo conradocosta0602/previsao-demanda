@@ -74,19 +74,19 @@ function mostrarResultados(data) {
     // Preencher resumo - Layout executivo
     const resumo = data.resumo;
 
-    // Calcular MAPE e BIAS médios das previsões
-    // IMPORTANTE: Exclui MAPEs = 999.9 (produtos muito esparsos sem dados suficientes)
-    let mapeMedia = 0;
+    // Calcular WMAPE e BIAS médios das previsões
+    // IMPORTANTE: Exclui WMAPEs = 999.9 (produtos muito esparsos sem dados suficientes)
+    let wmapeMedia = 0;
     let biasMedia = 0;
     let countMetrics = 0;
     let countBias = 0;
 
     if (data.grafico_data && data.grafico_data.previsoes_lojas) {
         data.grafico_data.previsoes_lojas.forEach(p => {
-            // Incluir apenas MAPEs válidos (< 999.9)
+            // Incluir apenas WMAPEs válidos (< 999.9)
             // 999.9 indica produto muito esparso, sem períodos suficientes para cálculo
-            if (p.MAPE !== null && p.MAPE !== undefined && p.MAPE < 999.9) {
-                mapeMedia += p.MAPE;
+            if (p.WMAPE !== null && p.WMAPE !== undefined && p.WMAPE < 999.9) {
+                wmapeMedia += p.WMAPE;
                 countMetrics++;
             }
             if (p.BIAS !== null && p.BIAS !== undefined) {
@@ -95,9 +95,9 @@ function mostrarResultados(data) {
             }
         });
         if (countMetrics > 0) {
-            mapeMedia = (mapeMedia / countMetrics).toFixed(1);
+            wmapeMedia = (wmapeMedia / countMetrics).toFixed(1);
         } else {
-            mapeMedia = 'N/A';  // Nenhum MAPE calculável
+            wmapeMedia = 'N/A';  // Nenhum WMAPE calculável
         }
         if (countBias > 0) {
             biasMedia = (biasMedia / countBias).toFixed(1);
@@ -106,10 +106,10 @@ function mostrarResultados(data) {
         }
     }
 
-    // Função para determinar cor do MAPE baseado nos critérios
-    function getMapeColor(mape) {
-        if (mape === 'N/A') return '#6c757d';  // Cinza - Não aplicável
-        const value = parseFloat(mape);
+    // Função para determinar cor do WMAPE baseado nos critérios
+    function getWmapeColor(wmape) {
+        if (wmape === 'N/A') return '#6c757d';  // Cinza - Não aplicável
+        const value = parseFloat(wmape);
         if (isNaN(value)) return '#6c757d';
         if (value < 10) return '#059669';  // Verde - Excelente
         if (value <= 20) return '#3b82f6'; // Azul - Bom
@@ -129,7 +129,7 @@ function mostrarResultados(data) {
         return '#dc2626';                   // Vermelho - Crítico
     }
 
-    const mapeColor = getMapeColor(mapeMedia);
+    const wmapeColor = getWmapeColor(wmapeMedia);
     const biasColor = getBiasColor(biasMedia);
 
     document.getElementById('resumo').innerHTML = `
@@ -142,9 +142,9 @@ function mostrarResultados(data) {
             <p class="big-number-compact">${resumo.meses_previsao}</p>
         </div>
         <div class="resumo-card-compact">
-            <h4>MAPE Médio</h4>
-            <p class="big-number-compact" style="color: ${mapeColor};">${mapeMedia === 'N/A' ? mapeMedia : mapeMedia + '%'}</p>
-            <p style="font-size: 0.7em; color: #666; margin-top: 4px;">Acurácia${mapeMedia !== 'N/A' ? '' : ' (SKUs válidos)'}</p>
+            <h4>WMAPE Médio</h4>
+            <p class="big-number-compact" style="color: ${wmapeColor};">${wmapeMedia === 'N/A' ? wmapeMedia : wmapeMedia + '%'}</p>
+            <p style="font-size: 0.7em; color: #666; margin-top: 4px;">Acurácia${wmapeMedia !== 'N/A' ? '' : ' (SKUs válidos)'}</p>
         </div>
         <div class="resumo-card-compact">
             <h4>BIAS Médio</h4>
@@ -667,14 +667,14 @@ function preencherTabelaYoY(comparacao_yoy) {
     tbody.innerHTML = rowPrevisao + rowAnterior + rowVariacao;
 }
 
-// ===== MÉTRICAS DE ACURÁCIA (MAPE + BIAS) =====
+// ===== MÉTRICAS DE ACURÁCIA (WMAPE + BIAS) =====
 function exibirMetricasAcuracia(dados) {
     if (!dados.previsoes_lojas || dados.previsoes_lojas.length === 0) {
         return;
     }
 
     // Calcular métricas agregadas
-    const previsoes_com_metricas = dados.previsoes_lojas.filter(p => p.MAPE !== null && p.BIAS !== null);
+    const previsoes_com_metricas = dados.previsoes_lojas.filter(p => p.WMAPE !== null && p.BIAS !== null);
 
     if (previsoes_com_metricas.length === 0) {
         return; // Não há métricas calculadas
@@ -684,11 +684,11 @@ function exibirMetricasAcuracia(dados) {
     const metricas_unicas = {};
     dados.previsoes_lojas.forEach(p => {
         const key = `${p.Loja}_${p.SKU}`;
-        if (!metricas_unicas[key] && p.MAPE !== null) {
+        if (!metricas_unicas[key] && p.WMAPE !== null) {
             metricas_unicas[key] = {
                 loja: p.Loja,
                 sku: p.SKU,
-                mape: p.MAPE,
+                wmape: p.WMAPE,
                 bias: p.BIAS,
                 metodo: p.Metodo
             };
@@ -698,27 +698,27 @@ function exibirMetricasAcuracia(dados) {
     const metricas_array = Object.values(metricas_unicas);
 
     // Calcular médias gerais
-    const mape_medio = metricas_array.reduce((sum, m) => sum + m.mape, 0) / metricas_array.length;
+    const wmape_medio = metricas_array.reduce((sum, m) => sum + m.wmape, 0) / metricas_array.length;
     const bias_medio = metricas_array.reduce((sum, m) => sum + m.bias, 0) / metricas_array.length;
 
-    // Interpretar MAPE
-    let mape_classificacao = '';
-    let mape_cor = '';
-    if (mape_medio < 10) {
-        mape_classificacao = 'Excelente';
-        mape_cor = '#28a745'; // Verde
-    } else if (mape_medio < 20) {
-        mape_classificacao = 'Boa';
-        mape_cor = '#5cb85c';
-    } else if (mape_medio < 30) {
-        mape_classificacao = 'Aceitável';
-        mape_cor = '#f0ad4e'; // Laranja
-    } else if (mape_medio < 50) {
-        mape_classificacao = 'Fraca';
-        mape_cor = '#ff8c00';
+    // Interpretar WMAPE
+    let wmape_classificacao = '';
+    let wmape_cor = '';
+    if (wmape_medio < 10) {
+        wmape_classificacao = 'Excelente';
+        wmape_cor = '#28a745'; // Verde
+    } else if (wmape_medio < 20) {
+        wmape_classificacao = 'Boa';
+        wmape_cor = '#5cb85c';
+    } else if (wmape_medio < 30) {
+        wmape_classificacao = 'Aceitável';
+        wmape_cor = '#f0ad4e'; // Laranja
+    } else if (wmape_medio < 50) {
+        wmape_classificacao = 'Fraca';
+        wmape_cor = '#ff8c00';
     } else {
-        mape_classificacao = 'Muito fraca';
-        mape_cor = '#d9534f'; // Vermelho
+        wmape_classificacao = 'Muito fraca';
+        wmape_cor = '#d9534f'; // Vermelho
     }
 
     // Interpretar BIAS
@@ -744,19 +744,19 @@ function exibirMetricasAcuracia(dados) {
     // Montar HTML
     const html = `
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 15px;">
-            <!-- Card MAPE -->
-            <div style="background: #f8f9fa; border-left: 4px solid ${mape_cor}; padding: 15px; border-radius: 4px;">
+            <!-- Card WMAPE -->
+            <div style="background: #f8f9fa; border-left: 4px solid ${wmape_cor}; padding: 15px; border-radius: 4px;">
                 <div style="font-weight: bold; color: #495057; margin-bottom: 8px;">
-                    📊 MAPE (Erro Percentual Médio)
+                    📊 WMAPE (Erro Percentual Ponderado)
                 </div>
-                <div style="font-size: 1.8em; font-weight: bold; color: ${mape_cor}; margin-bottom: 5px;">
-                    ${mape_medio.toFixed(1)}%
+                <div style="font-size: 1.8em; font-weight: bold; color: ${wmape_cor}; margin-bottom: 5px;">
+                    ${wmape_medio.toFixed(1)}%
                 </div>
                 <div style="color: #6c757d; font-size: 0.9em; margin-bottom: 8px;">
-                    Classificação: <span style="font-weight: bold; color: ${mape_cor};">${mape_classificacao}</span>
+                    Classificação: <span style="font-weight: bold; color: ${wmape_cor};">${wmape_classificacao}</span>
                 </div>
                 <div style="color: #6c757d; font-size: 0.85em;">
-                    Em média, o erro é ${mape_medio.toFixed(1)}% do valor real
+                    Erro ponderado por volume: ${wmape_medio.toFixed(1)}%
                 </div>
             </div>
 
@@ -779,7 +779,7 @@ function exibirMetricasAcuracia(dados) {
 
         <div style="background: #e9ecef; padding: 10px; border-radius: 4px; font-size: 0.85em; color: #495057;">
             <strong>ℹ️ O que significam essas métricas?</strong><br>
-            • <strong>MAPE:</strong> Mostra o erro típico das previsões em percentual<br>
+            • <strong>WMAPE:</strong> Erro ponderado pelo volume de vendas (produtos alto volume têm peso proporcional)<br>
             • <strong>BIAS:</strong> Indica se há tendência sistemática de superestimar (positivo) ou subestimar (negativo)<br>
             • Calculado via validação cruzada em ${metricas_array.length} combinações Loja/SKU
         </div>

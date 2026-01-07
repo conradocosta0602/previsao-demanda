@@ -29,7 +29,7 @@ Sistema completo para gestão de estoque multi-loja com Centro de Distribuição
 - **Tendências:** Análise de slope e R²
 
 #### 📊 Métricas e Alertas
-- **MAPE:** Mean Absolute Percentage Error (acurácia)
+- **WMAPE:** Weighted Mean Absolute Percentage Error (acurácia ponderada por volume)
 - **BIAS:** Tendência sistemática de erro
 - **Alertas Inteligentes:** 4 níveis (🔴 Crítico, 🟡 Alerta, 🔵 Atenção, 🟢 Normal)
 - **YoY:** Comparação Year-over-Year

@@ -209,8 +209,8 @@ def processar_previsao(arquivo_excel: str,
             modelo.fit(vendas)
             previsoes = modelo.predict(meses_previsao)
 
-        # Calcular métricas de acurácia (MAPE + BIAS)
-        mape = None
+        # Calcular métricas de acurácia (WMAPE + BIAS)
+        wmape = None
         bias = None
         try:
             from core.accuracy_metrics import evaluate_model_accuracy
@@ -220,7 +220,7 @@ def processar_previsao(arquivo_excel: str,
                     recomendacao['metodo'],
                     horizon=1
                 )
-                mape = accuracy['mape']
+                wmape = accuracy['wmape']
                 bias = accuracy['bias']
         except Exception:
             pass  # Se falhar, continua sem métricas
@@ -236,7 +236,7 @@ def processar_previsao(arquivo_excel: str,
                 'Previsao': round(previsoes[h], 1),
                 'Metodo': recomendacao['metodo'],
                 'Confianca': recomendacao['confianca'],
-                'MAPE': round(mape, 1) if mape is not None else None,
+                'WMAPE': round(wmape, 1) if wmape is not None else None,
                 'BIAS': round(bias, 2) if bias is not None else None
             })
 
@@ -245,7 +245,7 @@ def processar_previsao(arquivo_excel: str,
             # Preparar modelo_info com métricas e parâmetros
             modelo_info = {
                 **modelo.params,  # Parâmetros do modelo (outliers, sazonalidade, etc)
-                'mape': mape,
+                'wmape': wmape,
                 'bias': bias
             }
 
