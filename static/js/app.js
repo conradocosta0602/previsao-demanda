@@ -346,6 +346,24 @@ function renderizarGrafico(labels, historico, previsao, tipo, loja, sku) {
         titulo = `Demanda do SKU ${sku}`;
     }
 
+    // Calcular escala dinâmica do eixo Y
+    const todosValores = [
+        ...historico.filter(v => v !== null && v !== undefined),
+        ...previsao.filter(v => v !== null && v !== undefined)
+    ];
+
+    const valorMinimo = Math.min(...todosValores);
+    const valorMaximo = Math.max(...todosValores);
+    const amplitude = valorMaximo - valorMinimo;
+
+    // Adicionar margem de 10% acima e abaixo para melhor visualização
+    const margemInferior = valorMinimo - (amplitude * 0.10);
+    const margemSuperior = valorMaximo + (amplitude * 0.10);
+
+    // Garantir que não fique negativo se todos valores forem positivos
+    const yMin = Math.max(0, margemInferior);
+    const yMax = margemSuperior;
+
     demandaChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -428,7 +446,8 @@ function renderizarGrafico(labels, historico, previsao, tipo, loja, sku) {
                     }
                 },
                 y: {
-                    beginAtZero: true,
+                    min: yMin,
+                    max: yMax,
                     grid: {
                         color: 'rgba(0, 0, 0, 0.05)'
                     },
@@ -468,6 +487,20 @@ function configurarGraficoYoY(dados) {
     const demandaAnoAnterior = dados.comparacao_yoy.map(d => d.demanda_ano_anterior || 0);
     const previsaoAtual = dados.comparacao_yoy.map(d => d.previsao_atual || 0);
     const variacoes = dados.comparacao_yoy.map(d => d.variacao_percentual);
+
+    // Calcular escala dinâmica do eixo Y
+    const todosValores = [...demandaAnoAnterior, ...previsaoAtual];
+    const valorMinimo = Math.min(...todosValores);
+    const valorMaximo = Math.max(...todosValores);
+    const amplitude = valorMaximo - valorMinimo;
+
+    // Adicionar margem de 10% acima e abaixo para melhor visualização
+    const margemInferior = valorMinimo - (amplitude * 0.10);
+    const margemSuperior = valorMaximo + (amplitude * 0.10);
+
+    // Garantir que não fique negativo se todos valores forem positivos
+    const yMin = Math.max(0, margemInferior);
+    const yMax = margemSuperior;
 
     yoyChart = new Chart(ctx, {
         type: 'bar',
@@ -543,7 +576,8 @@ function configurarGraficoYoY(dados) {
                     }
                 },
                 y: {
-                    beginAtZero: true,
+                    min: yMin,
+                    max: yMax,
                     grid: {
                         color: 'rgba(0, 0, 0, 0.05)'
                     },
@@ -1094,3 +1128,624 @@ function exibirTabelaFornecedorItem(dados) {
 
     tbody.innerHTML = html;
 }
+
+// ===================================================================
+// FUNCIONALIDADE DO BANCO DE DADOS
+// ===================================================================
+
+// Variável global para armazenar o gráfico de previsão
+let previsaoChart = null;
+
+// Trocar entre tabs (Upload vs Banco)
+function trocarTab(tipo) {
+    const tabBanco = document.getElementById('tabBanco');
+    const tabUpload = document.getElementById('tabUpload');
+    const formBanco = document.getElementById('formBanco');
+    const formUpload = document.getElementById('formUpload');
+
+    if (tipo === 'banco') {
+        tabBanco.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+        tabBanco.style.color = 'white';
+        tabUpload.style.background = '#e0e0e0';
+        tabUpload.style.color = '#666';
+        formBanco.style.display = 'block';
+        formUpload.style.display = 'none';
+    } else {
+        tabUpload.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+        tabUpload.style.color = 'white';
+        tabBanco.style.background = '#e0e0e0';
+        tabBanco.style.color = '#666';
+        formUpload.style.display = 'block';
+        formBanco.style.display = 'none';
+    }
+}
+
+// Ajustar limites de previsão baseado na granularidade
+function ajustarLimitesPrevisao() {
+    const granularidade = document.getElementById('granularidade_banco').value;
+    const inputMeses = document.getElementById('meses_previsao_banco');
+    const helpText = document.getElementById('help_meses');
+
+    let maxValue, defaultValue, helpMessage;
+
+    switch(granularidade) {
+        case 'diario':
+            maxValue = 3;
+            defaultValue = 3;
+            helpMessage = 'Máximo: 3 meses (melhor acurácia para dados diários)';
+            break;
+        case 'semanal':
+            maxValue = 6;
+            defaultValue = 6;
+            helpMessage = 'Máximo: 6 meses (melhor acurácia para dados semanais)';
+            break;
+        case 'mensal':
+        default:
+            maxValue = 24;
+            defaultValue = 6;
+            helpMessage = 'Máximo: 24 meses (melhor acurácia para dados mensais)';
+            break;
+    }
+
+    inputMeses.max = maxValue;
+    inputMeses.value = Math.min(parseInt(inputMeses.value) || defaultValue, maxValue);
+    helpText.textContent = helpMessage;
+}
+
+// Carregar lojas do banco de dados
+async function carregarLojas() {
+    try {
+        const response = await fetch('/api/lojas');
+        const lojas = await response.json();
+        const select = document.getElementById('loja_banco');
+
+        select.innerHTML = '';
+        lojas.forEach(loja => {
+            const option = document.createElement('option');
+            option.value = loja.nome_loja;  // Usar nome_loja como value
+            option.textContent = loja.nome_loja;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Erro ao carregar lojas:', error);
+    }
+}
+
+// Carregar categorias do banco de dados
+async function carregarCategorias() {
+    try {
+        const response = await fetch('/api/categorias');
+        const categorias = await response.json();
+        const select = document.getElementById('categoria_banco');
+
+        select.innerHTML = '';
+        categorias.forEach(cat => {
+            const option = document.createElement('option');
+            option.value = cat;  // cat já é uma string
+            option.textContent = cat;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Erro ao carregar categorias:', error);
+    }
+}
+
+// Carregar produtos do banco de dados
+async function carregarProdutos() {
+    try {
+        const response = await fetch('/api/produtos');
+        const produtos = await response.json();
+        const select = document.getElementById('produto_banco');
+
+        select.innerHTML = '';
+        produtos.forEach(prod => {
+            const option = document.createElement('option');
+            option.value = prod.descricao;  // Usar descrição como value
+            option.textContent = prod.descricao;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Erro ao carregar produtos:', error);
+    }
+}
+
+// Formatar número com separadores de milhares
+function formatNumber(num) {
+    return Math.round(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+// Preencher tabela comparativa com meses nas colunas
+function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'mensal') {
+    const thead = document.getElementById('tabelaComparativaHeader');
+    const tbody = document.getElementById('tabelaComparativaBody');
+    const previsoes = resultado.modelos[melhorModelo]?.futuro?.valores || [];
+    const datasPrevisao = resultado.modelos[melhorModelo]?.futuro?.datas || [];
+    const valoresAnoAnterior = resultado.ano_anterior?.valores || [];
+
+    // Calcular tamanhos dinâmicos baseado no número de períodos
+    const numPeriodos = previsoes.length;
+    let fontSize, padding, labelWidth;
+
+    if (numPeriodos <= 6) {
+        fontSize = '0.9em';
+        padding = '8px';
+        labelWidth = '90px';
+    } else if (numPeriodos <= 9) {
+        fontSize = '0.85em';
+        padding = '6px';
+        labelWidth = '85px';
+    } else if (numPeriodos <= 12) {
+        fontSize = '0.75em';
+        padding = '4px';
+        labelWidth = '70px';
+    } else {
+        fontSize = '0.65em';
+        padding = '3px';
+        labelWidth = '60px';
+    }
+
+    // Função auxiliar para calcular número da semana no ano
+    function getWeekNumber(date) {
+        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+        const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+        return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+    }
+
+    // Criar cabeçalho com os períodos (meses, semanas ou dias)
+    let headerHtml = `<tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: ${fontSize};">`;
+    headerHtml += `<th style="padding: ${padding}; text-align: left; border: 1px solid #ddd; position: sticky; left: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); z-index: 10; width: ${labelWidth};"></th>`;
+
+    const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+    previsoes.forEach((_, index) => {
+        let nomePeriodo = '';
+        if (datasPrevisao[index]) {
+            const data = new Date(datasPrevisao[index]);
+            if (granularidade === 'semanal') {
+                // Para semanal, mostrar "SXX" (número da semana no ano)
+                const semanaAno = getWeekNumber(data);
+                nomePeriodo = `S${semanaAno}`;
+            } else if (granularidade === 'diaria') {
+                // Para diária, mostrar dia/mês
+                nomePeriodo = `${data.getDate()}/${data.getMonth() + 1}`;
+            } else {
+                // Para mensal, mostrar Mês
+                nomePeriodo = meses[data.getMonth()];
+            }
+        } else {
+            nomePeriodo = `P${index + 1}`;
+        }
+        headerHtml += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd;">${nomePeriodo}</th>`;
+    });
+
+    // Adicionar coluna TOTAL
+    headerHtml += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd; background: #5a67d8; font-weight: bold;">TOTAL</th>`;
+    headerHtml += '</tr>';
+    thead.innerHTML = headerHtml;
+
+    // Criar linhas de dados
+    let totalPrevisao = 0;
+    let totalReal = 0;
+
+    // Linha Previsão
+    let rowPrevisao = `<tr style="background: #f0f4ff; font-size: ${fontSize};">`;
+    rowPrevisao += `<td style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; position: sticky; left: 0; background: #f0f4ff; z-index: 5; width: ${labelWidth};">Previsão</td>`;
+    previsoes.forEach((valor) => {
+        totalPrevisao += valor;
+        rowPrevisao += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: 500;">${formatNumber(valor)}</td>`;
+    });
+    rowPrevisao += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #e0e7ff;">${formatNumber(totalPrevisao)}</td>`;
+    rowPrevisao += '</tr>';
+
+    // Linha Real (Ano Anterior) - Limitar ao número de períodos de previsão
+    let rowReal = `<tr style="background: white; font-size: ${fontSize};">`;
+    rowReal += `<td style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; width: ${labelWidth};">Real</td>`;
+    // Mostrar apenas os períodos correspondentes ao número de meses de previsão
+    for (let i = 0; i < numPeriodos; i++) {
+        const valor = valoresAnoAnterior[i] || 0;
+        totalReal += valor;
+        rowReal += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd;">${formatNumber(valor)}</td>`;
+    }
+    rowReal += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #f3f4f6;">${formatNumber(totalReal)}</td>`;
+    rowReal += '</tr>';
+
+    // Linha Variação
+    let rowVariacao = `<tr style="background: #fef3c7; font-size: ${fontSize};">`;
+    rowVariacao += `<td style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; position: sticky; left: 0; background: #fef3c7; z-index: 5; width: ${labelWidth};">Variação %</td>`;
+
+    previsoes.forEach((valorPrevisao, index) => {
+        const valorAnoAnterior = valoresAnoAnterior[index] || 0;
+        const variacao = valorAnoAnterior > 0
+            ? ((valorPrevisao - valorAnoAnterior) / valorAnoAnterior * 100)
+            : 0;
+
+        const variacaoColor = variacao >= 0 ? '#10b981' : '#ef4444';
+        const variacaoSinal = variacao >= 0 ? '+' : '';
+
+        rowVariacao += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; color: ${variacaoColor};">${variacaoSinal}${variacao.toFixed(1)}%</td>`;
+    });
+
+    // Variação total
+    const variacaoTotal = totalReal > 0
+        ? ((totalPrevisao - totalReal) / totalReal * 100)
+        : 0;
+    const variacaoTotalColor = variacaoTotal >= 0 ? '#10b981' : '#ef4444';
+    const variacaoTotalSinal = variacaoTotal >= 0 ? '+' : '';
+
+    rowVariacao += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; color: ${variacaoTotalColor}; background: #fde68a;">${variacaoTotalSinal}${variacaoTotal.toFixed(1)}%</td>`;
+    rowVariacao += '</tr>';
+
+    tbody.innerHTML = rowPrevisao + rowReal + rowVariacao;
+}
+
+// Criar gráfico de previsão simplificado com 3 linhas
+function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorModelo, granularidade = 'mensal') {
+    const canvas = document.getElementById('previsaoChart');
+    if (!canvas) {
+        console.error('Canvas previsaoChart não encontrado');
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
+
+    // Destruir gráfico anterior se existir
+    if (previsaoChart) {
+        previsaoChart.destroy();
+    }
+
+    // Preparar dados da base histórica (50%)
+    const datasBase = historicoBase.datas || [];
+    const valoresBase = historicoBase.valores || [];
+
+    // Preparar dados do período de teste (25%)
+    const datasTeste = historicoTeste.datas || [];
+    const valoresTeste = historicoTeste.valores || [];
+
+    // Preparar dados de previsão do melhor modelo
+    const previsaoTeste = modelos[melhorModelo]?.teste?.valores || [];
+    const datasPrevisaoTeste = modelos[melhorModelo]?.teste?.datas || [];
+
+    const previsaoFuturo = modelos[melhorModelo]?.futuro?.valores || [];
+    const datasPrevisaoFuturo = modelos[melhorModelo]?.futuro?.datas || [];
+
+    // Combinar todas as datas para criar labels
+    const todasDatas = [...datasBase, ...datasTeste, ...datasPrevisaoFuturo];
+    const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+    // Formatar labels baseado na granularidade
+    const labels = todasDatas.map(dataStr => {
+        const data = new Date(dataStr);
+        if (granularidade === 'semanal') {
+            // Para semanal, mostrar "Sem XX" (número da semana no ano)
+            const semanaAno = getWeekNumber(data);
+            return `S${semanaAno}/${data.getFullYear().toString().slice(-2)}`;
+        } else if (granularidade === 'diaria') {
+            // Para diária, mostrar dia/mês
+            return `${data.getDate()}/${data.getMonth() + 1}`;
+        } else {
+            // Para mensal, mostrar Mês/Ano
+            return `${meses[data.getMonth()]}/${data.getFullYear().toString().slice(-2)}`;
+        }
+    });
+
+    // Função auxiliar para calcular número da semana no ano
+    function getWeekNumber(date) {
+        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+        const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+        return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+    }
+
+    // Criar datasets
+    const datasets = [];
+
+    // 1. Dataset Base Histórica (50%) - Linha azul sólida
+    const dadosBase = [...valoresBase];
+    while (dadosBase.length < todasDatas.length) {
+        dadosBase.push(null);
+    }
+
+    datasets.push({
+        label: 'Base Histórica (50%)',
+        data: dadosBase,
+        borderColor: '#0070f3',
+        backgroundColor: 'rgba(0, 112, 243, 0.1)',
+        borderWidth: 2,
+        fill: false,
+        tension: 0.1,
+        pointRadius: 3
+    });
+
+    // 2. Dataset Teste - Valores Reais (25%) - Linha verde sólida
+    const dadosTesteReal = new Array(valoresBase.length).fill(null);
+    dadosTesteReal.push(...valoresTeste);
+    while (dadosTesteReal.length < todasDatas.length) {
+        dadosTesteReal.push(null);
+    }
+
+    datasets.push({
+        label: 'Teste - Real (25%)',
+        data: dadosTesteReal,
+        borderColor: '#10b981',
+        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+        borderWidth: 2,
+        fill: false,
+        tension: 0.1,
+        pointRadius: 4
+    });
+
+    // 3. Dataset Teste - Previsão (25%) - Linha verde tracejada
+    const dadosTestePrevisao = new Array(valoresBase.length).fill(null);
+    dadosTestePrevisao.push(...previsaoTeste);
+    while (dadosTestePrevisao.length < todasDatas.length) {
+        dadosTestePrevisao.push(null);
+    }
+
+    datasets.push({
+        label: 'Teste - Previsão (25%)',
+        data: dadosTestePrevisao,
+        borderColor: '#059669',
+        backgroundColor: 'rgba(5, 150, 105, 0.1)',
+        borderWidth: 2,
+        borderDash: [5, 5],
+        fill: false,
+        tension: 0.1,
+        pointRadius: 3
+    });
+
+    // 4. Dataset Previsão Futura (25%) - Linha roxa tracejada
+    const dadosPrevisaoFuturo = new Array(valoresBase.length + valoresTeste.length).fill(null);
+    dadosPrevisaoFuturo.push(...previsaoFuturo);
+
+    datasets.push({
+        label: `Previsão Futura (${melhorModelo})`,
+        data: dadosPrevisaoFuturo,
+        borderColor: '#8b5cf6',
+        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+        borderWidth: 3,
+        borderDash: [8, 4],
+        fill: false,
+        tension: 0.1,
+        pointRadius: 4
+    });
+
+    // Calcular escala dinâmica do eixo Y
+    const todosValores = [
+        ...valoresBase,
+        ...valoresTeste,
+        ...previsaoTeste,
+        ...previsaoFuturo
+    ].filter(v => v !== null && v !== undefined);
+
+    const valorMinimo = Math.min(...todosValores);
+    const valorMaximo = Math.max(...todosValores);
+    const amplitude = valorMaximo - valorMinimo;
+
+    // Adicionar margem de 10% acima e abaixo para melhor visualização
+    const margemInferior = valorMinimo - (amplitude * 0.10);
+    const margemSuperior = valorMaximo + (amplitude * 0.10);
+
+    // Garantir que não fique negativo se todos valores forem positivos
+    const yMin = Math.max(0, margemInferior);
+    const yMax = margemSuperior;
+
+    // Configurar autoSkip baseado no número de períodos
+    const totalPeriodos = labels.length;
+    const autoSkipLabels = totalPeriodos > 50;  // Auto skip apenas se mais de 50 períodos
+
+    // Criar gráfico
+    previsaoChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 15
+                    }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                label += formatNumber(context.parsed.y);
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    min: yMin,
+                    max: yMax,
+                    title: {
+                        display: true,
+                        text: 'Quantidade'
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return formatNumber(value);
+                        }
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Período'
+                    },
+                    ticks: {
+                        maxRotation: 45,
+                        minRotation: 45,
+                        autoSkip: autoSkipLabels,  // Auto skip apenas para muitos períodos
+                        maxTicksLimit: autoSkipLabels ? 20 : undefined  // Limitar a 20 se auto skip ativo
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Processar formulário do banco
+document.getElementById('bancoForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    // Esconder resultados e erros anteriores
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    // Mostrar progresso
+    document.getElementById('progress').style.display = 'block';
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+
+    // Simular progresso
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        progress += 5;
+        if (progress <= 90) {
+            progressFill.style.width = progress + '%';
+            if (progress < 30) {
+                progressText.textContent = 'Consultando banco de dados...';
+            } else if (progress < 60) {
+                progressText.textContent = 'Aplicando modelos estatísticos...';
+            } else {
+                progressText.textContent = 'Gerando previsões...';
+            }
+        }
+    }, 300);
+
+    try {
+        // Coletar dados do formulário
+        const dados = {
+            loja: document.getElementById('loja_banco').value,
+            categoria: document.getElementById('categoria_banco').value,
+            produto: document.getElementById('produto_banco').value,
+            meses_previsao: parseInt(document.getElementById('meses_previsao_banco').value),
+            granularidade: document.getElementById('granularidade_banco').value
+        };
+
+        console.log('Enviando dados:', dados);
+
+        // Enviar requisição
+        const response = await fetch('/api/gerar_previsao_banco', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(dados)
+        });
+
+        const resultado = await response.json();
+
+        clearInterval(progressInterval);
+        progressFill.style.width = '100%';
+        progressText.textContent = 'Concluído!';
+
+        setTimeout(() => {
+            document.getElementById('progress').style.display = 'none';
+        }, 500);
+
+        if (response.status === 200) {
+            console.log('Resultado recebido:', resultado);
+
+            // Mostrar resultados
+            document.getElementById('results').style.display = 'block';
+
+            // Obter métricas do melhor modelo
+            const melhorModelo = resultado.melhor_modelo;
+            const metricasMelhor = resultado.metricas[melhorModelo] || {};
+
+            // Calcular totais de previsão futura
+            const previsaoFuturo = resultado.modelos[melhorModelo]?.futuro?.valores || [];
+            const totalPrevisao = previsaoFuturo.reduce((sum, val) => sum + val, 0);
+
+            // Total do ano anterior (apenas os períodos correspondentes à previsão)
+            const valoresAnoAnterior = resultado.ano_anterior?.valores || [];
+            const numPeriodos = previsaoFuturo.length;
+            const totalAnoAnterior = valoresAnoAnterior.slice(0, numPeriodos).reduce((sum, val) => sum + val, 0);
+
+            // Calcular variação de demanda: (total previsão - total ano anterior) / total ano anterior * 100
+            const variacaoDemanda = totalAnoAnterior > 0
+                ? ((totalPrevisao - totalAnoAnterior) / totalAnoAnterior * 100)
+                : 0;
+
+            // Preencher KPIs no topo (métricas do período de teste)
+            document.getElementById('kpi_wmape').textContent = `${(metricasMelhor.wmape || 0).toFixed(1)}%`;
+            document.getElementById('kpi_bias').textContent = `${(metricasMelhor.bias || 0).toFixed(1)}%`;
+
+            const variacaoSinal = variacaoDemanda >= 0 ? '+' : '';
+            document.getElementById('kpi_variacao').textContent = `${variacaoSinal}${variacaoDemanda.toFixed(1)}%`;
+
+            // Criar gráfico principal com 3 linhas (base, teste, futuro)
+            criarGraficoPrevisao(
+                resultado.historico_base,
+                resultado.historico_teste,
+                resultado.modelos,
+                melhorModelo,
+                resultado.granularidade || 'mensal'  // Passar granularidade para formatação de labels
+            );
+
+            // Preencher tabela comparativa
+            preencherTabelaComparativa(resultado, melhorModelo, resultado.granularidade || 'mensal');
+
+        } else {
+            // Mostrar erro
+            let detalhesHtml = '';
+            if (resultado.detalhes) {
+                detalhesHtml = `
+                    <div style="margin-top: 15px; padding: 10px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px;">
+                        <strong>Detalhes:</strong><br>
+                        Períodos encontrados: ${resultado.detalhes.periodos_encontrados}<br>
+                        Loja: ${resultado.detalhes.filtros.loja}<br>
+                        Categoria: ${resultado.detalhes.filtros.categoria}<br>
+                        Produto: ${resultado.detalhes.filtros.produto}<br>
+                        Granularidade: ${resultado.detalhes.filtros.granularidade}
+                    </div>
+                `;
+            }
+
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('errorMessage').innerHTML = resultado.erro + detalhesHtml;
+        }
+
+    } catch (error) {
+        clearInterval(progressInterval);
+        document.getElementById('progress').style.display = 'none';
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('errorMessage').textContent = 'Erro ao gerar previsão: ' + error.message;
+        console.error('Erro:', error);
+    }
+});
+
+// Inicializar ao carregar a página
+document.addEventListener('DOMContentLoaded', function() {
+    // Carregar dados dos dropdowns
+    carregarLojas();
+    carregarCategorias();
+    carregarProdutos();
+
+    // Configurar listener para ajuste de limites
+    const granularidadeSelect = document.getElementById('granularidade_banco');
+    if (granularidadeSelect) {
+        granularidadeSelect.addEventListener('change', ajustarLimitesPrevisao);
+        ajustarLimitesPrevisao(); // Chamar uma vez para configurar valores iniciais
+    }
+});

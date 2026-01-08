@@ -205,6 +205,11 @@ FORN_A,PROD001,CD_PRINCIPAL,CD,30,30,15.50,200
 16. ✅ **Ajuste Automático da Tabela YoY** - Períodos comparativos sincronizados
 17. ✅ **Separação de Conceitos** - tamanho_validacao_futura vs meses_previsao
 18. ✅ **Aplicação de Ajuste Sazonal no Teste** - Período de teste também ajustado
+19. ✅ **Correção de Número de Períodos** - Conversão correta meses→semanas/dias (6 meses = 24 semanas)
+20. ✅ **Cabeçalhos Dinâmicos na Tabela** - S1, S2 para semanal; Jan, Fev para mensal
+21. ✅ **Queries SQL Consistentes** - Mesmo intervalo de datas entre granularidades
+22. ✅ **Logging Detalhado de Previsões** - Total base, ajustes e previsão final
+23. ✅ **Documentação de Granularidade** - Guia completo sobre diferenças esperadas
 
 ## 📖 Documentação Completa
 
@@ -214,6 +219,12 @@ FORN_A,PROD001,CD_PRINCIPAL,CD,30,30,15.50,200
   - Telas e funcionalidades
   - Conceitos de reabastecimento
   - FAQ completo
+
+- **[GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md)** - ⚠️ **LEITURA OBRIGATÓRIA**
+  - Por que previsões variam entre granularidades (mensal/semanal/diária)
+  - Diferenças esperadas e aceitáveis
+  - Recomendações de uso por caso de negócio
+  - Validação e interpretação de resultados
 
 - **[Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx](Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx)** - Status das melhorias
 
@@ -241,8 +252,11 @@ R: Mínimo 12 meses. Ideal: 24+ meses para detecção de sazonalidade.
 **P: Como funciona a classificação ABC?**
 R: Automática baseada na demanda mensal média.
 
-**P: Posso usar dados diários?**
-R: Não. Agregue para mensal antes do upload.
+**P: Por que previsões mensais e semanais dão resultados diferentes?**
+R: ⚠️ **IMPORTANTE:** Diferenças de 5-15% são normais e esperadas ao mudar granularidade. Consulte [GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md) para detalhes.
+
+**P: Qual granularidade devo usar?**
+R: Mensal para planejamento estratégico, Semanal para reabastecimento, Diária para operações day-to-day.
 
 ## 🤝 Contribuição
 
@@ -337,9 +351,98 @@ Para dúvidas ou problemas:
 - Garante consistência entre teste e previsão futura
 - Arquivo: `app.py` (linhas 2591-2623)
 
+### 7. Correção de Número de Períodos por Granularidade
+**Problema resolvido:** Ao solicitar "6 meses" com granularidade semanal, sistema gerava apenas 6 semanas em vez de 24 semanas (~6 meses).
+
+**Solução implementada:**
+```python
+# Conversão de meses para períodos baseado na granularidade
+if granularidade == 'semanal':
+    periodos_previsao = meses_previsao * 4  # 4 semanas por mês
+elif granularidade == 'diario':
+    periodos_previsao = meses_previsao * 30  # ~30 dias por mês
+else:  # mensal
+    periodos_previsao = meses_previsao
+```
+- Arquivo: `app.py` (linhas 2258-2268)
+- Substituição de `meses_previsao` por `periodos_previsao` em 7 locais críticos
+- Log: "Periodos de previsao: 24 (6 meses em granularidade semanal)"
+
+**Resultado:** 6 meses agora gera corretamente 6 períodos mensais, 24 períodos semanais ou 180 períodos diários.
+
+### 8. Cabeçalhos Dinâmicos na Tabela Comparativa
+**Problema resolvido:** Tabela YoY sempre mostrava nomes de meses (Jan, Fev) independente da granularidade.
+
+**Solução implementada:**
+```javascript
+if (granularidade === 'semanal') {
+    const semanaAno = getWeekNumber(data);
+    nomePeriodo = `S${semanaAno}`;  // S1, S2, S3...
+} else if (granularidade === 'diaria') {
+    nomePeriodo = `${data.getDate()}/${data.getMonth() + 1}`;  // 15/01
+} else {
+    nomePeriodo = meses[data.getMonth()];  // Jan, Fev
+}
+```
+- Arquivo: `static/js/app.js` (linhas 1287-1321)
+- Adicionada função `getWeekNumber` para cálculo ISO de semana
+- Tabela agora exibe corretamente S1-S52 para semanal, dias para diário
+
+### 9. Queries SQL Consistentes entre Granularidades
+**Problema resolvido:** `DATE_TRUNC('week')` e `DATE_TRUNC('month')` capturavam intervalos diferentes de datas, resultando em totais históricos divergentes (3,913k vs 3,957k = 1.1% diferença).
+
+**Solução implementada:**
+```sql
+-- Query semanal agora usa CTE para garantir mesmo intervalo
+WITH dados_diarios AS (
+    SELECT h.data, SUM(h.qtd_venda) as qtd_venda
+    FROM historico_vendas_diario h
+    WHERE h.data >= CURRENT_DATE - INTERVAL '2 years'
+    GROUP BY h.data
+)
+SELECT DATE_TRUNC('week', data)::date as data,
+       SUM(qtd_venda) as qtd_venda
+FROM dados_diarios
+GROUP BY DATE_TRUNC('week', data)
+```
+- Arquivo: `app.py` (linhas 2311-2334, 2388-2408)
+- Garante que agregação semanal usa apenas dias dentro do intervalo de 2 anos
+- Mesma lógica aplicada para query do ano anterior
+
+### 10. Logging Detalhado de Previsões e Ajustes
+**Problema resolvido:** Difícil diagnosticar diferenças entre granularidades sem visibilidade dos valores intermediários.
+
+**Solução implementada:**
+```python
+# Logs adicionados em pontos críticos
+print(f"Total dados históricos (últimos 2 anos): {total:,.2f} em {n} períodos")
+print(f"Total da série completa: {total:,.2f}")
+print(f"Valores dos fatores mensais: {dict(sorted(fatores_sazonais.items()))}")
+print(f"Previsão base (sem ajuste): Total={total:,.2f}, Média={media:,.2f}")
+print(f"Total previsto para {n} períodos: {total:,.2f}")
+```
+- Arquivo: `app.py` (linhas 2352-2355, 2490-2494, 2547, 2569, 2698-2701, 2744-2746)
+- Rastreamento completo: dados históricos → série limpa → previsão base → ajustes sazonais → previsão final
+
+**Resultado:** Possibilita análise detalhada do fluxo de previsão e identificação precisa de divergências.
+
+### 11. Documentação Completa sobre Granularidade
+**Problema resolvido:** Usuários não entendiam por que previsões mensais e semanais divergiam em 5-15%.
+
+**Solução implementada:**
+- Criado documento [GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md) com:
+  - Explicação técnica das causas (janelas adaptativas, agregação, fatores sazonais)
+  - Tabelas de diferenças esperadas vs problemáticas
+  - Recomendações por caso de uso (estratégico, operacional, day-to-day)
+  - FAQ e exemplos práticos
+- Adicionado FAQ no README sobre granularidade
+- Marcado como "LEITURA OBRIGATÓRIA" na seção de documentação
+
+**Resultado:** Transparência total sobre comportamento do sistema e expectativas corretas para usuários.
+
 ---
 
-**Versão:** 3.1
+**Versão:** 3.1.1
 **Status:** Em Produção
 **Última Atualização:** Janeiro 2026
 

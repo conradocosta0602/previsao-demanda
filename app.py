@@ -19,6 +19,10 @@ from core.aggregator import CDAggregator, gerar_previsoes_cd
 from core.reporter import ExcelReporter, gerar_nome_arquivo, preparar_resultados
 from core.replenishment_calculator import processar_reabastecimento
 from core.smart_alerts import generate_alerts_for_forecast
+from core.outlier_detector import auto_clean_outliers
+from core.validation import validate_series
+from core.seasonality_detector import detect_seasonality
+from core.auto_logger import get_auto_logger
 
 # Configuração do Flask
 app = Flask(__name__)
@@ -283,7 +287,7 @@ def processar_previsao(arquivo_excel: str,
         # Contar quantos eventos foram aplicados
         eventos_aplicados = df_previsoes_lojas[df_previsoes_lojas['Evento_Aplicado'].notna()]
         if len(eventos_aplicados) > 0:
-            print(f"   ✓ {len(eventos_aplicados)} previsões ajustadas por eventos sazonais")
+            print(f"   OK {len(eventos_aplicados)} previsoes ajustadas por eventos sazonais")
             eventos_unicos = eventos_aplicados['Evento_Aplicado'].unique()
             for evento in eventos_unicos:
                 count = len(eventos_aplicados[eventos_aplicados['Evento_Aplicado'] == evento])
@@ -1819,6 +1823,1188 @@ def processar_reabastecimento_v3():
         print(f"[ERRO] {str(e)}")
         print(traceback.format_exc())
         return jsonify({'success': False, 'erro': f'Erro interno: {str(e)}'}), 500
+
+
+# ===== ROTAS DE KPIs =====
+@app.route('/kpis')
+def kpis():
+    """Página de KPIs"""
+    return render_template('kpis.html')
+
+
+@app.route('/api/kpis/filtros', methods=['GET'])
+def kpis_filtros():
+    """Retorna opções para filtros de KPIs"""
+    try:
+        # TODO: Buscar do banco de dados ou cache
+        # Por enquanto, retornar dados mockados
+        filtros = {
+            'lojas': [
+                {'id': 1, 'nome': 'Loja 1'},
+                {'id': 2, 'nome': 'Loja 2'},
+                {'id': 3, 'nome': 'Loja 3'}
+            ],
+            'produtos': [
+                {'id': 1001, 'nome': 'Produto A'},
+                {'id': 1002, 'nome': 'Produto B'},
+                {'id': 1003, 'nome': 'Produto C'}
+            ],
+            'categorias': [
+                'Alimentos',
+                'Bebidas',
+                'Limpeza',
+                'Higiene'
+            ],
+            'fornecedores': [
+                'Fornecedor 1',
+                'Fornecedor 2',
+                'Fornecedor 3'
+            ]
+        }
+        return jsonify(filtros)
+    except Exception as e:
+        print(f"Erro ao buscar filtros: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/kpis/dados', methods=['GET'])
+def kpis_dados():
+    """Retorna dados de KPIs com base nos filtros"""
+    try:
+        visao = request.args.get('visao', 'mensal')
+        loja = request.args.get('loja', '')
+        produto = request.args.get('produto', '')
+        categoria = request.args.get('categoria', '')
+        fornecedor = request.args.get('fornecedor', '')
+
+        # TODO: Buscar dados reais do banco/cache baseado nos filtros
+        # Por enquanto, retornar dados mockados
+
+        import random
+        from datetime import datetime, timedelta
+
+        # Gerar dados mockados para demonstração
+        if visao == 'mensal':
+            # Últimos 12 meses
+            meses = []
+            data_base = datetime.now()
+            for i in range(12, 0, -1):
+                mes = data_base - timedelta(days=i*30)
+                meses.append(mes.strftime('%b/%y'))
+
+            wmape_mensal = [{'mes': m, 'wmape': random.uniform(5, 15)} for m in meses]
+            bias_mensal = [{'mes': m, 'bias': random.uniform(-2, 2)} for m in meses]
+            ruptura_mensal = [{'mes': m, 'taxa_ruptura': random.uniform(2, 8)} for m in meses]
+            cobertura_mensal = [{'mes': m, 'cobertura_media': random.uniform(15, 25)} for m in meses]
+            servico_mensal = [{'mes': m, 'nivel_servico': random.uniform(92, 98)} for m in meses]
+
+            classificacao = []
+            for m in meses:
+                classificacao.append({
+                    'mes': m,
+                    'excelente': random.randint(50, 80),
+                    'bom': random.randint(30, 50),
+                    'aceitavel': random.randint(10, 30),
+                    'fraca': random.randint(5, 15)
+                })
+
+        else:  # semanal
+            # Últimas 26 semanas
+            semanas = []
+            data_base = datetime.now()
+            for i in range(26, 0, -1):
+                semana = data_base - timedelta(days=i*7)
+                semanas.append(semana.strftime('S%V/%y'))
+
+            wmape_mensal = [{'semana': s, 'wmape': random.uniform(5, 15)} for s in semanas]
+            bias_mensal = [{'semana': s, 'bias': random.uniform(-2, 2)} for s in semanas]
+            ruptura_mensal = [{'semana': s, 'taxa_ruptura': random.uniform(2, 8)} for s in semanas]
+            cobertura_mensal = [{'semana': s, 'cobertura_media': random.uniform(15, 25)} for s in semanas]
+            classificacao = []
+            servico_mensal = []
+
+        # Métricas atuais (últimos 30 dias)
+        metricas_atuais = {
+            'wmape': random.uniform(8, 12),
+            'bias': random.uniform(-1.5, 1.5),
+            'previsoes_excelentes': random.randint(120, 180),
+            'total_skus': 245,
+            'taxa_ruptura': random.uniform(3, 7),
+            'cobertura_media': random.uniform(18, 22),
+            'nivel_servico': random.uniform(93, 97),
+            'skus_criticos': random.randint(5, 15),
+
+            # Tendências
+            'wmape_tendencia': {'tipo': 'down', 'valor': '2.3%'},
+            'bias_tendencia': {'tipo': 'stable', 'valor': '0.1%'},
+            'excelentes_tendencia': {'tipo': 'up', 'valor': '5.2%'},
+            'ruptura_tendencia': {'tipo': 'down', 'valor': '1.2%'},
+            'cobertura_tendencia': {'tipo': 'up', 'valor': '0.5 dias'},
+            'servico_tendencia': {'tipo': 'up', 'valor': '2.1%'},
+            'criticos_tendencia': {'tipo': 'down', 'valor': '3 SKUs'}
+        }
+
+        # Top/Bottom Performers
+        performers = [
+            {
+                'sku': '1001',
+                'descricao': 'Produto A - Amostra',
+                'loja': 'Loja 1',
+                'wmape': 5.2,
+                'bias': 0.3,
+                'taxa_ruptura': 1.5,
+                'cobertura': 22.5
+            },
+            {
+                'sku': '1002',
+                'descricao': 'Produto B - Amostra',
+                'loja': 'Loja 2',
+                'wmape': 8.7,
+                'bias': -0.8,
+                'taxa_ruptura': 3.2,
+                'cobertura': 19.3
+            },
+            {
+                'sku': '1003',
+                'descricao': 'Produto C - Amostra',
+                'loja': 'Loja 1',
+                'wmape': 25.4,
+                'bias': 5.2,
+                'taxa_ruptura': 18.7,
+                'cobertura': 8.2
+            },
+            {
+                'sku': '1004',
+                'descricao': 'Produto D - Amostra',
+                'loja': 'Loja 3',
+                'wmape': 12.3,
+                'bias': -2.1,
+                'taxa_ruptura': 5.8,
+                'cobertura': 15.7
+            }
+        ]
+
+        resultado = {
+            'metricas_atuais': metricas_atuais,
+            'series_temporais': {
+                'wmape_mensal' if visao == 'mensal' else 'wmape_semanal': wmape_mensal,
+                'bias_mensal' if visao == 'mensal' else 'bias_semanal': bias_mensal,
+                'classificacao': classificacao if visao == 'mensal' else [],
+                'ruptura_mensal' if visao == 'mensal' else 'ruptura_semanal': ruptura_mensal,
+                'cobertura_mensal' if visao == 'mensal' else 'cobertura_semanal': cobertura_mensal,
+                'servico_mensal': servico_mensal if visao == 'mensal' else []
+            },
+            'performers': performers
+        }
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar dados de KPIs: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==============================================================================
+# ROTAS DE API - INTEGRAÇÃO COM BANCO DE DADOS
+# ==============================================================================
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+# Configuração do banco
+DB_CONFIG = {
+    'host': 'localhost',
+    'database': 'demanda_reabastecimento',
+    'user': 'postgres',
+    'password': 'FerreiraCost@01',
+    'port': 5432
+}
+
+def get_db_connection():
+    """Cria conexão com o banco PostgreSQL"""
+    return psycopg2.connect(**DB_CONFIG)
+
+
+@app.route('/visualizacao')
+def visualizacao_demanda():
+    """Página de visualização de demanda com dados reais"""
+    return render_template('visualizacao_demanda.html')
+
+
+@app.route('/api/lojas', methods=['GET'])
+def api_lojas():
+    """Retorna lista de lojas do banco"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT cod_empresa, nome_loja, regiao, tipo
+            FROM cadastro_lojas
+            WHERE ativo = TRUE
+            ORDER BY nome_loja
+        """)
+
+        lojas = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Adicionar opção "Todas"
+        resultado = [{'cod_empresa': 'TODAS', 'nome_loja': 'TODAS - Todas as Lojas (Agregado)', 'regiao': None, 'tipo': None}]
+        resultado.extend(lojas)
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar lojas: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/categorias', methods=['GET'])
+def api_categorias():
+    """Retorna lista de categorias do banco"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT DISTINCT categoria
+            FROM cadastro_produtos
+            WHERE categoria IS NOT NULL AND ativo = TRUE
+            ORDER BY categoria
+        """)
+
+        categorias = [row[0] for row in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+
+        # Adicionar opção "Todas"
+        resultado = ['TODAS - Todas as Categorias']
+        resultado.extend(categorias)
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar categorias: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/produtos', methods=['GET'])
+def api_produtos():
+    """Retorna lista de produtos do banco (com filtros opcionais)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Parâmetros de filtro
+        loja = request.args.get('loja', 'TODAS')
+        categoria = request.args.get('categoria', 'TODAS')
+
+        # Query base
+        query = """
+            SELECT DISTINCT p.codigo, p.descricao, p.categoria, p.subcategoria, p.curva_abc
+            FROM cadastro_produtos p
+            WHERE p.ativo = TRUE
+        """
+
+        params = []
+
+        # Filtrar por categoria
+        if categoria and categoria != 'TODAS' and not categoria.startswith('TODAS -'):
+            query += " AND p.categoria = %s"
+            params.append(categoria)
+
+        # Se filtrar por loja específica, mostrar só produtos com vendas nessa loja
+        if loja and loja != 'TODAS':
+            query += """
+                AND EXISTS (
+                    SELECT 1 FROM historico_vendas_diario h
+                    WHERE h.codigo = p.codigo AND h.cod_empresa = %s
+                )
+            """
+            params.append(int(loja))
+
+        query += " ORDER BY p.descricao LIMIT 200"
+
+        cursor.execute(query, params)
+        produtos = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Adicionar opção "Todos"
+        resultado = [{'codigo': 'TODOS', 'descricao': 'TODOS - Todos os Produtos (Agregado)', 'categoria': None, 'subcategoria': None, 'curva_abc': None}]
+        resultado.extend(produtos)
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar produtos: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/vendas', methods=['GET'])
+def api_vendas():
+    """Retorna dados de vendas históricos"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Parâmetros
+        loja = request.args.get('loja', 'TODAS')
+        produto = request.args.get('produto', 'TODOS')
+        categoria = request.args.get('categoria', 'TODAS')
+        meses = int(request.args.get('meses', 12))
+
+        # Query base
+        query = """
+            SELECT
+                DATE_TRUNC('day', h.data) as data,
+                SUM(h.qtd_venda) as qtd_venda,
+                SUM(h.valor_venda) as valor_venda,
+                COUNT(DISTINCT h.cod_empresa) as num_lojas,
+                COUNT(DISTINCT h.codigo) as num_produtos
+            FROM historico_vendas_diario h
+        """
+
+        # Joins se necessário
+        if categoria and categoria != 'TODAS' and not categoria.startswith('TODAS -'):
+            query += " JOIN cadastro_produtos p ON h.codigo = p.codigo"
+
+        query += " WHERE h.data >= CURRENT_DATE - INTERVAL '%s months'"
+        params = [meses]
+
+        # Filtros
+        if loja and loja != 'TODAS':
+            query += " AND h.cod_empresa = %s"
+            params.append(int(loja))
+
+        if produto and produto != 'TODOS':
+            query += " AND h.codigo = %s"
+            params.append(int(produto))
+
+        if categoria and categoria != 'TODAS' and not categoria.startswith('TODAS -'):
+            query += " AND p.categoria = %s"
+            params.append(categoria)
+
+        query += """
+            GROUP BY DATE_TRUNC('day', h.data)
+            ORDER BY data
+        """
+
+        cursor.execute(query, params)
+        vendas = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Converter para formato JSON-friendly
+        resultado = []
+        for row in vendas:
+            resultado.append({
+                'data': row['data'].strftime('%Y-%m-%d'),
+                'qtd_venda': float(row['qtd_venda']),
+                'valor_venda': float(row['valor_venda']) if row['valor_venda'] else 0,
+                'num_lojas': row['num_lojas'],
+                'num_produtos': row['num_produtos']
+            })
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar vendas: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/gerar_previsao_banco', methods=['POST'])
+def api_gerar_previsao_banco():
+    """
+    Gera previsão de demanda usando dados do banco PostgreSQL
+    """
+    try:
+        # Inicializar auto-logger para auditoria
+        logger = get_auto_logger()
+
+        dados = request.get_json()
+
+        loja = dados.get('loja', '')
+        categoria = dados.get('categoria', '')
+        produto = dados.get('produto', '')
+        meses_previsao = int(dados.get('meses_previsao', 3))
+        granularidade = dados.get('granularidade', 'mensal')
+
+        # Normalizar filtros ANTES de fazer prints (remover emojis e prefixos)
+        # Se categoria começa com "TODAS -", considerar como TODAS
+        if categoria and categoria.startswith('TODAS'):
+            categoria = 'TODAS'
+
+        # Se produto começa com "TODOS" ou tem emoji, considerar como TODOS
+        if produto and (produto.startswith('TODOS') or '📦' in produto):
+            produto = 'TODOS'
+
+        # Se loja começa com "TODAS" ou tem emoji, considerar como TODAS
+        if loja and (loja.startswith('TODAS') or '📊' in loja):
+            loja = 'TODAS'
+
+        print(f"\n=== Gerando Previsao do Banco ===")
+        print(f"Loja: {loja}")
+        print(f"Categoria: {categoria}")
+        print(f"Produto: {produto}")
+        print(f"Meses Previsao: {meses_previsao}")
+        print(f"Granularidade: {granularidade}")
+
+        # Converter meses_previsao para número de períodos baseado na granularidade
+        if granularidade == 'semanal':
+            # Para semanal: aproximadamente 4 semanas por mês
+            periodos_previsao = meses_previsao * 4
+        elif granularidade == 'diario':
+            # Para diário: aproximadamente 30 dias por mês
+            periodos_previsao = meses_previsao * 30
+        else:  # mensal
+            periodos_previsao = meses_previsao
+
+        print(f"Periodos de previsao: {periodos_previsao} ({meses_previsao} meses em granularidade {granularidade})", flush=True)
+
+        # Conectar ao banco
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Construir query baseada nos filtros
+        where_clauses = []
+        params = []
+
+        # Filtro de loja (se não for TODAS)
+        if loja and loja != 'TODAS' and not loja.startswith('TODAS'):
+            where_clauses.append("h.cod_empresa = %s")
+            params.append(loja)
+
+        # Filtro de categoria (se não for TODAS)
+        if categoria and categoria != 'TODAS' and not categoria.startswith('TODAS'):
+            where_clauses.append("p.categoria = %s")
+            params.append(categoria)
+
+        # Filtro de produto (se não for TODOS)
+        if produto and produto != 'TODOS' and not produto.startswith('TODOS'):
+            where_clauses.append("h.codigo = %s")
+            params.append(produto)
+
+        where_sql = " AND " + " AND ".join(where_clauses) if where_clauses else ""
+
+        # Query para buscar dados históricos baseado na granularidade
+        # IMPORTANTE: Todas as queries devem usar o mesmo intervalo de datas base
+        # para garantir comparabilidade entre granularidades
+        if granularidade == 'diario':
+            query = f"""
+                SELECT
+                    h.data,
+                    SUM(h.qtd_venda) as qtd_venda,
+                    SUM(h.valor_venda) as valor_venda
+                FROM historico_vendas_diario h
+                JOIN cadastro_produtos p ON h.codigo = p.codigo
+                WHERE h.data >= CURRENT_DATE - INTERVAL '2 years'
+                {where_sql}
+                GROUP BY h.data
+                ORDER BY h.data
+            """
+        elif granularidade == 'semanal':
+            # Para semanal, agrupar por semana MAS garantir que usamos apenas
+            # semanas completas dentro do intervalo de 2 anos
+            # Usamos DATE_TRUNC('week') que retorna a segunda-feira da semana
+            query = f"""
+                WITH dados_diarios AS (
+                    SELECT
+                        h.data,
+                        SUM(h.qtd_venda) as qtd_venda,
+                        SUM(h.valor_venda) as valor_venda
+                    FROM historico_vendas_diario h
+                    JOIN cadastro_produtos p ON h.codigo = p.codigo
+                    WHERE h.data >= CURRENT_DATE - INTERVAL '2 years'
+                    {where_sql}
+                    GROUP BY h.data
+                )
+                SELECT
+                    DATE_TRUNC('week', data)::date as data,
+                    SUM(qtd_venda) as qtd_venda,
+                    SUM(valor_venda) as valor_venda
+                FROM dados_diarios
+                GROUP BY DATE_TRUNC('week', data)
+                ORDER BY DATE_TRUNC('week', data)
+            """
+        else:  # mensal
+            query = f"""
+                SELECT
+                    DATE_TRUNC('month', h.data) as data,
+                    SUM(h.qtd_venda) as qtd_venda,
+                    SUM(h.valor_venda) as valor_venda
+                FROM historico_vendas_diario h
+                JOIN cadastro_produtos p ON h.codigo = p.codigo
+                WHERE h.data >= CURRENT_DATE - INTERVAL '2 years'
+                {where_sql}
+                GROUP BY DATE_TRUNC('month', h.data)
+                ORDER BY DATE_TRUNC('month', h.data)
+            """
+
+        cursor.execute(query, params)
+        dados_historicos = cursor.fetchall()
+
+        # Log do total de dados históricos base
+        if dados_historicos:
+            total_historico_base = sum(float(d['qtd_venda']) for d in dados_historicos)
+            print(f"Total dados históricos (últimos 2 anos): {total_historico_base:,.2f} em {len(dados_historicos)} períodos", flush=True)
+
+        # Buscar dados do mesmo período do ano anterior para comparação
+        print(f"Buscando dados do ano anterior para comparação...", flush=True)
+
+        # Primeiro, precisamos processar dados históricos para calcular o período
+        if dados_historicos and len(dados_historicos) >= 3:
+            # Criar DataFrame temporário para obter datas
+            df_temp = pd.DataFrame(dados_historicos)
+            df_temp['data'] = pd.to_datetime(df_temp['data'])
+            df_temp.set_index('data', inplace=True)
+            df_temp.sort_index(inplace=True)
+
+            # Calcular período correspondente do ano anterior
+            inicio_historico = df_temp.index[0]
+            fim_historico = df_temp.index[-1]
+
+            # Período do ano anterior
+            inicio_ano_anterior = inicio_historico - pd.DateOffset(years=1)
+            fim_ano_anterior = fim_historico - pd.DateOffset(years=1)
+
+            # Buscar dados do ano anterior (mesmos filtros, exceto as datas)
+            # params contém os filtros, mas não inclui as datas inicialmente
+            params_ano_anterior = [inicio_ano_anterior.strftime('%Y-%m-%d'), fim_ano_anterior.strftime('%Y-%m-%d')] + params
+
+            if granularidade == 'mensal':
+                query_ano_anterior = f"""
+                    SELECT
+                        DATE_TRUNC('month', h.data) as data,
+                        SUM(h.qtd_venda) as qtd_venda
+                    FROM historico_vendas_diario h
+                    JOIN cadastro_produtos p ON h.codigo = p.codigo
+                    WHERE h.data >= %s
+                      AND h.data < %s
+                      {where_sql}
+                    GROUP BY DATE_TRUNC('month', h.data)
+                    ORDER BY DATE_TRUNC('month', h.data)
+                """
+            elif granularidade == 'semanal':
+                # Mesma lógica do query principal: usar CTE para garantir consistência
+                query_ano_anterior = f"""
+                    WITH dados_diarios AS (
+                        SELECT
+                            h.data,
+                            SUM(h.qtd_venda) as qtd_venda
+                        FROM historico_vendas_diario h
+                        JOIN cadastro_produtos p ON h.codigo = p.codigo
+                        WHERE h.data >= %s
+                          AND h.data < %s
+                          {where_sql}
+                        GROUP BY h.data
+                    )
+                    SELECT
+                        DATE_TRUNC('week', data)::date as data,
+                        SUM(qtd_venda) as qtd_venda
+                    FROM dados_diarios
+                    GROUP BY DATE_TRUNC('week', data)
+                    ORDER BY DATE_TRUNC('week', data)
+                """
+            else:  # diario
+                query_ano_anterior = f"""
+                    SELECT
+                        h.data,
+                        SUM(h.qtd_venda) as qtd_venda
+                    FROM historico_vendas_diario h
+                    JOIN cadastro_produtos p ON h.codigo = p.codigo
+                    WHERE h.data >= %s
+                      AND h.data < %s
+                      {where_sql}
+                    GROUP BY h.data
+                    ORDER BY h.data
+                """
+
+            cursor.execute(query_ano_anterior, params_ano_anterior)
+            dados_ano_anterior = cursor.fetchall()
+
+            # Processar dados do ano anterior
+            ano_anterior_valores = [float(d['qtd_venda']) for d in dados_ano_anterior] if dados_ano_anterior else []
+            ano_anterior_total = sum(ano_anterior_valores) if ano_anterior_valores else 0
+
+            print(f"Dados ano anterior: {len(ano_anterior_valores)} períodos, total: {ano_anterior_total}", flush=True)
+        else:
+            ano_anterior_valores = []
+            ano_anterior_total = 0
+
+        # Fechar conexão
+        cursor.close()
+        conn.close()
+
+        # Verificar se há dados suficientes (mínimo 3 períodos)
+        if not dados_historicos or len(dados_historicos) < 3:
+            return jsonify({
+                'erro': f'Dados insuficientes para gerar previsão. Encontrados {len(dados_historicos) if dados_historicos else 0} períodos, necessário pelo menos 3 períodos de histórico.',
+                'detalhes': {
+                    'periodos_encontrados': len(dados_historicos) if dados_historicos else 0,
+                    'filtros': {
+                        'loja': loja,
+                        'categoria': categoria,
+                        'produto': produto,
+                        'granularidade': granularidade
+                    }
+                }
+            }), 400
+
+        # Converter para DataFrame do pandas
+        df = pd.DataFrame(dados_historicos)
+        df['data'] = pd.to_datetime(df['data'])
+        # Converter qtd_venda para float (pode vir como Decimal do PostgreSQL)
+        df['qtd_venda'] = df['qtd_venda'].astype(float)
+        df = df.sort_values('data')
+
+        # Preparar série temporal
+        df.set_index('data', inplace=True)
+        serie_temporal_completa = df['qtd_venda'].tolist()
+        datas_completas = df.index.tolist()
+
+        # Validar série temporal antes do processamento
+        print(f"\nValidando serie temporal...", flush=True)
+        validacao = validate_series(
+            serie_temporal_completa,
+            min_length=3,
+            allow_zeros=True,
+            check_outliers=False  # Outliers serão tratados separadamente
+        )
+
+        if not validacao['valid']:
+            return jsonify({
+                'erro': 'Dados inválidos para previsão',
+                'codigo_erro': validacao.get('errors', [{}])[0].get('code', 'ERR000'),
+                'mensagem': validacao.get('errors', [{}])[0].get('message', 'Erro desconhecido'),
+                'detalhes': validacao.get('statistics', {})
+            }), 400
+
+        print(f"  Validacao OK - {len(serie_temporal_completa)} periodos", flush=True)
+
+        # Log detalhado da série temporal completa
+        total_serie_completa = sum(serie_temporal_completa)
+        media_serie_completa = total_serie_completa / len(serie_temporal_completa)
+        print(f"  Total da série completa: {total_serie_completa:,.2f}", flush=True)
+        print(f"  Média por período: {media_serie_completa:,.2f}", flush=True)
+
+        # Dividir dados: 50% base histórica, 25% teste, 25% previsão
+        total_periodos = len(serie_temporal_completa)
+        print(f"\nTotal de periodos historicos: {total_periodos}", flush=True)
+
+        # Calcular tamanhos - Divisão 50/25/25
+        tamanho_base = int(total_periodos * 0.50)
+        tamanho_teste = int(total_periodos * 0.25)
+        # Usar os períodos restantes para validação futura (comparação YoY)
+        # O meses_previsao será usado para prever ALÉM dos dados históricos
+        tamanho_validacao_futura = total_periodos - tamanho_base - tamanho_teste
+
+        # Ajustar se necessário para garantir que base + teste <= total
+        if tamanho_base + tamanho_teste > total_periodos:
+            tamanho_teste = total_periodos - tamanho_base
+
+        print(f"Divisao dos dados (50/25/25):", flush=True)
+        print(f"  - Base historica: {tamanho_base} periodos (50%)", flush=True)
+        print(f"  - Teste/validacao: {tamanho_teste} periodos (25%)", flush=True)
+        print(f"  - Validacao futura (YoY): {tamanho_validacao_futura} periodos (25%)", flush=True)
+        print(f"  - Previsao para alem dos dados: {periodos_previsao} periodos", flush=True)
+
+        # Dividir os dados
+        serie_base = serie_temporal_completa[:tamanho_base]
+        serie_teste = serie_temporal_completa[tamanho_base:tamanho_base + tamanho_teste]
+        datas_base = datas_completas[:tamanho_base]
+        datas_teste = datas_completas[tamanho_base:tamanho_base + tamanho_teste]
+
+        # Calcular índices sazonais para melhorar previsão
+        print(f"\nCalculando indices sazonais...", flush=True)
+        serie_completa_array = np.array(serie_temporal_completa)
+
+        # Usar módulo robusto de detecção de outliers (IQR ao invés de Z-Score)
+        resultado_outliers = auto_clean_outliers(serie_completa_array)
+        serie_temporal_completa = resultado_outliers['cleaned_data']  # Já retorna como lista
+
+        if resultado_outliers['outliers_count'] > 0:
+            print(f"  Outliers detectados: {resultado_outliers['outliers_count']}", flush=True)
+            print(f"  Método usado: {resultado_outliers['method_used']}", flush=True)
+            print(f"  Tratamento: {resultado_outliers['treatment']}", flush=True)
+            print(f"  Razão: {resultado_outliers['reason']}", flush=True)
+            print(f"  Confiança: {resultado_outliers['confidence']:.2f}", flush=True)
+
+            # Atualizar as divisões após limpeza de outliers
+            serie_base = serie_temporal_completa[:tamanho_base]
+            serie_teste = serie_temporal_completa[tamanho_base:tamanho_base + tamanho_teste]
+
+        # Detectar sazonalidade automaticamente com validação estatística
+        print(f"\nDetectando sazonalidade automaticamente...", flush=True)
+        resultado_sazonalidade = detect_seasonality(serie_temporal_completa)
+
+        tem_sazonalidade = resultado_sazonalidade['has_seasonality']
+        periodo_sazonal = resultado_sazonalidade['seasonal_period']
+        forca_sazonal = resultado_sazonalidade['strength']
+
+        print(f"  Sazonalidade detectada: {tem_sazonalidade}", flush=True)
+        if tem_sazonalidade:
+            print(f"  Período sazonal: {periodo_sazonal}", flush=True)
+            print(f"  Força: {forca_sazonal:.2f}", flush=True)
+            print(f"  Razão: {resultado_sazonalidade['reason']}", flush=True)
+        else:
+            print(f"  Razão: {resultado_sazonalidade['reason']}", flush=True)
+
+        # Calcular fatores sazonais com base na GRANULARIDADE, não apenas na detecção automática
+        # Isso garante que previsões mensais tenham variação mês a mês mesmo quando a detecção
+        # estatística não encontra padrão significativo
+        fatores_sazonais = {}
+
+        if granularidade == 'mensal' and len(serie_temporal_completa) >= 12:
+            # Calcular fatores sazonais mensais usando TODOS os dados históricos limpos
+            # Usar o tamanho mínimo entre datas e série para evitar index out of range
+            indices_sazonais = {}
+            tamanho_para_sazonalidade = min(len(datas_completas), len(serie_temporal_completa))
+            for i in range(tamanho_para_sazonalidade):
+                mes = datas_completas[i].month
+                if mes not in indices_sazonais:
+                    indices_sazonais[mes] = []
+                indices_sazonais[mes].append(serie_temporal_completa[i])
+
+            media_geral = np.mean(serie_temporal_completa)
+            for mes, valores in indices_sazonais.items():
+                fatores_sazonais[mes] = np.mean(valores) / media_geral
+
+            print(f"  Fatores sazonais mensais calculados: {len(fatores_sazonais)} meses", flush=True)
+            print(f"  Valores dos fatores mensais: {dict(sorted(fatores_sazonais.items()))}", flush=True)
+
+        elif granularidade == 'semanal' and len(serie_temporal_completa) >= 4:
+            # Calcular fatores sazonais semanais usando posição no ciclo de 4 semanas
+            # Como DATE_TRUNC('week') sempre retorna segunda-feira, não podemos usar weekday()
+            # Vamos usar a posição da semana em um ciclo de 4 semanas (padrão mensal)
+            indices_sazonais = {}
+            tamanho_para_sazonalidade = min(len(datas_completas), len(serie_temporal_completa))
+
+            for i in range(tamanho_para_sazonalidade):
+                # Usar semana do ano MOD 4 para criar padrão repetitivo de 4 semanas
+                semana_ano = datas_completas[i].isocalendar()[1]  # Semana ISO do ano (1-52)
+                posicao_ciclo = semana_ano % 4  # 0, 1, 2 ou 3
+
+                if posicao_ciclo not in indices_sazonais:
+                    indices_sazonais[posicao_ciclo] = []
+                indices_sazonais[posicao_ciclo].append(serie_temporal_completa[i])
+
+            media_geral = np.mean(serie_temporal_completa)
+            for posicao, valores in indices_sazonais.items():
+                fatores_sazonais[posicao] = np.mean(valores) / media_geral
+
+            print(f"  Fatores sazonais semanais calculados: {len(fatores_sazonais)} posições no ciclo de 4 semanas", flush=True)
+            print(f"  Valores dos fatores semanais: {dict(sorted(fatores_sazonais.items()))}", flush=True)
+
+        elif granularidade == 'diaria' and len(serie_temporal_completa) >= 7:
+            # Calcular fatores sazonais diários (dia da semana)
+            indices_sazonais = {}
+            tamanho_para_sazonalidade = min(len(datas_completas), len(serie_temporal_completa))
+            for i in range(tamanho_para_sazonalidade):
+                dia_semana = datas_completas[i].weekday()  # 0=segunda, 6=domingo
+                if dia_semana not in indices_sazonais:
+                    indices_sazonais[dia_semana] = []
+                indices_sazonais[dia_semana].append(serie_temporal_completa[i])
+
+            media_geral = np.mean(serie_temporal_completa)
+            for dia, valores in indices_sazonais.items():
+                fatores_sazonais[dia] = np.mean(valores) / media_geral
+
+            print(f"  Fatores sazonais diários calculados: {len(fatores_sazonais)} dias da semana", flush=True)
+        else:
+            print(f"  Sem ajuste sazonal (dados insuficientes para granularidade {granularidade})", flush=True)
+
+        # Aplicar todos os 6 modelos principais de previsão da ferramenta
+        modelos_testar = [
+            'Média Móvel Simples',
+            'Média Móvel Ponderada',
+            'Suavização Exponencial Simples',
+            'Holt',
+            'Holt-Winters',
+            'Regressão Linear'
+        ]
+
+        resultados_modelos = {}
+        metricas = {}
+        melhor_modelo = None
+        melhor_wmape = float('inf')
+
+        print(f"\nTreinando e testando modelos...", flush=True)
+
+        for nome_modelo in modelos_testar:
+            try:
+                print(f"Aplicando modelo: {nome_modelo}", flush=True)
+                modelo = get_modelo(nome_modelo)
+
+                # Treinar com dados base
+                modelo.fit(serie_base)
+
+                # Prever para o período de teste
+                previsoes_teste_base = modelo.predict(tamanho_teste)
+
+                # APLICAR AJUSTE SAZONAL nas previsões de teste baseado na GRANULARIDADE
+                if fatores_sazonais:
+                    previsoes_teste = []
+                    # A última data da base é datas_base[-1]
+                    ultima_data_base = datas_base[-1]
+
+                    for i in range(tamanho_teste):
+                        # Calcular a chave sazonal com base na granularidade
+                        if granularidade == 'mensal':
+                            # Para mensal, usar o número do mês (1-12)
+                            mes_previsao = ((ultima_data_base.month + i) % 12)
+                            if mes_previsao == 0:
+                                mes_previsao = 12
+                            chave_sazonal = mes_previsao
+                        elif granularidade == 'semanal':
+                            # Para semanal, usar posição no ciclo de 4 semanas
+                            from datetime import timedelta
+                            data_previsao = ultima_data_base + timedelta(weeks=i)
+                            semana_ano = data_previsao.isocalendar()[1]
+                            chave_sazonal = semana_ano % 4  # 0, 1, 2 ou 3
+                        elif granularidade == 'diaria':
+                            # Para diária, usar dia da semana (0-6)
+                            from datetime import timedelta
+                            data_previsao = ultima_data_base + timedelta(days=i)
+                            chave_sazonal = data_previsao.weekday()
+                        else:
+                            chave_sazonal = None
+
+                        # Aplicar fator sazonal
+                        fator = fatores_sazonais.get(chave_sazonal, 1.0)
+                        valor_ajustado = previsoes_teste_base[i] * fator
+                        previsoes_teste.append(valor_ajustado)
+                else:
+                    previsoes_teste = previsoes_teste_base
+
+                # Calcular métricas no período de teste
+                if len(previsoes_teste) == len(serie_teste):
+                    erros_absolutos = []
+                    erros_percentuais = []
+                    erros_reais = []
+
+                    for i in range(len(serie_teste)):
+                        real = serie_teste[i]
+                        previsto = previsoes_teste[i]
+
+                        if real > 0:
+                            erro_abs = abs(previsto - real)
+                            erro_perc = (erro_abs / real) * 100
+                            erro_real = previsto - real
+
+                            erros_absolutos.append(erro_abs)
+                            erros_percentuais.append(erro_perc)
+                            erros_reais.append(erro_real)
+
+                    if len(erros_percentuais) > 0:
+                        wmape = sum(erros_percentuais) / len(erros_percentuais)
+                        bias = (sum(erros_reais) / sum(serie_teste)) * 100 if sum(serie_teste) > 0 else 0
+                        mae = sum(erros_absolutos) / len(erros_absolutos)
+
+                        metricas[nome_modelo] = {
+                            'wmape': wmape,
+                            'bias': bias,
+                            'mae': mae
+                        }
+
+                        print(f"  OK {nome_modelo}: WMAPE={wmape:.2f}%, BIAS={bias:.2f}%, MAE={mae:.2f}", flush=True)
+
+                        if wmape < melhor_wmape:
+                            melhor_wmape = wmape
+                            melhor_modelo = nome_modelo
+                    else:
+                        metricas[nome_modelo] = {'wmape': 0.0, 'bias': 0.0, 'mae': 0.0}
+                        print(f"  ! {nome_modelo}: Sem erros calculados", flush=True)
+                else:
+                    metricas[nome_modelo] = {'wmape': 0.0, 'bias': 0.0, 'mae': 0.0}
+                    print(f"  ! {nome_modelo}: Tamanho incompatível (previsto={len(previsoes_teste)}, esperado={len(serie_teste)})", flush=True)
+
+                # Agora treinar com TODOS os dados (base + teste) para fazer previsão futura
+                modelo.fit(serie_temporal_completa)
+                # Prever para o número de períodos solicitado pelo usuário
+                previsoes_futuro_base = modelo.predict(periodos_previsao)
+
+                # Log da previsão base (antes do ajuste sazonal)
+                total_base = sum(previsoes_futuro_base)
+                media_base = total_base / len(previsoes_futuro_base)
+                print(f"    Previsão base (sem ajuste): Total={total_base:,.2f}, Média={media_base:,.2f}", flush=True)
+
+                # APLICAR AJUSTE SAZONAL nas previsões futuras baseado na GRANULARIDADE
+                if fatores_sazonais:
+                    # Aplicar fatores sazonais nas previsões futuras
+                    previsoes_futuro = []
+                    ultima_data = datas_completas[-1]
+
+                    for i in range(periodos_previsao):
+                        # Calcular a chave sazonal com base na granularidade
+                        if granularidade == 'mensal':
+                            # Para mensal, usar o número do mês (1-12)
+                            mes_previsao = ((ultima_data.month + i) % 12)
+                            if mes_previsao == 0:
+                                mes_previsao = 12
+                            chave_sazonal = mes_previsao
+                        elif granularidade == 'semanal':
+                            # Para semanal, usar posição no ciclo de 4 semanas
+                            from datetime import timedelta
+                            data_previsao = ultima_data + timedelta(weeks=i)
+                            semana_ano = data_previsao.isocalendar()[1]
+                            chave_sazonal = semana_ano % 4  # 0, 1, 2 ou 3
+                        elif granularidade == 'diaria':
+                            # Para diária, usar dia da semana (0-6)
+                            from datetime import timedelta
+                            data_previsao = ultima_data + timedelta(days=i)
+                            chave_sazonal = data_previsao.weekday()
+                        else:
+                            chave_sazonal = None
+
+                        # Aplicar fator sazonal
+                        fator = fatores_sazonais.get(chave_sazonal, 1.0)
+                        valor_ajustado = previsoes_futuro_base[i] * fator
+                        previsoes_futuro.append(valor_ajustado)
+
+                    if tem_sazonalidade:
+                        print(f"    Ajuste sazonal aplicado (força: {forca_sazonal:.2f}, var: {min(fatores_sazonais.values()):.3f} - {max(fatores_sazonais.values()):.3f})", flush=True)
+                    else:
+                        print(f"    Ajuste sazonal aplicado baseado em padrões históricos (var: {min(fatores_sazonais.values()):.3f} - {max(fatores_sazonais.values()):.3f})", flush=True)
+                else:
+                    previsoes_futuro = previsoes_futuro_base
+                    print(f"    Sem ajuste sazonal (dados insuficientes)", flush=True)
+
+                resultados_modelos[nome_modelo] = {
+                    'previsao_teste': previsoes_teste[:len(serie_teste)],
+                    'previsao_futuro': previsoes_futuro
+                }
+
+                # Log detalhado do total previsto
+                total_previsto = sum(previsoes_futuro)
+                print(f"    Total previsto para {periodos_previsao} períodos: {total_previsto:,.2f}", flush=True)
+
+            except Exception as e:
+                print(f"  ERRO ao aplicar modelo {nome_modelo}: {e}", flush=True)
+                import traceback
+                print(traceback.format_exc(), flush=True)
+                continue
+
+        # Se nenhum modelo funcionou, usar fallback
+        if not resultados_modelos or melhor_modelo is None:
+            print("Nenhum modelo funcionou, usando fallback...", flush=True)
+            modelo = get_modelo('Média Móvel Simples')
+            modelo.fit(serie_base)
+            previsoes_teste = modelo.predict(tamanho_teste)
+            modelo.fit(serie_temporal_completa)
+            previsoes_futuro = modelo.predict(periodos_previsao)
+
+            resultados_modelos = {
+                'Média Móvel Simples': {
+                    'previsao_teste': previsoes_teste,
+                    'previsao_futuro': previsoes_futuro
+                }
+            }
+            metricas = {'Média Móvel Simples': {'wmape': 0, 'bias': 0, 'mae': 0}}
+            melhor_modelo = 'Média Móvel Simples'
+
+        print(f"\nMelhor modelo: {melhor_modelo}", flush=True)
+
+        # Registrar seleção do modelo no auto-logger para auditoria
+        if melhor_modelo and melhor_modelo in metricas:
+            # Extrair características da série temporal
+            caracteristicas = {
+                'tamanho': total_periodos,
+                'media': float(np.mean(serie_temporal_completa)),
+                'desvio_padrao': float(np.std(serie_temporal_completa)),
+                'coef_variacao': float(np.std(serie_temporal_completa) / np.mean(serie_temporal_completa)),
+                'sazonalidade': tem_sazonalidade,
+                'periodo_sazonal': periodo_sazonal if tem_sazonalidade else None,
+                'forca_sazonal': forca_sazonal if tem_sazonalidade else 0.0,
+                'outliers_detectados': resultado_outliers.get('outliers_count', 0),
+                'metodo_outlier': resultado_outliers.get('method_used', 'none')
+            }
+
+            logger.log_selection(
+                metodo_selecionado=melhor_modelo,
+                confianca=1.0 - (melhor_wmape / 100.0) if melhor_wmape < 100 else 0.0,  # Converter WMAPE em confiança
+                razao=f"Menor WMAPE: {melhor_wmape:.2f}%",
+                caracteristicas=caracteristicas,
+                sku=produto if produto != 'TODOS' else None,
+                loja=loja if loja != 'TODAS' else None,
+                horizonte=meses_previsao,
+                sucesso=True
+            )
+            print(f"  Seleção registrada no auto-logger", flush=True)
+
+        # Preparar resposta com 3 séries de dados
+        resposta = {
+            'sucesso': True,
+            'melhor_modelo': melhor_modelo,
+            'metricas': metricas,
+            'modelos': {},
+            'granularidade': granularidade,  # Adicionar granularidade para formatação de labels
+            'historico_base': {
+                'datas': [d.strftime('%Y-%m-%d') for d in datas_base],
+                'valores': serie_base
+            },
+            'historico_teste': {
+                'datas': [d.strftime('%Y-%m-%d') for d in datas_teste],
+                'valores': serie_teste
+            },
+            'ano_anterior': {
+                'valores': ano_anterior_valores,
+                'total': ano_anterior_total
+            }
+        }
+
+        # Adicionar previsões de cada modelo
+        metricas_futuro = {}
+
+        # Verificar se há dados para gerar datas futuras
+        if len(datas_completas) == 0:
+            return jsonify({'erro': 'Não há dados históricos suficientes para gerar previsão'}), 400
+
+        for nome_modelo, resultado in resultados_modelos.items():
+            # Gerar datas futuras baseado na granularidade e no número de períodos solicitado
+            ultima_data = datas_completas[-1]
+            if granularidade == 'diario':
+                # Para diário: periodos_previsao dias
+                datas_futuras = pd.date_range(
+                    start=ultima_data + pd.Timedelta(days=1),
+                    periods=periodos_previsao,
+                    freq='D'
+                )
+            elif granularidade == 'semanal':
+                # Para semanal: periodos_previsao semanas
+                datas_futuras = pd.date_range(
+                    start=ultima_data + pd.Timedelta(weeks=1),
+                    periods=periodos_previsao,
+                    freq='W-MON'  # Semanas começando na segunda-feira
+                )
+            else:  # mensal
+                datas_futuras = pd.date_range(
+                    start=ultima_data + pd.DateOffset(months=1),
+                    periods=periodos_previsao,
+                    freq='MS'
+                )
+
+            # Estruturar dados do modelo com teste e previsão futura
+            modelo_data = {}
+
+            # Adicionar previsões do período de teste
+            if 'previsao_teste' in resultado and len(resultado['previsao_teste']) > 0:
+                modelo_data['teste'] = {
+                    'datas': [d.strftime('%Y-%m-%d') for d in datas_teste],
+                    'valores': [float(v) for v in resultado['previsao_teste']]
+                }
+
+            # Adicionar previsões futuras
+            if 'previsao_futuro' in resultado and len(resultado['previsao_futuro']) > 0:
+                modelo_data['futuro'] = {
+                    'datas': [d.strftime('%Y-%m-%d') for d in datas_futuras[:len(resultado['previsao_futuro'])]],
+                    'valores': [float(v) for v in resultado['previsao_futuro']]
+                }
+
+                # Calcular WMAPE e BIAS para previsão futura comparando com ano anterior
+                # Usar apenas os primeiros períodos correspondentes à validação futura
+                previsao_futuro = resultado['previsao_futuro']
+                if len(ano_anterior_valores) > 0 and len(previsao_futuro) > 0:
+                    # Comparar apenas os períodos que temos no ano anterior (tamanho_validacao_futura)
+                    tamanho_comparacao = min(tamanho_validacao_futura, len(ano_anterior_valores), len(previsao_futuro))
+
+                    erros_absolutos_futuro = []
+                    erros_percentuais_futuro = []
+                    erros_reais_futuro = []
+
+                    for i in range(tamanho_comparacao):
+                        real = ano_anterior_valores[i]
+                        previsto = previsao_futuro[i]
+
+                        if real > 0:
+                            erro_abs = abs(previsto - real)
+                            erro_perc = (erro_abs / real) * 100
+                            erro_real = previsto - real
+
+                            erros_absolutos_futuro.append(erro_abs)
+                            erros_percentuais_futuro.append(erro_perc)
+                            erros_reais_futuro.append(erro_real)
+
+                    if len(erros_percentuais_futuro) > 0:
+                        wmape_futuro = sum(erros_percentuais_futuro) / len(erros_percentuais_futuro)
+                        bias_futuro = (sum(erros_reais_futuro) / sum(ano_anterior_valores[:tamanho_comparacao])) * 100
+                        mae_futuro = sum(erros_absolutos_futuro) / len(erros_absolutos_futuro)
+
+                        metricas_futuro[nome_modelo] = {
+                            'wmape': wmape_futuro,
+                            'bias': bias_futuro,
+                            'mae': mae_futuro
+                        }
+
+                        print(f"  Métricas futuras {nome_modelo}: WMAPE={wmape_futuro:.2f}%, BIAS={bias_futuro:.2f}%", flush=True)
+
+            resposta['modelos'][nome_modelo] = modelo_data
+
+        # Adicionar métricas futuras à resposta (comparação com ano anterior)
+        resposta['metricas_futuro'] = metricas_futuro
+
+        # Gerar alertas inteligentes baseado na previsão
+        print(f"\nGerando alertas inteligentes...", flush=True)
+        if melhor_modelo and melhor_modelo in resultados_modelos:
+            modelo_info = {
+                'modelo': melhor_modelo,
+                'wmape': metricas.get(melhor_modelo, {}).get('wmape', 0),
+                'bias': metricas.get(melhor_modelo, {}).get('bias', 0),
+                'mae': metricas.get(melhor_modelo, {}).get('mae', 0),
+                'seasonality_detected': {
+                    'has_seasonality': tem_sazonalidade,
+                    'detected_period': periodo_sazonal if tem_sazonalidade else None,
+                    'strength': forca_sazonal if tem_sazonalidade else 0.0
+                },
+                'outliers_count': resultado_outliers.get('outliers_count', 0)
+            }
+
+            resultado_alertas = generate_alerts_for_forecast(
+                sku=produto if produto != 'TODOS' else 'AGREGADO',
+                loja=loja if loja != 'TODAS' else 'TODAS',
+                historico=serie_temporal_completa,
+                previsao=resultados_modelos[melhor_modelo].get('previsao_futuro', []),
+                modelo_params=modelo_info,
+                estoque_atual=None,  # Não disponível neste endpoint
+                lead_time_dias=7,
+                custo_unitario=None  # Não disponível neste endpoint
+            )
+
+            alertas = resultado_alertas['alertas']
+            resumo_alertas = resultado_alertas['resumo']
+
+            resposta['alertas'] = alertas
+            resposta['resumo_alertas'] = resumo_alertas
+            print(f"  {len(alertas)} alertas gerados", flush=True)
+
+            # Resumo por prioridade
+            criticos = sum(1 for a in alertas if a.get('tipo') == 'CRITICAL')
+            avisos = sum(1 for a in alertas if a.get('tipo') == 'WARNING')
+            info = sum(1 for a in alertas if a.get('tipo') == 'INFO')
+
+            if criticos > 0:
+                print(f"  🔴 {criticos} alertas críticos", flush=True)
+            if avisos > 0:
+                print(f"  🟡 {avisos} avisos", flush=True)
+            if info > 0:
+                print(f"  🔵 {info} informativos", flush=True)
+        else:
+            resposta['alertas'] = []
+
+        print(f"\nPrevisão gerada com sucesso! Melhor modelo: {melhor_modelo}")
+
+        return jsonify(resposta)
+
+    except Exception as e:
+        print(f"Erro ao gerar previsão: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'erro': str(e)}), 500
 
 
 if __name__ == '__main__':
