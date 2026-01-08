@@ -180,7 +180,7 @@ Fornecedor,SKU,Destino,Tipo_Destino,Lead_Time_Dias,Ciclo_Pedido_Dias,Custo_Unita
 FORN_A,PROD001,CD_PRINCIPAL,CD,30,30,15.50,200
 ```
 
-## 🔄 Changelog v3.0
+## 🔄 Changelog v3.1
 
 ### Melhorias Críticas Implementadas ✅
 
@@ -196,6 +196,15 @@ FORN_A,PROD001,CD_PRINCIPAL,CD,30,30,15.50,200
 10. ✅ **Machine Learning** - Random Forest com 15+ features
 11. ✅ **Calendário Promocional** - Ajuste automático
 12. ✅ **Tratamento Séries Curtas** - Estratégias especializadas
+
+### Novas Melhorias v3.1 (Janeiro 2026) ✅
+
+13. ✅ **Escala Dinâmica de Gráficos** - Y-axis se ajusta automaticamente aos dados
+14. ✅ **Ajuste Sazonal Baseado em Granularidade** - Fatores sazonais sempre calculados
+15. ✅ **Correção de Previsões Planas** - Variação mês a mês garantida
+16. ✅ **Ajuste Automático da Tabela YoY** - Períodos comparativos sincronizados
+17. ✅ **Separação de Conceitos** - tamanho_validacao_futura vs meses_previsao
+18. ✅ **Aplicação de Ajuste Sazonal no Teste** - Período de teste também ajustado
 
 ## 📖 Documentação Completa
 
@@ -272,8 +281,66 @@ Para dúvidas ou problemas:
 
 ---
 
-**Versão:** 3.0
+## 📝 Detalhamento das Melhorias v3.1
+
+### 1. Escala Dinâmica de Gráficos
+**Problema resolvido:** Gráficos com escala fixa iniciando em zero desperdiçavam espaço visual e dificultavam a leitura de variações.
+
+**Solução implementada:**
+- Cálculo automático de min/max com margem de 10%
+- Aplicado em 3 gráficos: Previsão, Agregação de Demanda, Comparação YoY
+- Arquivo: `static/js/app.js` (linhas 1440-1509, 349-459, 491-587)
+
+### 2. Ajuste Sazonal Baseado em Granularidade
+**Problema resolvido:** Previsões mostravam valores idênticos para todos os meses quando sazonalidade não era estatisticamente significativa.
+
+**Solução implementada:**
+- Fatores sazonais SEMPRE calculados baseado na granularidade solicitada
+- Mensal: 12 fatores (um por mês)
+- Semanal: 7 fatores (um por dia da semana)
+- Diário: 7 fatores (um por dia da semana)
+- Arquivo: `app.py` (linhas 2511-2568)
+
+**Resultado:**
+- Alimentos (6 meses): Variação de 92.210 a 100.179 (amplitude: 8.64%)
+- TODAS (12 meses): Variação de 309.229 a 350.062 (amplitude: 13.20%)
+
+### 3. Correção de Previsões Planas
+**Problema resolvido:** Condição `if periodo_sazonal == 12 and granularidade == 'mensal'` era muito restritiva, resultando em `fatores_sazonais = {}`.
+
+**Solução implementada:**
+- Lógica alterada para calcular fatores independente da detecção estatística
+- Ajuste sazonal aplicado também no período de teste
+- Proteção contra index out of range com `min(len(datas), len(serie))`
+
+### 4. Ajuste Automático da Tabela YoY
+**Problema resolvido:** Tabela comparativa mostrava todos os 12 meses do ano anterior mesmo quando previsão era de 6 meses.
+
+**Solução implementada:**
+- Loop limitado a `numPeriodos` (número de períodos de previsão)
+- Arquivo: `static/js/app.js` (linhas 1323-1333)
+- Sincronização automática entre previsão e dados reais
+
+### 5. Separação de Conceitos
+**Problema resolvido:** Confusão entre períodos de validação histórica e períodos de previsão futura.
+
+**Solução implementada:**
+- `tamanho_validacao_futura`: Períodos restantes nos dados históricos para comparação YoY
+- `meses_previsao`: Períodos futuros a prever além dos dados históricos
+- Arquivo: `app.py` (linhas 2459-2471)
+
+### 6. Aplicação de Ajuste Sazonal no Teste
+**Problema resolvido:** Ajuste sazonal só era aplicado às previsões futuras, não ao período de teste.
+
+**Solução implementada:**
+- Ajuste sazonal aplicado também às previsões do período de teste
+- Garante consistência entre teste e previsão futura
+- Arquivo: `app.py` (linhas 2591-2623)
+
+---
+
+**Versão:** 3.1
 **Status:** Em Produção
-**Última Atualização:** Dezembro 2024
+**Última Atualização:** Janeiro 2026
 
 **⭐ Se este projeto foi útil, considere dar uma estrela!**
