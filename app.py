@@ -2578,28 +2578,27 @@ def api_gerar_previsao_banco():
             print(f"  Fatores sazonais mensais calculados: {len(fatores_sazonais)} meses", flush=True)
             print(f"  Valores dos fatores mensais: {dict(sorted(fatores_sazonais.items()))}", flush=True)
 
-        elif granularidade == 'semanal' and len(serie_temporal_completa) >= 4:
-            # Calcular fatores sazonais semanais usando posição no ciclo de 4 semanas
-            # Como DATE_TRUNC('week') sempre retorna segunda-feira, não podemos usar weekday()
-            # Vamos usar a posição da semana em um ciclo de 4 semanas (padrão mensal)
+        elif granularidade == 'semanal' and len(serie_temporal_completa) >= 52:
+            # Calcular fatores sazonais semanais usando SEMANA DO ANO (1-52)
+            # Assim como mensal usa 12 meses, semanal deve usar 52 semanas para capturar sazonalidade anual
+            # Exemplo: Semana 50 da previsão é influenciada pela média histórica das semanas 50
             indices_sazonais = {}
             tamanho_para_sazonalidade = min(len(datas_completas), len(serie_temporal_completa))
 
             for i in range(tamanho_para_sazonalidade):
-                # Usar semana do ano MOD 4 para criar padrão repetitivo de 4 semanas
+                # Usar número da semana no ano (1-52/53)
                 semana_ano = datas_completas[i].isocalendar()[1]  # Semana ISO do ano (1-52)
-                posicao_ciclo = semana_ano % 4  # 0, 1, 2 ou 3
 
-                if posicao_ciclo not in indices_sazonais:
-                    indices_sazonais[posicao_ciclo] = []
-                indices_sazonais[posicao_ciclo].append(serie_temporal_completa[i])
+                if semana_ano not in indices_sazonais:
+                    indices_sazonais[semana_ano] = []
+                indices_sazonais[semana_ano].append(serie_temporal_completa[i])
 
             media_geral = np.mean(serie_temporal_completa)
-            for posicao, valores in indices_sazonais.items():
-                fatores_sazonais[posicao] = np.mean(valores) / media_geral
+            for semana, valores in indices_sazonais.items():
+                fatores_sazonais[semana] = np.mean(valores) / media_geral
 
-            print(f"  Fatores sazonais semanais calculados: {len(fatores_sazonais)} posições no ciclo de 4 semanas", flush=True)
-            print(f"  Valores dos fatores semanais: {dict(sorted(fatores_sazonais.items()))}", flush=True)
+            print(f"  Fatores sazonais semanais calculados: {len(fatores_sazonais)} semanas do ano", flush=True)
+            print(f"  Valores dos fatores semanais: Min={min(fatores_sazonais.values()):.3f}, Max={max(fatores_sazonais.values()):.3f}, Amplitude={(max(fatores_sazonais.values())-min(fatores_sazonais.values()))*100:.2f}%", flush=True)
 
         elif granularidade == 'diaria' and len(serie_temporal_completa) >= 7:
             # Calcular fatores sazonais diários (dia da semana)
@@ -2662,11 +2661,11 @@ def api_gerar_previsao_banco():
                                 mes_previsao = 12
                             chave_sazonal = mes_previsao
                         elif granularidade == 'semanal':
-                            # Para semanal, usar posição no ciclo de 4 semanas
+                            # Para semanal, usar SEMANA DO ANO (1-52)
                             from datetime import timedelta
                             data_previsao = ultima_data_base + timedelta(weeks=i)
-                            semana_ano = data_previsao.isocalendar()[1]
-                            chave_sazonal = semana_ano % 4  # 0, 1, 2 ou 3
+                            semana_ano = data_previsao.isocalendar()[1]  # 1-52/53
+                            chave_sazonal = semana_ano  # Usar semana do ano diretamente
                         elif granularidade == 'diaria':
                             # Para diária, usar dia da semana (0-6)
                             from datetime import timedelta
@@ -2749,11 +2748,11 @@ def api_gerar_previsao_banco():
                                 mes_previsao = 12
                             chave_sazonal = mes_previsao
                         elif granularidade == 'semanal':
-                            # Para semanal, usar posição no ciclo de 4 semanas
+                            # Para semanal, usar SEMANA DO ANO (1-52)
                             from datetime import timedelta
                             data_previsao = ultima_data + timedelta(weeks=i)
-                            semana_ano = data_previsao.isocalendar()[1]
-                            chave_sazonal = semana_ano % 4  # 0, 1, 2 ou 3
+                            semana_ano = data_previsao.isocalendar()[1]  # 1-52/53
+                            chave_sazonal = semana_ano  # Usar semana do ano diretamente
                         elif granularidade == 'diaria':
                             # Para diária, usar dia da semana (0-6)
                             from datetime import timedelta

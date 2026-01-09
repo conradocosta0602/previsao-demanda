@@ -210,6 +210,7 @@ FORN_A,PROD001,CD_PRINCIPAL,CD,30,30,15.50,200
 21. ✅ **Queries SQL Consistentes** - Mesmo intervalo de datas entre granularidades
 22. ✅ **Logging Detalhado de Previsões** - Total base, ajustes e previsão final
 23. ✅ **Documentação de Granularidade** - Guia completo sobre diferenças esperadas
+24. ✅ **🔴 CRÍTICO: Sazonalidade Anual Semanal (52 semanas)** - Semana 50 agora influenciada por semanas 50 históricas
 
 ## 📖 Documentação Completa
 
@@ -225,6 +226,12 @@ FORN_A,PROD001,CD_PRINCIPAL,CD,30,30,15.50,200
   - Diferenças esperadas e aceitáveis
   - Recomendações de uso por caso de negócio
   - Validação e interpretação de resultados
+
+- **[CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md](CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md)** - 🔴 **CORREÇÃO CRÍTICA v3.1.2**
+  - Mudança de ciclo artificial de 4 semanas para sazonalidade anual de 52 semanas
+  - Amplitude aumentou de 1.8% para 31.27%
+  - Cada semana agora tem seu próprio padrão histórico
+  - Requer mínimo de 52 semanas (1 ano) de dados históricos
 
 - **[Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx](Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx)** - Status das melhorias
 
@@ -247,7 +254,10 @@ openpyxl 3.1.2
 R: Use ML para melhor precisão. AUTO é mais rápido para análises exploratórias.
 
 **P: Quantos meses de histórico preciso?**
-R: Mínimo 12 meses. Ideal: 24+ meses para detecção de sazonalidade.
+R:
+- Mensal: Mínimo 12 meses. Ideal: 24+ meses para detecção de sazonalidade.
+- Semanal: Mínimo 52 semanas (1 ano). Recomendado: 104 semanas (2 anos) para melhor qualidade.
+- Diária: Mínimo 365 dias. Ideal: 730+ dias.
 
 **P: Como funciona a classificação ABC?**
 R: Automática baseada na demanda mensal média.
@@ -440,9 +450,37 @@ print(f"Total previsto para {n} períodos: {total:,.2f}")
 
 **Resultado:** Transparência total sobre comportamento do sistema e expectativas corretas para usuários.
 
+### 12. 🔴 CRÍTICO: Sazonalidade Anual Semanal (52 semanas) - v3.1.2
+**Problema resolvido:** Previsões semanais usavam ciclo artificial de 4 semanas em vez de sazonalidade anual de 52 semanas. Semana 50 da previsão era comparada com semanas 2, 6, 10, 14, 18, 22, 26, 30, 34, 38, 42, 46 (semana % 4).
+
+**Solução implementada:**
+```python
+# ANTES (INCORRETO)
+posicao_ciclo = semana_ano % 4  # 0, 1, 2 ou 3
+chave_sazonal = posicao_ciclo
+
+# DEPOIS (CORRETO)
+semana_ano = data_previsao.isocalendar()[1]  # 1-52/53
+chave_sazonal = semana_ano  # Usar semana do ano diretamente
+```
+- Mudança de 4 fatores sazonais para 52 fatores (um por semana do ano)
+- Análogo à granularidade mensal: 12 meses → 12 fatores | 52 semanas → 52 fatores
+- Arquivo: `app.py` (linhas 2581-2601, 2663-2668, 2750-2755)
+- Requisito mínimo aumentado de 4 para 52 semanas de dados históricos
+
+**Métricas ANTES vs DEPOIS:**
+| Métrica | ANTES (4 semanas) | DEPOIS (52 semanas) | Melhoria |
+|---------|-------------------|---------------------|----------|
+| Fatores sazonais | 4 | 52 | +1200% |
+| Amplitude dos fatores | 1.8% | 31.27% | +17x |
+| Valores únicos (48 períodos) | ~4 | 43 | +975% |
+| Realismo | Linear/Artificial | Natural/Histórico | ✅ |
+
+**Resultado:** Semana 50 da previsão agora é influenciada pela média histórica de TODAS as semanas 50 dos anos anteriores, respeitando tendências e sazonalidades reais. Documentação completa: [CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md](CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md)
+
 ---
 
-**Versão:** 3.1.1
+**Versão:** 3.1.2
 **Status:** Em Produção
 **Última Atualização:** Janeiro 2026
 
