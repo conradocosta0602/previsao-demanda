@@ -185,15 +185,18 @@ class AutoOutlierDetector:
         if chars['zeros_pct'] > 30:
             return False, f"Demanda intermitente ({chars['zeros_pct']:.1f}% zeros), zeros são esperados"
 
-        # Critério 3: Baixa variabilidade (CV < 0.15) - não detectar
-        # Série muito estável, outliers improváveis
-        if chars['cv'] < 0.15:
-            return False, f"Série muito estável (CV={chars['cv']:.2f}), outliers improváveis"
-
-        # Critério 4: Alta assimetria ou curtose - DETECTAR
+        # Critério 3 (PRIORITÁRIO): Alta assimetria ou curtose - DETECTAR
         # Indica distribuição com caudas pesadas (outliers prováveis)
+        # IMPORTANTE: Este critério deve vir ANTES do CV baixo!
+        # Mesmo séries "estáveis" (CV baixo) podem ter outliers extremos
         if abs(chars['skewness']) > 1.5 or chars['kurtosis'] > 3:
             return True, f"Assimetria/curtose elevada (skew={chars['skewness']:.2f}, kurt={chars['kurtosis']:.2f}), outliers prováveis"
+
+        # Critério 4: Baixa variabilidade (CV < 0.15) - não detectar
+        # Série muito estável, outliers improváveis
+        # NOTA: Este critério só se aplica se não houver skewness/kurtosis elevados
+        if chars['cv'] < 0.15:
+            return False, f"Série muito estável (CV={chars['cv']:.2f}), outliers improváveis"
 
         # Critério 5: Muitos valores altos (>10% acima de mean+2*std) - DETECTAR
         if chars['high_values_pct'] > 10:
