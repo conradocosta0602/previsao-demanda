@@ -1,5 +1,25 @@
 // Sistema de Previsão de Demanda - JavaScript
 
+// =====================================================
+// FUNÇÃO AUXILIAR PARA CORRIGIR PARSING DE DATAS
+// =====================================================
+// JavaScript interpreta "YYYY-MM-DD" como UTC midnight,
+// o que em fusos horários negativos (ex: Brasil GMT-3)
+// mostra o dia anterior. Esta função corrige isso.
+function parseLocalDate(dateStr) {
+    if (!dateStr) return null;
+    // Se já é um objeto Date, retornar
+    if (dateStr instanceof Date) return dateStr;
+    // Parsear manualmente para evitar problema de timezone
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+        // new Date(year, monthIndex, day) usa timezone LOCAL
+        return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    }
+    // Fallback: adicionar T00:00:00 para forçar interpretação local
+    return new Date(dateStr + 'T00:00:00');
+}
+
 document.getElementById('uploadForm').addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -1260,7 +1280,10 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     const tbody = document.getElementById('tabelaComparativaBody');
     const previsoes = resultado.modelos[melhorModelo]?.futuro?.valores || [];
     const datasPrevisao = resultado.modelos[melhorModelo]?.futuro?.datas || [];
-    const valoresAnoAnterior = resultado.ano_anterior?.valores || [];
+
+    // Usar ano_anterior para a linha "Real" (mesmo período do ano passado para comparação correta)
+    const valoresReal = resultado.ano_anterior?.valores || [];
+    const datasReal = resultado.ano_anterior?.datas || [];
 
     // Calcular tamanhos dinâmicos baseado no número de períodos
     const numPeriodos = previsoes.length;
@@ -1284,7 +1307,7 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
         labelWidth = '60px';
     }
 
-    // Função auxiliar para calcular número da semana no ano
+    // Função auxiliar para calcular número da semana ISO no ano
     function getWeekNumber(date) {
         const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
         const dayNum = d.getUTCDay() || 7;
@@ -1293,36 +1316,58 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
         return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
     }
 
-    // Criar cabeçalho com os períodos (meses, semanas ou dias)
-    let headerHtml = `<tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: ${fontSize};">`;
-    headerHtml += `<th style="padding: ${padding}; text-align: left; border: 1px solid #ddd; position: sticky; left: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); z-index: 10; width: ${labelWidth};"></th>`;
+    // Função auxiliar para calcular o ANO ISO (pode ser diferente do ano do calendário)
+    function getISOWeekYear(date) {
+        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+        return d.getUTCFullYear();
+    }
 
+    // Função auxiliar para formatar período
     const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-    previsoes.forEach((_, index) => {
-        let nomePeriodo = '';
-        if (datasPrevisao[index]) {
-            const data = new Date(datasPrevisao[index]);
-            if (granularidade === 'semanal') {
-                // Para semanal, mostrar "SXX" (número da semana no ano)
-                const semanaAno = getWeekNumber(data);
-                nomePeriodo = `S${semanaAno}`;
-            } else if (granularidade === 'diaria') {
-                // Para diária, mostrar dia/mês
-                nomePeriodo = `${data.getDate()}/${data.getMonth() + 1}`;
-            } else {
-                // Para mensal, mostrar Mês
-                nomePeriodo = meses[data.getMonth()];
-            }
+    function formatarPeriodo(dataStr, gran) {
+        if (!dataStr) return '';
+        const data = parseLocalDate(dataStr);
+        if (gran === 'semanal') {
+            const semanaAno = getWeekNumber(data);
+            const anoISO = getISOWeekYear(data);
+            return `S${semanaAno}/${anoISO}`;
+        } else if (gran === 'diario' || gran === 'diaria') {
+            // Formato: DD/MM
+            const dia = data.getDate().toString().padStart(2, '0');
+            const mes = (data.getMonth() + 1).toString().padStart(2, '0');
+            return `${dia}/${mes}`;
         } else {
-            nomePeriodo = `P${index + 1}`;
+            return `${meses[data.getMonth()]}/${data.getFullYear()}`;
         }
-        headerHtml += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd;">${nomePeriodo}</th>`;
+    }
+
+    // Criar cabeçalho com duas linhas: período previsão e período ano anterior
+    let headerHtml = '';
+
+    // Linha 1: Períodos da PREVISÃO
+    headerHtml += `<tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: ${fontSize};">`;
+    headerHtml += `<th rowspan="2" style="padding: ${padding}; text-align: left; border: 1px solid #ddd; position: sticky; left: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); z-index: 10; width: ${labelWidth}; vertical-align: middle;">Período</th>`;
+
+    previsoes.forEach((_, index) => {
+        const nomePeriodo = formatarPeriodo(datasPrevisao[index], granularidade);
+        headerHtml += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-size: 0.85em;">${nomePeriodo}</th>`;
     });
 
     // Adicionar coluna TOTAL
-    headerHtml += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd; background: #5a67d8; font-weight: bold;">TOTAL</th>`;
+    headerHtml += `<th rowspan="2" style="padding: ${padding}; text-align: center; border: 1px solid #ddd; background: #5a67d8; font-weight: bold; vertical-align: middle;">TOTAL</th>`;
     headerHtml += '</tr>';
+
+    // Linha 2: Períodos do REAL (período de teste - mesmos dados da linha verde sólida)
+    headerHtml += `<tr style="background: #8b9dc3; color: white; font-size: ${fontSize};">`;
+    previsoes.forEach((_, index) => {
+        const nomePeriodoReal = formatarPeriodo(datasReal[index], granularidade);
+        headerHtml += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-size: 0.8em; font-weight: normal;">${nomePeriodoReal || '-'}</th>`;
+    });
+    headerHtml += '</tr>';
+
     thead.innerHTML = headerHtml;
 
     // Criar linhas de dados
@@ -1339,15 +1384,18 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     rowPrevisao += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #e0e7ff;">${formatNumber(totalPrevisao)}</td>`;
     rowPrevisao += '</tr>';
 
-    // Linha Real (Ano Anterior) - Limitar ao número de períodos de previsão
+    // Linha Real (Período de Teste - mesmos dados da linha verde sólida do gráfico)
     let rowReal = `<tr style="background: white; font-size: ${fontSize};">`;
     rowReal += `<td style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; width: ${labelWidth};">Real</td>`;
-    // Mostrar apenas os períodos correspondentes ao número de meses de previsão
+
+    // Exibir valores nas colunas (limitado ao número de períodos de previsão)
     for (let i = 0; i < numPeriodos; i++) {
-        const valor = valoresAnoAnterior[i] || 0;
-        totalReal += valor;
+        const valor = valoresReal[i] || 0;
         rowReal += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd;">${formatNumber(valor)}</td>`;
     }
+
+    // Total Real: somar apenas os valores exibidos (limitado a numPeriodos)
+    totalReal = valoresReal.slice(0, numPeriodos).reduce((sum, val) => sum + val, 0);
     rowReal += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #f3f4f6;">${formatNumber(totalReal)}</td>`;
     rowReal += '</tr>';
 
@@ -1356,9 +1404,9 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     rowVariacao += `<td style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; position: sticky; left: 0; background: #fef3c7; z-index: 5; width: ${labelWidth};">Variação %</td>`;
 
     previsoes.forEach((valorPrevisao, index) => {
-        const valorAnoAnterior = valoresAnoAnterior[index] || 0;
-        const variacao = valorAnoAnterior > 0
-            ? ((valorPrevisao - valorAnoAnterior) / valorAnoAnterior * 100)
+        const valorRealPeriodo = valoresReal[index] || 0;
+        const variacao = valorRealPeriodo > 0
+            ? ((valorPrevisao - valorRealPeriodo) / valorRealPeriodo * 100)
             : 0;
 
         const variacaoColor = variacao >= 0 ? '#10b981' : '#ef4444';
@@ -1380,8 +1428,8 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     tbody.innerHTML = rowPrevisao + rowReal + rowVariacao;
 }
 
-// Criar gráfico de previsão simplificado com 3 linhas
-function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorModelo, granularidade = 'mensal') {
+// Criar gráfico de previsão simplificado com 3 linhas + ano anterior
+function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorModelo, granularidade = 'mensal', anoAnterior = null) {
     const canvas = document.getElementById('previsaoChart');
     if (!canvas) {
         console.error('Canvas previsaoChart não encontrado');
@@ -1414,23 +1462,7 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
     const todasDatas = [...datasBase, ...datasTeste, ...datasPrevisaoFuturo];
     const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-    // Formatar labels baseado na granularidade
-    const labels = todasDatas.map(dataStr => {
-        const data = new Date(dataStr);
-        if (granularidade === 'semanal') {
-            // Para semanal, mostrar "Sem XX" (número da semana no ano)
-            const semanaAno = getWeekNumber(data);
-            return `S${semanaAno}/${data.getFullYear().toString().slice(-2)}`;
-        } else if (granularidade === 'diaria') {
-            // Para diária, mostrar dia/mês
-            return `${data.getDate()}/${data.getMonth() + 1}`;
-        } else {
-            // Para mensal, mostrar Mês/Ano
-            return `${meses[data.getMonth()]}/${data.getFullYear().toString().slice(-2)}`;
-        }
-    });
-
-    // Função auxiliar para calcular número da semana no ano
+    // Função auxiliar para calcular número da semana ISO no ano
     function getWeekNumber(date) {
         const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
         const dayNum = d.getUTCDay() || 7;
@@ -1438,6 +1470,33 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
         const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
         return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
     }
+
+    // Função auxiliar para calcular o ANO ISO (pode ser diferente do ano do calendário)
+    function getISOWeekYear(date) {
+        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+        return d.getUTCFullYear();
+    }
+
+    // Formatar labels baseado na granularidade
+    const labels = todasDatas.map(dataStr => {
+        const data = parseLocalDate(dataStr);
+        if (granularidade === 'semanal') {
+            // Para semanal, mostrar "Sem XX" (número da semana no ano) com ano ISO
+            const semanaAno = getWeekNumber(data);
+            const anoISO = getISOWeekYear(data);
+            return `S${semanaAno}/${anoISO.toString().slice(-2)}`;
+        } else if (granularidade === 'diario' || granularidade === 'diaria') {
+            // Para diária, mostrar DD/MM (com zero à esquerda, igual à tabela)
+            const dia = data.getDate().toString().padStart(2, '0');
+            const mes = (data.getMonth() + 1).toString().padStart(2, '0');
+            return `${dia}/${mes}`;
+        } else {
+            // Para mensal, mostrar Mês/Ano
+            return `${meses[data.getMonth()]}/${data.getFullYear().toString().slice(-2)}`;
+        }
+    });
 
     // Criar datasets
     const datasets = [];
@@ -1512,29 +1571,63 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
         pointRadius: 4
     });
 
+    // 5. Dataset Ano Anterior (para comparação com previsão futura) - Linha laranja tracejada
+    if (anoAnterior && anoAnterior.valores && anoAnterior.valores.length > 0) {
+        // O ano anterior deve aparecer alinhado com a previsão futura para comparação visual
+        const dadosAnoAnterior = new Array(valoresBase.length + valoresTeste.length).fill(null);
+        dadosAnoAnterior.push(...anoAnterior.valores);
+
+        datasets.push({
+            label: 'Ano Anterior (Comparação)',
+            data: dadosAnoAnterior,
+            borderColor: '#f97316',
+            backgroundColor: 'rgba(249, 115, 22, 0.1)',
+            borderWidth: 2,
+            borderDash: [3, 3],
+            fill: false,
+            tension: 0.1,
+            pointRadius: 3,
+            pointStyle: 'triangle'
+        });
+    }
+
     // Calcular escala dinâmica do eixo Y
-    const todosValores = [
+    // CORREÇÃO: Focar na área de análise (previsão futura, ano anterior e teste)
+    // Excluir histórico base que pode distorcer a escala e achatar a visualização
+    const valoresParaEscala = [
+        ...previsaoFuturo,                    // Previsão futura (linha roxa) - principal
+        ...(anoAnterior?.valores || []),      // Ano anterior (comparação YoY)
+        ...valoresTeste,                      // Período de teste (valores reais)
+        ...previsaoTeste                      // Período de teste (previsão)
+    ].filter(v => v !== null && v !== undefined);
+
+    // Se não houver dados para escala (fallback), usar todos os valores
+    const todosValores = valoresParaEscala.length > 0 ? valoresParaEscala : [
         ...valoresBase,
         ...valoresTeste,
         ...previsaoTeste,
-        ...previsaoFuturo
+        ...previsaoFuturo,
+        ...(anoAnterior?.valores || [])
     ].filter(v => v !== null && v !== undefined);
 
     const valorMinimo = Math.min(...todosValores);
     const valorMaximo = Math.max(...todosValores);
     const amplitude = valorMaximo - valorMinimo;
 
-    // Adicionar margem de 10% acima e abaixo para melhor visualização
-    const margemInferior = valorMinimo - (amplitude * 0.10);
-    const margemSuperior = valorMaximo + (amplitude * 0.10);
+    // Adicionar margem de 5% acima e abaixo para melhor visualização
+    // (reduzido de 10% para 5% para maximizar área útil do gráfico)
+    const margemInferior = valorMinimo - (amplitude * 0.05);
+    const margemSuperior = valorMaximo + (amplitude * 0.05);
 
     // Garantir que não fique negativo se todos valores forem positivos
     const yMin = Math.max(0, margemInferior);
     const yMax = margemSuperior;
 
-    // Configurar autoSkip baseado no número de períodos
+    // Configurar autoSkip baseado no número de períodos e granularidade
     const totalPeriodos = labels.length;
-    const autoSkipLabels = totalPeriodos > 50;  // Auto skip apenas se mais de 50 períodos
+    // Para diário, usar autoSkip mais cedo para manter legibilidade
+    const isDiario = granularidade === 'diario' || granularidade === 'diaria';
+    const autoSkipLabels = isDiario ? totalPeriodos > 30 : totalPeriodos > 50;
 
     // Criar gráfico
     previsaoChart = new Chart(ctx, {
@@ -1594,14 +1687,133 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
                     ticks: {
                         maxRotation: 45,
                         minRotation: 45,
-                        autoSkip: autoSkipLabels,  // Auto skip apenas para muitos períodos
-                        maxTicksLimit: autoSkipLabels ? 20 : undefined  // Limitar a 20 se auto skip ativo
+                        autoSkip: autoSkipLabels,
+                        // Para diário com muitos dias, mostrar ~1 label por semana (elegante e legível)
+                        maxTicksLimit: isDiario
+                            ? Math.min(Math.ceil(totalPeriodos / 7), 15)
+                            : (autoSkipLabels ? 20 : undefined)
                     }
                 }
             }
         }
     });
 }
+
+// =====================================================
+// INTERFACE DINÂMICA DE PERÍODO POR GRANULARIDADE
+// =====================================================
+
+// Inicializar selects de ano
+function inicializarSelectsAno() {
+    const anoAtual = new Date().getFullYear();
+    const anos = [anoAtual, anoAtual + 1, anoAtual + 2];
+
+    const selectsAno = [
+        'ano_inicio', 'ano_fim',
+        'ano_semana_inicio', 'ano_semana_fim'
+    ];
+
+    selectsAno.forEach(id => {
+        const select = document.getElementById(id);
+        if (select) {
+            select.innerHTML = '';
+            anos.forEach(ano => {
+                const option = document.createElement('option');
+                option.value = ano;
+                option.textContent = ano;
+                select.appendChild(option);
+            });
+        }
+    });
+
+    // Definir valores padrão para período mensal
+    const mesAtual = new Date().getMonth() + 1;
+    document.getElementById('mes_inicio').value = mesAtual;
+    document.getElementById('ano_inicio').value = anoAtual;
+
+    // Fim = 3 meses depois
+    let mesFim = mesAtual + 2;
+    let anoFim = anoAtual;
+    if (mesFim > 12) {
+        mesFim -= 12;
+        anoFim += 1;
+    }
+    document.getElementById('mes_fim').value = mesFim;
+    document.getElementById('ano_fim').value = anoFim;
+
+    // Valores padrão para semanal
+    document.getElementById('ano_semana_inicio').value = anoAtual;
+    document.getElementById('ano_semana_fim').value = anoAtual;
+
+    // Valores padrão para diário
+    const hoje = new Date();
+    const dataInicio = new Date(hoje);
+    dataInicio.setDate(dataInicio.getDate() + 1);
+    const dataFim = new Date(hoje);
+    dataFim.setMonth(dataFim.getMonth() + 1);
+
+    document.getElementById('data_inicio').value = dataInicio.toISOString().split('T')[0];
+    document.getElementById('data_fim').value = dataFim.toISOString().split('T')[0];
+}
+
+// Alternar interface de período baseado na granularidade
+function atualizarInterfacePeriodo() {
+    const granularidade = document.getElementById('granularidade_banco').value;
+
+    // Esconder todos os períodos
+    document.getElementById('periodo_mensal').style.display = 'none';
+    document.getElementById('periodo_semanal').style.display = 'none';
+    document.getElementById('periodo_diario').style.display = 'none';
+
+    // Mostrar o período correspondente
+    if (granularidade === 'mensal') {
+        document.getElementById('periodo_mensal').style.display = 'block';
+    } else if (granularidade === 'semanal') {
+        document.getElementById('periodo_semanal').style.display = 'block';
+    } else if (granularidade === 'diario') {
+        document.getElementById('periodo_diario').style.display = 'block';
+    }
+}
+
+// Coletar dados de período baseado na granularidade
+function coletarDadosPeriodo() {
+    const granularidade = document.getElementById('granularidade_banco').value;
+
+    if (granularidade === 'mensal') {
+        return {
+            tipo_periodo: 'mensal',
+            mes_inicio: parseInt(document.getElementById('mes_inicio').value),
+            ano_inicio: parseInt(document.getElementById('ano_inicio').value),
+            mes_fim: parseInt(document.getElementById('mes_fim').value),
+            ano_fim: parseInt(document.getElementById('ano_fim').value)
+        };
+    } else if (granularidade === 'semanal') {
+        return {
+            tipo_periodo: 'semanal',
+            semana_inicio: parseInt(document.getElementById('semana_inicio').value),
+            ano_semana_inicio: parseInt(document.getElementById('ano_semana_inicio').value),
+            semana_fim: parseInt(document.getElementById('semana_fim').value),
+            ano_semana_fim: parseInt(document.getElementById('ano_semana_fim').value)
+        };
+    } else if (granularidade === 'diario') {
+        return {
+            tipo_periodo: 'diario',
+            data_inicio: document.getElementById('data_inicio').value,
+            data_fim: document.getElementById('data_fim').value
+        };
+    }
+
+    return {};
+}
+
+// Inicializar ao carregar a página
+document.addEventListener('DOMContentLoaded', function() {
+    inicializarSelectsAno();
+    atualizarInterfacePeriodo();
+
+    // Adicionar listener para mudança de granularidade
+    document.getElementById('granularidade_banco').addEventListener('change', atualizarInterfacePeriodo);
+});
 
 // Processar formulário do banco
 document.getElementById('bancoForm').addEventListener('submit', async (e) => {
@@ -1634,15 +1846,19 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
 
     try {
         // Coletar dados do formulário
+        const dadosPeriodo = coletarDadosPeriodo();
         const dados = {
             loja: document.getElementById('loja_banco').value,
             categoria: document.getElementById('categoria_banco').value,
             produto: document.getElementById('produto_banco').value,
-            meses_previsao: parseInt(document.getElementById('meses_previsao_banco').value),
-            granularidade: document.getElementById('granularidade_banco').value
+            granularidade: document.getElementById('granularidade_banco').value,
+            ...dadosPeriodo  // Inclui os dados de período específicos
         };
 
-        console.log('Enviando dados:', dados);
+        console.log('=== DADOS ENVIADOS ===');
+        console.log('Granularidade:', dados.granularidade);
+        console.log('Tipo período:', dados.tipo_periodo);
+        console.log('Dados completos:', JSON.stringify(dados, null, 2));
 
         // Enviar requisição
         const response = await fetch('/api/gerar_previsao_banco', {
@@ -1694,13 +1910,14 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
             const variacaoSinal = variacaoDemanda >= 0 ? '+' : '';
             document.getElementById('kpi_variacao').textContent = `${variacaoSinal}${variacaoDemanda.toFixed(1)}%`;
 
-            // Criar gráfico principal com 3 linhas (base, teste, futuro)
+            // Criar gráfico principal com 3 linhas (base, teste, futuro) + ano anterior
             criarGraficoPrevisao(
                 resultado.historico_base,
                 resultado.historico_teste,
                 resultado.modelos,
                 melhorModelo,
-                resultado.granularidade || 'mensal'  // Passar granularidade para formatação de labels
+                resultado.granularidade || 'mensal',  // Passar granularidade para formatação de labels
+                resultado.ano_anterior  // Passar dados do ano anterior para comparação visual
             );
 
             // Preencher tabela comparativa

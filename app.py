@@ -2222,6 +2222,10 @@ def api_vendas():
 def api_gerar_previsao_banco():
     """
     Gera previsão de demanda usando dados do banco PostgreSQL
+    Aceita período customizado baseado na granularidade:
+    - Mensal: mes_inicio, ano_inicio, mes_fim, ano_fim
+    - Semanal: semana_inicio, ano_semana_inicio, semana_fim, ano_semana_fim
+    - Diário: data_inicio, data_fim
     """
     try:
         # Inicializar auto-logger para auditoria
@@ -2232,8 +2236,48 @@ def api_gerar_previsao_banco():
         loja = dados.get('loja', '')
         categoria = dados.get('categoria', '')
         produto = dados.get('produto', '')
-        meses_previsao = int(dados.get('meses_previsao', 3))
         granularidade = dados.get('granularidade', 'mensal')
+
+        # Extrair parâmetros de período customizado
+        tipo_periodo = dados.get('tipo_periodo', None)
+
+        # Variáveis para armazenar período de previsão (calculado depois)
+        periodo_inicio_customizado = None
+        periodo_fim_customizado = None
+
+        if tipo_periodo == 'mensal':
+            mes_inicio = int(dados.get('mes_inicio', 1))
+            ano_inicio = int(dados.get('ano_inicio', 2026))
+            mes_fim = int(dados.get('mes_fim', 3))
+            ano_fim = int(dados.get('ano_fim', 2026))
+            periodo_inicio_customizado = pd.Timestamp(year=ano_inicio, month=mes_inicio, day=1)
+            from calendar import monthrange
+            ultimo_dia = monthrange(ano_fim, mes_fim)[1]
+            periodo_fim_customizado = pd.Timestamp(year=ano_fim, month=mes_fim, day=ultimo_dia)
+            print(f"\nPeríodo customizado MENSAL: {mes_inicio:02d}/{ano_inicio} até {mes_fim:02d}/{ano_fim}", flush=True)
+
+        elif tipo_periodo == 'semanal':
+            semana_inicio = int(dados.get('semana_inicio', 1))
+            ano_semana_inicio = int(dados.get('ano_semana_inicio', 2026))
+            semana_fim = int(dados.get('semana_fim', 12))
+            ano_semana_fim = int(dados.get('ano_semana_fim', 2026))
+            # Converter semana/ano para data
+            from datetime import datetime, timedelta
+            # Semana 1 = primeira segunda-feira do ano ou 1 de janeiro
+            periodo_inicio_customizado = pd.Timestamp(datetime.strptime(f'{ano_semana_inicio}-W{semana_inicio:02d}-1', '%G-W%V-%u'))
+            periodo_fim_customizado = pd.Timestamp(datetime.strptime(f'{ano_semana_fim}-W{semana_fim:02d}-7', '%G-W%V-%u'))
+            print(f"\nPeríodo customizado SEMANAL: Semana {semana_inicio}/{ano_semana_inicio} até Semana {semana_fim}/{ano_semana_fim}", flush=True)
+
+        elif tipo_periodo == 'diario':
+            data_inicio_str = dados.get('data_inicio', '')
+            data_fim_str = dados.get('data_fim', '')
+            if data_inicio_str and data_fim_str:
+                periodo_inicio_customizado = pd.Timestamp(data_inicio_str)
+                periodo_fim_customizado = pd.Timestamp(data_fim_str)
+                print(f"\nPeríodo customizado DIÁRIO: {data_inicio_str} até {data_fim_str}", flush=True)
+
+        # Fallback para meses_previsao se não houver período customizado
+        meses_previsao = int(dados.get('meses_previsao', 3))
 
         # Normalizar filtros ANTES de fazer prints (remover emojis e prefixos)
         # Se categoria começa com "TODAS -", considerar como TODAS
@@ -2252,20 +2296,19 @@ def api_gerar_previsao_banco():
         print(f"Loja: {loja}")
         print(f"Categoria: {categoria}")
         print(f"Produto: {produto}")
-        print(f"Meses Previsao: {meses_previsao}")
         print(f"Granularidade: {granularidade}")
+        print(f"Tipo período recebido: {tipo_periodo}")
+        if periodo_inicio_customizado and periodo_fim_customizado:
+            print(f"Período CUSTOMIZADO: {periodo_inicio_customizado.strftime('%Y-%m-%d')} até {periodo_fim_customizado.strftime('%Y-%m-%d')}")
+        else:
+            print(f"Meses Previsao (fallback): {meses_previsao}")
 
-        # Converter meses_previsao para número de períodos baseado na granularidade
-        if granularidade == 'semanal':
-            # Para semanal: aproximadamente 4 semanas por mês
-            periodos_previsao = meses_previsao * 4
-        elif granularidade == 'diario':
-            # Para diário: aproximadamente 30 dias por mês
-            periodos_previsao = meses_previsao * 30
-        else:  # mensal
-            periodos_previsao = meses_previsao
+        # NOTA: O cálculo exato de períodos será feito APÓS obter a última data do histórico
+        # para garantir que o período de previsão corresponda exatamente aos meses solicitados
+        # A variável periodos_previsao será calculada mais adiante no código
+        periodos_previsao_aproximado = meses_previsao  # valor temporário, será recalculado
 
-        print(f"Periodos de previsao: {periodos_previsao} ({meses_previsao} meses em granularidade {granularidade})", flush=True)
+        print(f"Período de previsao solicitado", flush=True)
 
         # Conectar ao banco
         conn = get_db_connection()
@@ -2293,8 +2336,9 @@ def api_gerar_previsao_banco():
         where_sql = " AND " + " AND ".join(where_clauses) if where_clauses else ""
 
         # Query para buscar dados históricos baseado na granularidade
-        # IMPORTANTE: Todas as queries devem usar o mesmo intervalo de datas base
-        # para garantir comparabilidade entre granularidades
+        # IMPORTANTE: Usar DATE_TRUNC('month', ...) para garantir que começamos no primeiro dia do mês
+        # Isso garante meses completos e proporção correta entre meses e semanas
+        # Exemplo: Se hoje é 2026-01-09, o boundary será 2024-01-01 (não 2024-01-09)
         if granularidade == 'diario':
             query = f"""
                 SELECT
@@ -2303,15 +2347,15 @@ def api_gerar_previsao_banco():
                     SUM(h.valor_venda) as valor_venda
                 FROM historico_vendas_diario h
                 JOIN cadastro_produtos p ON h.codigo = p.codigo
-                WHERE h.data >= CURRENT_DATE - INTERVAL '2 years'
+                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
                 {where_sql}
                 GROUP BY h.data
                 ORDER BY h.data
             """
         elif granularidade == 'semanal':
-            # Para semanal, agrupar por semana MAS garantir que usamos apenas
-            # semanas completas dentro do intervalo de 2 anos
-            # Usamos DATE_TRUNC('week') que retorna a segunda-feira da semana
+            # Para semanal, agrupar por semana usando EXATAMENTE os mesmos dias do período
+            # IMPORTANTE: Não filtrar semanas, apenas agrupar os dias que já foram filtrados
+            # Isso garante que mensal e semanal somem EXATAMENTE os mesmos dias
             query = f"""
                 WITH dados_diarios AS (
                     SELECT
@@ -2320,7 +2364,7 @@ def api_gerar_previsao_banco():
                         SUM(h.valor_venda) as valor_venda
                     FROM historico_vendas_diario h
                     JOIN cadastro_produtos p ON h.codigo = p.codigo
-                    WHERE h.data >= CURRENT_DATE - INTERVAL '2 years'
+                    WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
                     {where_sql}
                     GROUP BY h.data
                 )
@@ -2340,7 +2384,7 @@ def api_gerar_previsao_banco():
                     SUM(h.valor_venda) as valor_venda
                 FROM historico_vendas_diario h
                 JOIN cadastro_produtos p ON h.codigo = p.codigo
-                WHERE h.data >= CURRENT_DATE - INTERVAL '2 years'
+                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
                 {where_sql}
                 GROUP BY DATE_TRUNC('month', h.data)
                 ORDER BY DATE_TRUNC('month', h.data)
@@ -2366,16 +2410,125 @@ def api_gerar_previsao_banco():
             df_temp.sort_index(inplace=True)
 
             # Calcular período correspondente do ano anterior
-            inicio_historico = df_temp.index[0]
-            fim_historico = df_temp.index[-1]
+            # IMPORTANTE: Se período customizado foi fornecido, usar ele para buscar ano anterior
+            # Isso garante que a comparação na tabela seja coerente com o período de previsão
+            if periodo_inicio_customizado and periodo_fim_customizado:
+                # Usar período de previsão customizado para buscar ano anterior correspondente
+                inicio_periodo_previsao = periodo_inicio_customizado
+                fim_periodo_previsao = periodo_fim_customizado
+                print(f"  Usando período customizado para ano anterior: {inicio_periodo_previsao.strftime('%Y-%m-%d')} até {fim_periodo_previsao.strftime('%Y-%m-%d')}", flush=True)
 
-            # Período do ano anterior
-            inicio_ano_anterior = inicio_historico - pd.DateOffset(years=1)
-            fim_ano_anterior = fim_historico - pd.DateOffset(years=1)
+                # CORREÇÃO PARA SEMANAL: Usar EXATAMENTE as mesmas semanas ISO do ano anterior
+                # Exemplo: Semana 1-13/2026 -> Semana 1-13/2025
+                # Isso garante que o número de períodos seja igual e a comparação seja justa
+                if granularidade == 'semanal' and tipo_periodo == 'semanal':
+                    from datetime import datetime as dt
+
+                    # Obter os parâmetros originais de semana
+                    semana_inicio_param = int(dados.get('semana_inicio', 1))
+                    ano_semana_inicio_param = int(dados.get('ano_semana_inicio', 2026))
+                    semana_fim_param = int(dados.get('semana_fim', 13))
+                    ano_semana_fim_param = int(dados.get('ano_semana_fim', 2026))
+
+                    # Ano anterior
+                    ano_inicio_ant = ano_semana_inicio_param - 1
+                    ano_fim_ant = ano_semana_fim_param - 1
+
+                    # Converter semana ISO para data: mesmas semanas, ano anterior
+                    # Semana X do ano Y-1
+                    inicio_ano_anterior = pd.Timestamp(dt.strptime(f'{ano_inicio_ant}-W{semana_inicio_param:02d}-1', '%G-W%V-%u'))
+                    fim_ano_anterior = pd.Timestamp(dt.strptime(f'{ano_fim_ant}-W{semana_fim_param:02d}-7', '%G-W%V-%u'))
+                    print(f"  Semanal: Semanas {semana_inicio_param}-{semana_fim_param}/{ano_semana_inicio_param} -> Semanas {semana_inicio_param}-{semana_fim_param}/{ano_inicio_ant}", flush=True)
+                else:
+                    # Para mensal e diário, subtrair 1 ano normalmente
+                    inicio_ano_anterior = inicio_periodo_previsao - pd.DateOffset(years=1)
+                    fim_ano_anterior = fim_periodo_previsao - pd.DateOffset(years=1)
+            else:
+                # CORREÇÃO: Calcular o período de PREVISÃO (não histórico) para buscar ano anterior
+                # O ano anterior deve corresponder aos mesmos períodos que serão previstos
+                ultima_data_hist = df_temp.index[-1]
+
+                if granularidade == 'semanal':
+                    # Para semanal sem período customizado:
+                    # A previsão começa na semana seguinte ao último histórico
+                    # Buscar ano anterior: mesmas semanas do ano Y-1
+                    from datetime import datetime as dt
+
+                    # Data de início da previsão: semana seguinte ao último histórico
+                    inicio_previsao = ultima_data_hist + pd.Timedelta(weeks=1)
+                    # Data fim: calcular baseado em meses_previsao
+                    mes_destino_calc = ultima_data_hist.month + meses_previsao
+                    ano_destino_calc = ultima_data_hist.year
+                    while mes_destino_calc > 12:
+                        mes_destino_calc -= 12
+                        ano_destino_calc += 1
+                    from calendar import monthrange
+                    ultimo_dia = monthrange(ano_destino_calc, mes_destino_calc)[1]
+                    fim_previsao = pd.Timestamp(year=ano_destino_calc, month=mes_destino_calc, day=ultimo_dia)
+
+                    # Semanas do período de previsão
+                    semana_inicio = inicio_previsao.isocalendar()[1]
+                    ano_semana_inicio = inicio_previsao.isocalendar()[0]
+                    semana_fim = fim_previsao.isocalendar()[1]
+                    ano_semana_fim = fim_previsao.isocalendar()[0]
+
+                    # Ano anterior: mesmas semanas ISO, ano -1
+                    ano_inicio_ant = ano_semana_inicio - 1
+                    ano_fim_ant = ano_semana_fim - 1
+
+                    # Tratar caso especial: semana 53 pode não existir em alguns anos
+                    # Nesse caso, limitar à semana 52 ou usar a última disponível
+                    semana_fim_ajustada = semana_fim
+                    if semana_fim == 53:
+                        # Verificar se o ano anterior tem semana 53
+                        try:
+                            dt.strptime(f'{ano_fim_ant}-W53-1', '%G-W%V-%u')
+                        except ValueError:
+                            # Ano anterior não tem semana 53, usar semana 52
+                            semana_fim_ajustada = 52
+                            print(f"  Nota: Semana 53 não existe em {ano_fim_ant}, usando S52", flush=True)
+
+                    try:
+                        # IMPORTANTE: Começar 1 semana ANTES para garantir que temos todas as semanas necessárias
+                        # Isso cobre casos onde a semana incompleta no histórico desloca o início da previsão
+                        semana_busca_inicio = semana_inicio - 1 if semana_inicio > 1 else 52
+                        ano_busca_inicio = ano_inicio_ant if semana_inicio > 1 else ano_inicio_ant - 1
+
+                        inicio_ano_anterior = pd.Timestamp(dt.strptime(f'{ano_busca_inicio}-W{semana_busca_inicio:02d}-1', '%G-W%V-%u'))
+                        fim_ano_anterior = pd.Timestamp(dt.strptime(f'{ano_fim_ant}-W{semana_fim_ajustada:02d}-7', '%G-W%V-%u'))
+                        print(f"  Semanal (auto): Previsão S{semana_inicio}-S{semana_fim}/{ano_semana_inicio} -> Busca S{semana_busca_inicio}-S{semana_fim_ajustada}/{ano_busca_inicio}-{ano_fim_ant}", flush=True)
+                    except ValueError as e:
+                        # Se ainda assim não funcionar, usar DateOffset
+                        inicio_ano_anterior = inicio_previsao - pd.DateOffset(years=1)
+                        fim_ano_anterior = fim_previsao - pd.DateOffset(years=1)
+                        print(f"  Semanal (fallback): usando DateOffset ({e})", flush=True)
+                else:
+                    # Para mensal e diário: usar o PERÍODO DE PREVISÃO, não o histórico
+                    # Calcular período de previsão baseado em ultima_data_hist e meses_previsao
+                    inicio_previsao = ultima_data_hist + pd.Timedelta(days=1)
+
+                    mes_destino_calc = ultima_data_hist.month + meses_previsao
+                    ano_destino_calc = ultima_data_hist.year
+                    while mes_destino_calc > 12:
+                        mes_destino_calc -= 12
+                        ano_destino_calc += 1
+                    from calendar import monthrange
+                    ultimo_dia = monthrange(ano_destino_calc, mes_destino_calc)[1]
+                    fim_previsao = pd.Timestamp(year=ano_destino_calc, month=mes_destino_calc, day=ultimo_dia)
+
+                    inicio_ano_anterior = inicio_previsao - pd.DateOffset(years=1)
+                    fim_ano_anterior = fim_previsao - pd.DateOffset(years=1)
+                    print(f"  {granularidade.capitalize()} (auto): {inicio_previsao.strftime('%Y-%m-%d')} a {fim_previsao.strftime('%Y-%m-%d')} -> {inicio_ano_anterior.strftime('%Y-%m-%d')} a {fim_ano_anterior.strftime('%Y-%m-%d')}", flush=True)
+
+            print(f"  Buscando ano anterior: {inicio_ano_anterior.strftime('%Y-%m-%d')} até {fim_ano_anterior.strftime('%Y-%m-%d')}", flush=True)
 
             # Buscar dados do ano anterior (mesmos filtros, exceto as datas)
             # params contém os filtros, mas não inclui as datas inicialmente
-            params_ano_anterior = [inicio_ano_anterior.strftime('%Y-%m-%d'), fim_ano_anterior.strftime('%Y-%m-%d')] + params
+            # Todas as granularidades: [inicio, fim, ...filtros]
+            params_ano_anterior = [
+                inicio_ano_anterior.strftime('%Y-%m-%d'),
+                fim_ano_anterior.strftime('%Y-%m-%d')
+            ] + params
 
             if granularidade == 'mensal':
                 query_ano_anterior = f"""
@@ -2385,13 +2538,13 @@ def api_gerar_previsao_banco():
                     FROM historico_vendas_diario h
                     JOIN cadastro_produtos p ON h.codigo = p.codigo
                     WHERE h.data >= %s
-                      AND h.data < %s
+                      AND h.data <= %s
                       {where_sql}
                     GROUP BY DATE_TRUNC('month', h.data)
                     ORDER BY DATE_TRUNC('month', h.data)
                 """
             elif granularidade == 'semanal':
-                # Mesma lógica do query principal: usar CTE para garantir consistência
+                # Mesma lógica do query principal: agrupar EXATAMENTE os mesmos dias
                 query_ano_anterior = f"""
                     WITH dados_diarios AS (
                         SELECT
@@ -2400,7 +2553,7 @@ def api_gerar_previsao_banco():
                         FROM historico_vendas_diario h
                         JOIN cadastro_produtos p ON h.codigo = p.codigo
                         WHERE h.data >= %s
-                          AND h.data < %s
+                          AND h.data <= %s
                           {where_sql}
                         GROUP BY h.data
                     )
@@ -2419,7 +2572,7 @@ def api_gerar_previsao_banco():
                     FROM historico_vendas_diario h
                     JOIN cadastro_produtos p ON h.codigo = p.codigo
                     WHERE h.data >= %s
-                      AND h.data < %s
+                      AND h.data <= %s
                       {where_sql}
                     GROUP BY h.data
                     ORDER BY h.data
@@ -2428,12 +2581,16 @@ def api_gerar_previsao_banco():
             cursor.execute(query_ano_anterior, params_ano_anterior)
             dados_ano_anterior = cursor.fetchall()
 
-            # Processar dados do ano anterior
+            # Processar dados do ano anterior - INCLUIR DATAS
+            ano_anterior_datas = [d['data'].strftime('%Y-%m-%d') for d in dados_ano_anterior] if dados_ano_anterior else []
             ano_anterior_valores = [float(d['qtd_venda']) for d in dados_ano_anterior] if dados_ano_anterior else []
             ano_anterior_total = sum(ano_anterior_valores) if ano_anterior_valores else 0
 
             print(f"Dados ano anterior: {len(ano_anterior_valores)} períodos, total: {ano_anterior_total}", flush=True)
+            if ano_anterior_datas:
+                print(f"  Período ano anterior: {ano_anterior_datas[0]} até {ano_anterior_datas[-1]}", flush=True)
         else:
+            ano_anterior_datas = []
             ano_anterior_valores = []
             ano_anterior_total = 0
 
@@ -2467,6 +2624,109 @@ def api_gerar_previsao_banco():
         df.set_index('data', inplace=True)
         serie_temporal_completa = df['qtd_venda'].tolist()
         datas_completas = df.index.tolist()
+
+        # CALCULAR PERÍODOS DE PREVISÃO
+        # Agora suporta período CUSTOMIZADO informado pelo usuário
+        from dateutil.relativedelta import relativedelta
+        from calendar import monthrange
+
+        ultima_data_historico = datas_completas[-1]
+
+        # Se período customizado foi fornecido, usar diretamente
+        if periodo_inicio_customizado and periodo_fim_customizado:
+            data_inicio_previsao = periodo_inicio_customizado
+            data_fim_previsao = periodo_fim_customizado
+
+            # Para mensal, extrair mês/ano início e destino
+            primeiro_mes_previsao = data_inicio_previsao.month
+            ano_primeiro_mes = data_inicio_previsao.year
+            mes_destino = data_fim_previsao.month
+            ano_destino = data_fim_previsao.year
+
+            print(f"Periodo de previsao CUSTOMIZADO:", flush=True)
+            print(f"  Data inicio: {data_inicio_previsao.strftime('%Y-%m-%d')}", flush=True)
+            print(f"  Data fim: {data_fim_previsao.strftime('%Y-%m-%d')}", flush=True)
+        else:
+            # LÓGICA ORIGINAL baseada em meses_previsao
+            # Primeiro mês de previsão = mês onde a previsão começa
+            primeiro_mes_previsao = ultima_data_historico.month
+            ano_primeiro_mes = ultima_data_historico.year
+
+            # O MÊS DESTINO é o primeiro mês + (meses_previsao - 1)
+            mes_destino = primeiro_mes_previsao + (meses_previsao - 1)
+            ano_destino = ano_primeiro_mes
+            while mes_destino > 12:
+                mes_destino -= 12
+                ano_destino += 1
+
+            # Data fim é o ÚLTIMO DIA do mês de destino
+            ultimo_dia_mes_destino = monthrange(ano_destino, mes_destino)[1]
+            data_fim_previsao = pd.Timestamp(year=ano_destino, month=mes_destino, day=ultimo_dia_mes_destino)
+
+            print(f"Periodo de previsao alvo:", flush=True)
+            print(f"  Ultima data historico: {ultima_data_historico.strftime('%Y-%m-%d')}", flush=True)
+            print(f"  Primeiro mes previsao: {primeiro_mes_previsao:02d}/{ano_primeiro_mes}", flush=True)
+            print(f"  Mes alvo (destino): {mes_destino:02d}/{ano_destino}", flush=True)
+            print(f"  Data fim previsao: {data_fim_previsao.strftime('%Y-%m-%d')}", flush=True)
+
+        # Usar pd.date_range para calcular o número EXATO de períodos
+        # Isso garante consistência com a geração de datas futuras
+        if granularidade == 'diario':
+            # Para diário: usar data_inicio_previsao se customizado, senão dia seguinte ao histórico
+            if periodo_inicio_customizado:
+                start_date = periodo_inicio_customizado
+            else:
+                start_date = ultima_data_historico + pd.Timedelta(days=1)
+
+            datas_previsao_temp = pd.date_range(
+                start=start_date,
+                end=data_fim_previsao,
+                freq='D'
+            )
+            periodos_previsao = len(datas_previsao_temp)
+
+        elif granularidade == 'semanal':
+            # Para semanal: usar data_inicio_previsao se customizado
+            if periodo_inicio_customizado:
+                start_date = periodo_inicio_customizado
+            else:
+                start_date = ultima_data_historico + pd.Timedelta(weeks=1)
+
+            datas_previsao_temp = pd.date_range(
+                start=start_date,
+                end=data_fim_previsao,
+                freq='W-MON'
+            )
+            periodos_previsao = len(datas_previsao_temp)
+
+        else:  # mensal
+            # Para mensal: usar período customizado ou calcular baseado em meses_previsao
+            if periodo_inicio_customizado:
+                # Período customizado: usar EXATAMENTE o mês/ano que o usuário solicitou
+                # primeiro_mes_previsao = mês de início informado pelo usuário
+                # ano_primeiro_mes = ano de início informado pelo usuário
+                data_inicio_temp = pd.Timestamp(year=ano_primeiro_mes, month=primeiro_mes_previsao, day=1)
+                data_fim_temp = pd.Timestamp(year=ano_destino, month=mes_destino, day=1)
+                print(f"  Mensal customizado: {primeiro_mes_previsao:02d}/{ano_primeiro_mes} até {mes_destino:02d}/{ano_destino}", flush=True)
+            else:
+                # Original: primeiro período é o mês SEGUINTE ao último histórico
+                mes_inicio_mensal = primeiro_mes_previsao + 1
+                ano_inicio_mensal = ano_primeiro_mes
+                if mes_inicio_mensal > 12:
+                    mes_inicio_mensal = 1
+                    ano_inicio_mensal += 1
+
+                data_inicio_temp = pd.Timestamp(year=ano_inicio_mensal, month=mes_inicio_mensal, day=1)
+                data_fim_temp = pd.Timestamp(year=ano_destino, month=mes_destino, day=1)
+
+            datas_previsao_temp = pd.date_range(
+                start=data_inicio_temp,
+                end=data_fim_temp,
+                freq='MS'
+            )
+            periodos_previsao = len(datas_previsao_temp)
+
+        print(f"  Periodos de previsao: {periodos_previsao} ({granularidade})", flush=True)
 
         # Validar série temporal antes do processamento
         print(f"\nValidando serie temporal...", flush=True)
@@ -2514,11 +2774,23 @@ def api_gerar_previsao_banco():
         print(f"  - Validacao futura (YoY): {tamanho_validacao_futura} periodos (25%)", flush=True)
         print(f"  - Previsao para alem dos dados: {periodos_previsao} periodos", flush=True)
 
-        # Dividir os dados
-        serie_base = serie_temporal_completa[:tamanho_base]
-        serie_teste = serie_temporal_completa[tamanho_base:tamanho_base + tamanho_teste]
-        datas_base = datas_completas[:tamanho_base]
-        datas_teste = datas_completas[tamanho_base:tamanho_base + tamanho_teste]
+        # IMPORTANTE: Guardar série ORIGINAL para mostrar histórico real ao usuário
+        # Outliers só devem ser removidos para CÁLCULO da previsão, não para mostrar dados históricos
+        serie_temporal_original = serie_temporal_completa.copy()
+        datas_completas_original = datas_completas.copy()
+
+        # Dividir os dados ORIGINAIS (para mostrar ao usuário no gráfico)
+        serie_base_original = serie_temporal_original[:tamanho_base]
+        serie_teste_original = serie_temporal_original[tamanho_base:tamanho_base + tamanho_teste]
+
+        # IMPORTANTE: Preservar datas ORIGINAIS para exibição ao usuário
+        # Estas NÃO devem ser afetadas pela remoção de outliers
+        datas_base_original = datas_completas_original[:tamanho_base]
+        datas_teste_original = datas_completas_original[tamanho_base:tamanho_base + tamanho_teste]
+
+        # Datas para cálculo (podem ser alteradas se outliers forem removidos)
+        datas_base = datas_completas_original[:tamanho_base]
+        datas_teste = datas_completas_original[tamanho_base:tamanho_base + tamanho_teste]
 
         # Calcular índices sazonais para melhorar previsão
         print(f"\nCalculando indices sazonais...", flush=True)
@@ -2526,7 +2798,7 @@ def api_gerar_previsao_banco():
 
         # Usar módulo robusto de detecção de outliers (IQR ao invés de Z-Score)
         resultado_outliers = auto_clean_outliers(serie_completa_array)
-        serie_temporal_completa = resultado_outliers['cleaned_data']  # Já retorna como lista
+        serie_temporal_completa_limpa = resultado_outliers['cleaned_data']  # Série LIMPA para previsão
 
         if resultado_outliers['outliers_count'] > 0:
             print(f"  Outliers detectados: {resultado_outliers['outliers_count']}", flush=True)
@@ -2535,7 +2807,38 @@ def api_gerar_previsao_banco():
             print(f"  Razão: {resultado_outliers['reason']}", flush=True)
             print(f"  Confiança: {resultado_outliers['confidence']:.2f}", flush=True)
 
-            # Atualizar as divisões após limpeza de outliers
+        # Usar série LIMPA para cálculo de previsão
+        # NOTA: Se outliers foram REMOVIDOS, a série limpa é mais curta!
+        # Precisamos recalcular os tamanhos de base/teste E ajustar as datas
+        if resultado_outliers['treatment'] == 'REMOVE' and resultado_outliers['outliers_count'] > 0:
+            total_periodos_limpo = len(serie_temporal_completa_limpa)
+            tamanho_base_limpo = int(total_periodos_limpo * 0.50)
+            tamanho_teste_limpo = int(total_periodos_limpo * 0.25)
+
+            serie_base = serie_temporal_completa_limpa[:tamanho_base_limpo]
+            serie_teste = serie_temporal_completa_limpa[tamanho_base_limpo:tamanho_base_limpo + tamanho_teste_limpo]
+
+            # CRÍTICO: Atualizar tamanho_teste para usar o valor limpo
+            # Isso garante que modelo.predict() gere o mesmo número de previsões que serie_teste
+            tamanho_teste = tamanho_teste_limpo
+
+            # Usar série limpa para cálculos
+            serie_temporal_completa = serie_temporal_completa_limpa
+
+            # CRÍTICO: Remover as datas correspondentes aos outliers removidos
+            # para manter alinhamento entre datas e valores
+            outlier_indices_set = set(resultado_outliers['outliers_detected'])  # Converter para set para lookup rápido
+            datas_completas_limpas = [datas_completas_original[i] for i in range(len(datas_completas_original)) if i not in outlier_indices_set]
+            datas_completas = datas_completas_limpas
+
+            # Também atualizar datas_base para o loop de ajuste sazonal
+            datas_base = datas_completas[:tamanho_base_limpo]
+
+            print(f"  Série ajustada após remoção: {total_periodos_limpo} períodos (era {total_periodos})", flush=True)
+            print(f"  Datas ajustadas: {len(datas_completas)} datas (removidos {len(outlier_indices_set)} outliers)", flush=True)
+        else:
+            # Se substituiu ou não removeu, série tem mesmo tamanho
+            serie_temporal_completa = serie_temporal_completa_limpa
             serie_base = serie_temporal_completa[:tamanho_base]
             serie_teste = serie_temporal_completa[tamanho_base:tamanho_base + tamanho_teste]
 
@@ -2600,7 +2903,7 @@ def api_gerar_previsao_banco():
             print(f"  Fatores sazonais semanais calculados: {len(fatores_sazonais)} semanas do ano", flush=True)
             print(f"  Valores dos fatores semanais: Min={min(fatores_sazonais.values()):.3f}, Max={max(fatores_sazonais.values()):.3f}, Amplitude={(max(fatores_sazonais.values())-min(fatores_sazonais.values()))*100:.2f}%", flush=True)
 
-        elif granularidade == 'diaria' and len(serie_temporal_completa) >= 7:
+        elif granularidade == 'diario' and len(serie_temporal_completa) >= 7:
             # Calcular fatores sazonais diários (dia da semana)
             indices_sazonais = {}
             tamanho_para_sazonalidade = min(len(datas_completas), len(serie_temporal_completa))
@@ -2656,9 +2959,8 @@ def api_gerar_previsao_banco():
                         # Calcular a chave sazonal com base na granularidade
                         if granularidade == 'mensal':
                             # Para mensal, usar o número do mês (1-12)
-                            mes_previsao = ((ultima_data_base.month + i) % 12)
-                            if mes_previsao == 0:
-                                mes_previsao = 12
+                            # CORREÇÃO: O primeiro período de teste é o mês SEGUINTE ao último da base
+                            mes_previsao = ((ultima_data_base.month + i) % 12) + 1
                             chave_sazonal = mes_previsao
                         elif granularidade == 'semanal':
                             # Para semanal, usar SEMANA DO ANO (1-52)
@@ -2666,10 +2968,11 @@ def api_gerar_previsao_banco():
                             data_previsao = ultima_data_base + timedelta(weeks=i)
                             semana_ano = data_previsao.isocalendar()[1]  # 1-52/53
                             chave_sazonal = semana_ano  # Usar semana do ano diretamente
-                        elif granularidade == 'diaria':
-                            # Para diária, usar dia da semana (0-6)
+                        elif granularidade == 'diario':
+                            # Para diário, usar dia da semana (0-6)
+                            # CORREÇÃO: Usar i+1 porque o primeiro período de teste é o dia SEGUINTE à última data base
                             from datetime import timedelta
-                            data_previsao = ultima_data_base + timedelta(days=i)
+                            data_previsao = ultima_data_base + timedelta(days=i+1)
                             chave_sazonal = data_previsao.weekday()
                         else:
                             chave_sazonal = None
@@ -2737,15 +3040,17 @@ def api_gerar_previsao_banco():
                 if fatores_sazonais:
                     # Aplicar fatores sazonais nas previsões futuras
                     previsoes_futuro = []
-                    ultima_data = datas_completas[-1]
+                    # IMPORTANTE: Usar ultima_data_historico (data original antes de remoção de outliers)
+                    # para garantir alinhamento com as datas de previsão geradas
+                    ultima_data = ultima_data_historico
 
                     for i in range(periodos_previsao):
                         # Calcular a chave sazonal com base na granularidade
                         if granularidade == 'mensal':
                             # Para mensal, usar o número do mês (1-12)
-                            mes_previsao = ((ultima_data.month + i) % 12)
-                            if mes_previsao == 0:
-                                mes_previsao = 12
+                            # CORREÇÃO: O primeiro período de previsão é o mês SEGUINTE ao último histórico
+                            # Por isso usamos (ultima_data.month + i + 1) ao invés de (ultima_data.month + i)
+                            mes_previsao = ((ultima_data.month + i) % 12) + 1
                             chave_sazonal = mes_previsao
                         elif granularidade == 'semanal':
                             # Para semanal, usar SEMANA DO ANO (1-52)
@@ -2753,10 +3058,11 @@ def api_gerar_previsao_banco():
                             data_previsao = ultima_data + timedelta(weeks=i)
                             semana_ano = data_previsao.isocalendar()[1]  # 1-52/53
                             chave_sazonal = semana_ano  # Usar semana do ano diretamente
-                        elif granularidade == 'diaria':
-                            # Para diária, usar dia da semana (0-6)
+                        elif granularidade == 'diario':
+                            # Para diário, usar dia da semana (0-6)
+                            # CORREÇÃO: Usar i+1 porque o primeiro período de previsão é o dia SEGUINTE ao último histórico
                             from datetime import timedelta
-                            data_previsao = ultima_data + timedelta(days=i)
+                            data_previsao = ultima_data + timedelta(days=i+1)
                             chave_sazonal = data_previsao.weekday()
                         else:
                             chave_sazonal = None
@@ -2794,9 +3100,70 @@ def api_gerar_previsao_banco():
             print("Nenhum modelo funcionou, usando fallback...", flush=True)
             modelo = get_modelo('Média Móvel Simples')
             modelo.fit(serie_base)
-            previsoes_teste = modelo.predict(tamanho_teste)
+            previsoes_teste_base = modelo.predict(tamanho_teste)
             modelo.fit(serie_temporal_completa)
-            previsoes_futuro = modelo.predict(periodos_previsao)
+            previsoes_futuro_base = modelo.predict(periodos_previsao)
+
+            # IMPORTANTE: Aplicar fatores sazonais também no fallback!
+            if fatores_sazonais:
+                # Aplicar sazonalidade nas previsões de TESTE
+                previsoes_teste = []
+                # Data inicial do período de teste
+                data_inicio_teste = datas_base[-1] if len(datas_base) > 0 else datas_completas[tamanho_base - 1]
+
+                for i in range(len(previsoes_teste_base)):
+                    if granularidade == 'mensal':
+                        # CORREÇÃO: O primeiro período de teste é o mês SEGUINTE ao último da base
+                        mes_teste = ((data_inicio_teste.month + i) % 12) + 1
+                        chave_sazonal = mes_teste
+                    elif granularidade == 'semanal':
+                        semana_base = data_inicio_teste.isocalendar()[1]
+                        semana_teste = ((semana_base + i - 1) % 52) + 1
+                        chave_sazonal = semana_teste
+                    elif granularidade == 'diario':
+                        # CORREÇÃO: Usar i+1 porque o primeiro período de teste é o dia SEGUINTE à data_inicio_teste
+                        from datetime import timedelta
+                        data_previsao = data_inicio_teste + timedelta(days=i+1)
+                        chave_sazonal = data_previsao.weekday()
+                    else:
+                        chave_sazonal = None
+
+                    fator = fatores_sazonais.get(chave_sazonal, 1.0)
+                    valor_ajustado = previsoes_teste_base[i] * fator
+                    previsoes_teste.append(valor_ajustado)
+
+                # Aplicar sazonalidade nas previsões FUTURAS
+                previsoes_futuro = []
+                # IMPORTANTE: Usar ultima_data_historico (data original antes de remoção de outliers)
+                # para garantir alinhamento com as datas de previsão geradas
+                ultima_data = ultima_data_historico
+
+                for i in range(len(previsoes_futuro_base)):
+                    if granularidade == 'mensal':
+                        # CORREÇÃO: O primeiro período de previsão é o mês SEGUINTE ao último histórico
+                        mes_futuro = ((ultima_data.month + i) % 12) + 1
+                        chave_sazonal = mes_futuro
+                    elif granularidade == 'semanal':
+                        semana_base = ultima_data.isocalendar()[1]
+                        semana_futuro = ((semana_base + i - 1) % 52) + 1
+                        chave_sazonal = semana_futuro
+                    elif granularidade == 'diario':
+                        # CORREÇÃO: Usar i+1 porque o primeiro período de previsão é o dia SEGUINTE ao último histórico
+                        from datetime import timedelta
+                        data_previsao = ultima_data + timedelta(days=i+1)
+                        chave_sazonal = data_previsao.weekday()
+                    else:
+                        chave_sazonal = None
+
+                    fator = fatores_sazonais.get(chave_sazonal, 1.0)
+                    valor_ajustado = previsoes_futuro_base[i] * fator
+                    previsoes_futuro.append(valor_ajustado)
+
+                print(f"  Fallback com ajuste sazonal aplicado (var: {min(fatores_sazonais.values()):.3f} - {max(fatores_sazonais.values()):.3f})", flush=True)
+            else:
+                previsoes_teste = previsoes_teste_base
+                previsoes_futuro = previsoes_futuro_base
+                print(f"  Fallback sem ajuste sazonal (dados insuficientes)", flush=True)
 
             resultados_modelos = {
                 'Média Móvel Simples': {
@@ -2804,8 +3171,42 @@ def api_gerar_previsao_banco():
                     'previsao_futuro': previsoes_futuro
                 }
             }
-            metricas = {'Média Móvel Simples': {'wmape': 0, 'bias': 0, 'mae': 0}}
+
+            # Calcular métricas WMAPE e BIAS para o fallback
+            wmape_fallback = 0
+            bias_fallback = 0
+            mae_fallback = 0
+
+            if len(previsoes_teste) > 0 and len(serie_teste) > 0:
+                erros_absolutos = []
+                erros_percentuais = []
+                erros_reais = []
+
+                tamanho_comparacao = min(len(previsoes_teste), len(serie_teste))
+                for i in range(tamanho_comparacao):
+                    real = serie_teste[i]
+                    previsto = previsoes_teste[i]
+
+                    if real > 0:
+                        erro_abs = abs(previsto - real)
+                        erro_perc = (erro_abs / real) * 100
+                        erro_real = previsto - real
+
+                        erros_absolutos.append(erro_abs)
+                        erros_percentuais.append(erro_perc)
+                        erros_reais.append(erro_real)
+
+                if len(erros_percentuais) > 0:
+                    wmape_fallback = sum(erros_percentuais) / len(erros_percentuais)
+                    soma_reais = sum(serie_teste[:tamanho_comparacao])
+                    bias_fallback = (sum(erros_reais) / soma_reais) * 100 if soma_reais > 0 else 0
+                    mae_fallback = sum(erros_absolutos) / len(erros_absolutos)
+
+                print(f"  Fallback métricas: WMAPE={wmape_fallback:.2f}%, BIAS={bias_fallback:.2f}%", flush=True)
+
+            metricas = {'Média Móvel Simples': {'wmape': wmape_fallback, 'bias': bias_fallback, 'mae': mae_fallback}}
             melhor_modelo = 'Média Móvel Simples'
+            melhor_wmape = wmape_fallback
 
         print(f"\nMelhor modelo: {melhor_modelo}", flush=True)
 
@@ -2837,6 +3238,8 @@ def api_gerar_previsao_banco():
             print(f"  Seleção registrada no auto-logger", flush=True)
 
         # Preparar resposta com 3 séries de dados
+        # IMPORTANTE: Usar série ORIGINAL para mostrar histórico ao usuário
+        # Outliers só devem ser removidos para CÁLCULO da previsão, não para exibição
         resposta = {
             'sucesso': True,
             'melhor_modelo': melhor_modelo,
@@ -2844,18 +3247,23 @@ def api_gerar_previsao_banco():
             'modelos': {},
             'granularidade': granularidade,  # Adicionar granularidade para formatação de labels
             'historico_base': {
-                'datas': [d.strftime('%Y-%m-%d') for d in datas_base],
-                'valores': serie_base
+                'datas': [d.strftime('%Y-%m-%d') for d in datas_base_original],  # Usar datas ORIGINAIS
+                'valores': serie_base_original  # Usar série ORIGINAL (sem remoção de outliers)
             },
             'historico_teste': {
-                'datas': [d.strftime('%Y-%m-%d') for d in datas_teste],
-                'valores': serie_teste
+                'datas': [d.strftime('%Y-%m-%d') for d in datas_teste_original],  # Usar datas ORIGINAIS
+                'valores': serie_teste_original  # Usar série ORIGINAL (sem remoção de outliers)
             },
             'ano_anterior': {
+                'datas': ano_anterior_datas,
                 'valores': ano_anterior_valores,
                 'total': ano_anterior_total
             }
         }
+
+        # IMPORTANTE: Para granularidade semanal, realinhar dados do ano anterior
+        # para corresponder às mesmas semanas ISO das previsões
+        # Isso será feito após gerar as datas futuras da primeira previsão
 
         # Adicionar previsões de cada modelo
         metricas_futuro = {}
@@ -2865,28 +3273,144 @@ def api_gerar_previsao_banco():
             return jsonify({'erro': 'Não há dados históricos suficientes para gerar previsão'}), 400
 
         for nome_modelo, resultado in resultados_modelos.items():
-            # Gerar datas futuras baseado na granularidade e no número de períodos solicitado
+            # Gerar datas futuras baseado na granularidade e no período solicitado
+            # Suporta período customizado quando fornecido pelo usuário
             ultima_data = datas_completas[-1]
+
             if granularidade == 'diario':
-                # Para diário: periodos_previsao dias
+                # Para diário: usar período customizado ou calcular baseado no histórico
+                if periodo_inicio_customizado:
+                    start_date = periodo_inicio_customizado
+                else:
+                    start_date = ultima_data + pd.Timedelta(days=1)
+
                 datas_futuras = pd.date_range(
-                    start=ultima_data + pd.Timedelta(days=1),
-                    periods=periodos_previsao,
+                    start=start_date,
+                    end=data_fim_previsao,
                     freq='D'
                 )
             elif granularidade == 'semanal':
-                # Para semanal: periodos_previsao semanas
+                # Para semanal: usar período customizado ou calcular baseado no histórico
+                if periodo_inicio_customizado:
+                    start_date = periodo_inicio_customizado
+                else:
+                    start_date = ultima_data + pd.Timedelta(weeks=1)
+
                 datas_futuras = pd.date_range(
-                    start=ultima_data + pd.Timedelta(weeks=1),
-                    periods=periodos_previsao,
+                    start=start_date,
+                    end=data_fim_previsao,
                     freq='W-MON'  # Semanas começando na segunda-feira
                 )
             else:  # mensal
+                # Para mensal: usar período customizado ou calcular baseado no histórico
+                if periodo_inicio_customizado:
+                    data_inicio_mensal = pd.Timestamp(year=ano_primeiro_mes, month=primeiro_mes_previsao, day=1)
+                    data_fim_mensal = pd.Timestamp(year=ano_destino, month=mes_destino, day=1)
+                else:
+                    # Original: primeiro período é o mês SEGUINTE ao último histórico
+                    mes_inicio_mensal = primeiro_mes_previsao + 1
+                    ano_inicio_mensal = ano_primeiro_mes
+                    if mes_inicio_mensal > 12:
+                        mes_inicio_mensal = 1
+                        ano_inicio_mensal += 1
+
+                    data_inicio_mensal = pd.Timestamp(year=ano_inicio_mensal, month=mes_inicio_mensal, day=1)
+                    data_fim_mensal = pd.Timestamp(year=ano_destino, month=mes_destino, day=1)
+
                 datas_futuras = pd.date_range(
-                    start=ultima_data + pd.DateOffset(months=1),
-                    periods=periodos_previsao,
+                    start=data_inicio_mensal,
+                    end=data_fim_mensal,
                     freq='MS'
                 )
+
+            # Ajustar periodos_previsao para corresponder às datas geradas
+            periodos_previsao_efetivo = len(datas_futuras)
+
+            # REALINHAMENTO DO ANO ANTERIOR para corresponder às datas futuras
+            # Isso é especialmente importante para granularidade semanal onde
+            # a mesma semana ISO pode cair em datas diferentes em anos diferentes
+            if granularidade == 'semanal' and len(ano_anterior_datas) > 0 and len(datas_futuras) > 0:
+                # Criar dicionário de valores do ano anterior indexado por (ano_iso, semana_iso)
+                # Isso evita que dados de anos diferentes se sobrescrevam
+                ano_anterior_por_semana = {}
+                for i, data_str in enumerate(ano_anterior_datas):
+                    if data_str is None:
+                        continue
+                    data_ant = pd.Timestamp(data_str)
+                    if pd.isna(data_ant):
+                        continue
+                    ano_iso = data_ant.isocalendar()[0]
+                    semana_iso = data_ant.isocalendar()[1]
+                    # Usar tupla (ano, semana) como chave
+                    chave = (ano_iso, semana_iso)
+                    ano_anterior_por_semana[chave] = {
+                        'data': data_str,
+                        'valor': ano_anterior_valores[i]
+                    }
+
+                # Realinhar para corresponder às datas futuras
+                ano_anterior_datas_realinhado = []
+                ano_anterior_valores_realinhado = []
+
+                for data_futura in datas_futuras[:periodos_previsao_efetivo]:
+                    ano_futura = data_futura.isocalendar()[0]
+                    semana_futura = data_futura.isocalendar()[1]
+                    # Buscar pelo ano anterior (ano da previsão - 1) e mesma semana
+                    ano_busca = ano_futura - 1
+                    chave_busca = (ano_busca, semana_futura)
+
+                    if chave_busca in ano_anterior_por_semana:
+                        ano_anterior_datas_realinhado.append(ano_anterior_por_semana[chave_busca]['data'])
+                        ano_anterior_valores_realinhado.append(ano_anterior_por_semana[chave_busca]['valor'])
+                    else:
+                        # Se não encontrar a semana (raro), usar None/0
+                        # Isso pode acontecer com semana 53 que não existe em todos os anos
+                        ano_anterior_datas_realinhado.append(None)
+                        ano_anterior_valores_realinhado.append(0)
+
+                # Atualizar resposta com dados realinhados
+                resposta['ano_anterior']['datas'] = ano_anterior_datas_realinhado
+                resposta['ano_anterior']['valores'] = ano_anterior_valores_realinhado
+                # Total permanece o mesmo (soma de todos os valores do período)
+                print(f"  Ano anterior realinhado: {len(ano_anterior_valores_realinhado)} semanas correspondentes", flush=True)
+
+                # Atualizar variáveis locais também para cálculo de métricas
+                ano_anterior_valores = ano_anterior_valores_realinhado
+                ano_anterior_datas = ano_anterior_datas_realinhado
+
+            elif granularidade == 'mensal' and len(ano_anterior_datas) > 0 and len(datas_futuras) > 0:
+                # Para mensal, realinhar por mês
+                ano_anterior_por_mes = {}
+                for i, data_str in enumerate(ano_anterior_datas):
+                    if data_str is None:
+                        continue
+                    data_ant = pd.Timestamp(data_str)
+                    if pd.isna(data_ant):
+                        continue
+                    mes = data_ant.month
+                    ano_anterior_por_mes[mes] = {
+                        'data': data_str,
+                        'valor': ano_anterior_valores[i]
+                    }
+
+                ano_anterior_datas_realinhado = []
+                ano_anterior_valores_realinhado = []
+
+                for data_futura in datas_futuras[:periodos_previsao_efetivo]:
+                    mes_futuro = data_futura.month
+                    if mes_futuro in ano_anterior_por_mes:
+                        ano_anterior_datas_realinhado.append(ano_anterior_por_mes[mes_futuro]['data'])
+                        ano_anterior_valores_realinhado.append(ano_anterior_por_mes[mes_futuro]['valor'])
+                    else:
+                        ano_anterior_datas_realinhado.append(None)
+                        ano_anterior_valores_realinhado.append(0)
+
+                resposta['ano_anterior']['datas'] = ano_anterior_datas_realinhado
+                resposta['ano_anterior']['valores'] = ano_anterior_valores_realinhado
+                print(f"  Ano anterior realinhado: {len(ano_anterior_valores_realinhado)} meses correspondentes", flush=True)
+
+                ano_anterior_valores = ano_anterior_valores_realinhado
+                ano_anterior_datas = ano_anterior_datas_realinhado
 
             # Estruturar dados do modelo com teste e previsão futura
             modelo_data = {}
