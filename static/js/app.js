@@ -1592,13 +1592,11 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
     }
 
     // Calcular escala dinâmica do eixo Y
-    // CORREÇÃO: Focar na área de análise (previsão futura, ano anterior e teste)
-    // Excluir histórico base que pode distorcer a escala e achatar a visualização
+    // CORREÇÃO: Focar APENAS na previsão futura e ano anterior (comparação YoY)
+    // Isso maximiza a visualização das variações diárias na linha roxa
     const valoresParaEscala = [
-        ...previsaoFuturo,                    // Previsão futura (linha roxa) - principal
-        ...(anoAnterior?.valores || []),      // Ano anterior (comparação YoY)
-        ...valoresTeste,                      // Período de teste (valores reais)
-        ...previsaoTeste                      // Período de teste (previsão)
+        ...previsaoFuturo,                    // Previsão futura (linha roxa) - PRINCIPAL
+        ...(anoAnterior?.valores || [])       // Ano anterior (comparação YoY)
     ].filter(v => v !== null && v !== undefined);
 
     // Se não houver dados para escala (fallback), usar todos os valores
@@ -1614,10 +1612,9 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
     const valorMaximo = Math.max(...todosValores);
     const amplitude = valorMaximo - valorMinimo;
 
-    // Adicionar margem de 5% acima e abaixo para melhor visualização
-    // (reduzido de 10% para 5% para maximizar área útil do gráfico)
-    const margemInferior = valorMinimo - (amplitude * 0.05);
-    const margemSuperior = valorMaximo + (amplitude * 0.05);
+    // Adicionar margem de 3% acima e abaixo para maximizar área útil do gráfico
+    const margemInferior = valorMinimo - (amplitude * 0.03);
+    const margemSuperior = valorMaximo + (amplitude * 0.03);
 
     // Garantir que não fique negativo se todos valores forem positivos
     const yMin = Math.max(0, margemInferior);
