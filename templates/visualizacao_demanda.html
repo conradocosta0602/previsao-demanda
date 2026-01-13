@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualização de Demanda - Dados Reais</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .filters {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+            font-size: 0.9em;
+        }
+
+        select {
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 1em;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        select:hover {
+            border-color: #667eea;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .info-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .info-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .info-card-title {
+            font-size: 0.9em;
+            opacity: 0.9;
+            margin-bottom: 8px;
+        }
+
+        .info-card-value {
+            font-size: 2em;
+            font-weight: bold;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .chart-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fee;
+            border: 2px solid #fcc;
+            color: #c00;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .nav-links {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .nav-links a {
+            padding: 10px 20px;
+            background: #e9ecef;
+            color: #495057;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .nav-links a:hover {
+            background: #dee2e6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Navegação -->
+        <div class="nav-links">
+            <a href="/">← Upload de Dados</a>
+            <a href="/reabastecimento">📦 Reabastecimento</a>
+            <a href="/kpis">📊 KPIs</a>
+        </div>
+
+        <!-- Cabeçalho -->
+        <h1>📈 Visualização de Demanda</h1>
+        <p class="subtitle">Dados reais do banco PostgreSQL - Análise agregada e por filtros</p>
+
+        <!-- Filtros -->
+        <div class="filters">
+            <div class="filter-group">
+                <label for="filtroLoja">🏪 Loja:</label>
+                <select id="filtroLoja">
+                    <option value="">Carregando...</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="filtroCategoria">📂 Categoria:</label>
+                <select id="filtroCategoria">
+                    <option value="">Carregando...</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="filtroProduto">📦 Produto:</label>
+                <select id="filtroProduto">
+                    <option value="">Carregando...</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="filtroMeses">📅 Período:</label>
+                <select id="filtroMeses">
+                    <option value="3">Últimos 3 meses</option>
+                    <option value="6">Últimos 6 meses</option>
+                    <option value="12" selected>Último ano</option>
+                    <option value="24">Últimos 2 anos</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Cards de Informação -->
+        <div class="info-cards">
+            <div class="info-card">
+                <div class="info-card-title">Total de Vendas</div>
+                <div class="info-card-value" id="totalVendas">-</div>
+            </div>
+            <div class="info-card">
+                <div class="info-card-title">Valor Total</div>
+                <div class="info-card-value" id="valorTotal">-</div>
+            </div>
+            <div class="info-card">
+                <div class="info-card-title">Lojas</div>
+                <div class="info-card-value" id="numLojas">-</div>
+            </div>
+            <div class="info-card">
+                <div class="info-card-title">Produtos</div>
+                <div class="info-card-value" id="numProdutos">-</div>
+            </div>
+        </div>
+
+        <!-- Gráfico de Vendas -->
+        <div class="chart-container">
+            <div class="chart-title">📊 Histórico de Vendas</div>
+            <canvas id="chartVendas"></canvas>
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Carregando dados...</p>
+        </div>
+
+        <!-- Erro -->
+        <div id="erro" class="error" style="display: none;"></div>
+    </div>
+
+    <script>
+        let chartVendas = null;
+
+        // Carregar lojas ao iniciar
+        async function carregarLojas() {
+            try {
+                const response = await fetch('/api/lojas');
+                const lojas = await response.json();
+
+                const select = document.getElementById('filtroLoja');
+                select.innerHTML = '';
+
+                lojas.forEach(loja => {
+                    const option = document.createElement('option');
+                    option.value = loja.cod_empresa;
+                    option.textContent = loja.nome_loja;
+                    select.appendChild(option);
+                });
+
+                // Carregar categorias
+                carregarCategorias();
+            } catch (error) {
+                mostrarErro('Erro ao carregar lojas: ' + error.message);
+            }
+        }
+
+        // Carregar categorias
+        async function carregarCategorias() {
+            try {
+                const response = await fetch('/api/categorias');
+                const categorias = await response.json();
+
+                const select = document.getElementById('filtroCategoria');
+                select.innerHTML = '';
+
+                categorias.forEach(cat => {
+                    const option = document.createElement('option');
+                    option.value = cat;
+                    option.textContent = cat;
+                    select.appendChild(option);
+                });
+
+                // Carregar produtos
+                carregarProdutos();
+            } catch (error) {
+                mostrarErro('Erro ao carregar categorias: ' + error.message);
+            }
+        }
+
+        // Carregar produtos
+        async function carregarProdutos() {
+            try {
+                const loja = document.getElementById('filtroLoja').value;
+                const categoria = document.getElementById('filtroCategoria').value;
+
+                const params = new URLSearchParams();
+                if (loja) params.append('loja', loja);
+                if (categoria) params.append('categoria', categoria);
+
+                const response = await fetch(`/api/produtos?${params}`);
+                const produtos = await response.json();
+
+                const select = document.getElementById('filtroProduto');
+                select.innerHTML = '';
+
+                produtos.forEach(prod => {
+                    const option = document.createElement('option');
+                    option.value = prod.codigo;
+                    option.textContent = prod.descricao;
+                    select.appendChild(option);
+                });
+
+                // Carregar dados de vendas
+                carregarVendas();
+            } catch (error) {
+                mostrarErro('Erro ao carregar produtos: ' + error.message);
+            }
+        }
+
+        // Carregar vendas
+        async function carregarVendas() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('erro').style.display = 'none';
+
+                const loja = document.getElementById('filtroLoja').value;
+                const categoria = document.getElementById('filtroCategoria').value;
+                const produto = document.getElementById('filtroProduto').value;
+                const meses = document.getElementById('filtroMeses').value;
+
+                const params = new URLSearchParams();
+                if (loja) params.append('loja', loja);
+                if (categoria) params.append('categoria', categoria);
+                if (produto) params.append('produto', produto);
+                params.append('meses', meses);
+
+                const response = await fetch(`/api/vendas?${params}`);
+                const vendas = await response.json();
+
+                document.getElementById('loading').style.display = 'none';
+
+                // Atualizar cards
+                const totalVendas = vendas.reduce((sum, v) => sum + v.qtd_venda, 0);
+                const valorTotal = vendas.reduce((sum, v) => sum + v.valor_venda, 0);
+                const maxLojas = Math.max(...vendas.map(v => v.num_lojas));
+                const maxProdutos = Math.max(...vendas.map(v => v.num_produtos));
+
+                document.getElementById('totalVendas').textContent = totalVendas.toLocaleString('pt-BR', {maximumFractionDigits: 0});
+                document.getElementById('valorTotal').textContent = 'R$ ' + valorTotal.toLocaleString('pt-BR', {maximumFractionDigits: 2});
+                document.getElementById('numLojas').textContent = maxLojas;
+                document.getElementById('numProdutos').textContent = maxProdutos;
+
+                // Atualizar gráfico
+                atualizarGrafico(vendas);
+
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                mostrarErro('Erro ao carregar vendas: ' + error.message);
+            }
+        }
+
+        // Atualizar gráfico
+        function atualizarGrafico(vendas) {
+            const ctx = document.getElementById('chartVendas').getContext('2d');
+
+            if (chartVendas) {
+                chartVendas.destroy();
+            }
+
+            chartVendas = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: vendas.map(v => v.data),
+                    datasets: [{
+                        label: 'Quantidade Vendida',
+                        data: vendas.map(v => v.qtd_venda),
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2.5,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Mostrar erro
+        function mostrarErro(mensagem) {
+            const erroDiv = document.getElementById('erro');
+            erroDiv.textContent = mensagem;
+            erroDiv.style.display = 'block';
+        }
+
+        // Event listeners
+        document.getElementById('filtroLoja').addEventListener('change', () => {
+            carregarProdutos();
+        });
+
+        document.getElementById('filtroCategoria').addEventListener('change', () => {
+            carregarProdutos();
+        });
+
+        document.getElementById('filtroProduto').addEventListener('change', () => {
+            carregarVendas();
+        });
+
+        document.getElementById('filtroMeses').addEventListener('change', () => {
+            carregarVendas();
+        });
+
+        // Iniciar
+        carregarLojas();
+    </script>
+</body>
+</html>

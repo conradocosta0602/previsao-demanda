@@ -1,27 +1,15 @@
+# Arquivos de dados reais (sensiveis)
+dados_reais/
+data_export/
+test_data/
+
+# Arquivos temporarios
+*.log
+tmpclaude-*
+erro_previsao.log
+
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+*.pyc
+.env
 venv/
-ENV/
-
-# Uploads e outputs (arquivos temporarios)
-uploads/*
-!uploads/.gitkeep
-outputs/*
-!outputs/.gitkeep
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log

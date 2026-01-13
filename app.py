@@ -2016,7 +2016,7 @@ from psycopg2.extras import RealDictCursor
 # Configuração do banco
 DB_CONFIG = {
     'host': 'localhost',
-    'database': 'demanda_reabastecimento',
+    'database': 'previsao_demanda',
     'user': 'postgres',
     'password': 'FerreiraCost@01',
     'port': 5432
@@ -3511,11 +3511,11 @@ def api_gerar_previsao_banco():
             info = sum(1 for a in alertas if a.get('tipo') == 'INFO')
 
             if criticos > 0:
-                print(f"  🔴 {criticos} alertas críticos", flush=True)
+                print(f"  [CRITICO] {criticos} alertas criticos", flush=True)
             if avisos > 0:
-                print(f"  🟡 {avisos} avisos", flush=True)
+                print(f"  [AVISO] {avisos} avisos", flush=True)
             if info > 0:
-                print(f"  🔵 {info} informativos", flush=True)
+                print(f"  [INFO] {info} informativos", flush=True)
         else:
             resposta['alertas'] = []
 
@@ -3524,9 +3524,15 @@ def api_gerar_previsao_banco():
         return jsonify(resposta)
 
     except Exception as e:
-        print(f"Erro ao gerar previsão: {e}")
         import traceback
-        print(traceback.format_exc())
+        erro_msg = traceback.format_exc()
+        # Gravar erro em arquivo para debug
+        with open('erro_previsao.log', 'w', encoding='utf-8') as f:
+            f.write(erro_msg)
+        try:
+            print(f"Erro ao gerar previsao: {e}", flush=True)
+        except:
+            pass
         return jsonify({'erro': str(e)}), 500
 
 

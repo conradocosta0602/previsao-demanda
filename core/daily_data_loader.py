@@ -24,17 +24,21 @@ class DailyDataLoader:
     - und_venda: Unidade de venda (UN, CX, etc)
     - qtd_venda: Quantidade vendida
     - padrao_compra: Filial que reabastece
+    - estoque_diario: Posição de estoque no dia (OPCIONAL)
     """
 
     # Colunas obrigatórias no arquivo
     COLUNAS_OBRIGATORIAS = ['data', 'cod_empresa', 'codigo', 'und_venda', 'qtd_venda', 'padrao_compra']
+
+    # Colunas opcionais que agregam valor
+    COLUNAS_OPCIONAIS = ['estoque_diario']
 
     def __init__(self, caminho_arquivo: str):
         """
         Inicializa o carregador de dados diários
 
         Args:
-            caminho_arquivo: Caminho para o arquivo Excel com dados diários
+            caminho_arquivo: Caminho para o arquivo Excel ou CSV com dados diários
         """
         self.caminho = caminho_arquivo
         self.df_diario = None
@@ -42,6 +46,9 @@ class DailyDataLoader:
         self.df_mensal = None
         self.erros = []
         self.avisos = []
+
+        # Flag para indicar se tem coluna de estoque
+        self.tem_estoque = False
 
         # Metadados
         self.filiais = []
@@ -51,13 +58,23 @@ class DailyDataLoader:
 
     def carregar(self) -> pd.DataFrame:
         """
-        Carrega o arquivo Excel com dados diários
+        Carrega o arquivo Excel ou CSV com dados diários
 
         Returns:
             DataFrame com os dados diários carregados
         """
         try:
-            self.df_diario = pd.read_excel(self.caminho)
+            # Detectar tipo de arquivo pela extensão
+            if self.caminho.endswith('.csv'):
+                self.df_diario = pd.read_csv(self.caminho, low_memory=False)
+            elif self.caminho.endswith(('.xlsx', '.xls')):
+                self.df_diario = pd.read_excel(self.caminho)
+            else:
+                # Tentar CSV primeiro (arquivos sem extensão)
+                try:
+                    self.df_diario = pd.read_csv(self.caminho, low_memory=False)
+                except:
+                    self.df_diario = pd.read_excel(self.caminho)
 
             # Garantir que a coluna data é datetime
             if 'data' in self.df_diario.columns:
@@ -66,6 +83,14 @@ class DailyDataLoader:
             # Preencher qtd_venda NaN com 0
             if 'qtd_venda' in self.df_diario.columns:
                 self.df_diario['qtd_venda'] = self.df_diario['qtd_venda'].fillna(0)
+
+            # Verificar se tem coluna estoque_diario
+            if 'estoque_diario' in self.df_diario.columns:
+                self.tem_estoque = True
+                # Manter NaN para indicar que não há informação de estoque naquele dia
+                # Não preencher com 0, pois 0 significa ruptura
+            else:
+                self.avisos.append("Coluna 'estoque_diario' não encontrada. Detecção de rupturas desabilitada.")
 
             # Extrair metadados
             self._extrair_metadados()
@@ -386,3 +411,340 @@ class DailyDataLoader:
                 registros_diarios.append(registro)
 
         return pd.DataFrame(registros_diarios)
+
+    def detectar_rupturas(self) -> pd.DataFrame:
+        """
+        Detecta rupturas de estoque (dias onde não houve venda E estoque = 0)
+
+        Ruptura ocorre quando:
+        - qtd_venda = 0 (não vendeu)
+        - estoque_diario = 0 (não tinha estoque)
+
+        Returns:
+            DataFrame com registros de rupturas detectadas
+        """
+        if not self.tem_estoque:
+            raise ValueError("Coluna 'estoque_diario' não disponível. Não é possível detectar rupturas.")
+
+        if self.df_diario is None:
+            raise ValueError("Dados não carregados. Execute carregar() primeiro.")
+
+        # Filtrar dias com ruptura: venda = 0 E estoque = 0
+        df_rupturas = self.df_diario[
+            (self.df_diario['qtd_venda'] == 0) &
+            (self.df_diario['estoque_diario'] == 0)
+        ].copy()
+
+        # Adicionar informações úteis
+        df_rupturas['ruptura'] = True
+
+        return df_rupturas
+
+    def calcular_demanda_perdida(self, janela_dias: int = 7) -> pd.DataFrame:
+        """
+        Estima a demanda perdida durante rupturas usando média móvel dos dias anteriores
+
+        Args:
+            janela_dias: Número de dias anteriores para calcular a média (default: 7)
+
+        Returns:
+            DataFrame com demanda perdida estimada por ruptura
+        """
+        if not self.tem_estoque:
+            raise ValueError("Coluna 'estoque_diario' não disponível.")
+
+        # Detectar rupturas
+        df_rupturas = self.detectar_rupturas()
+
+        if len(df_rupturas) == 0:
+            return pd.DataFrame()  # Sem rupturas
+
+        # Calcular demanda perdida para cada ruptura
+        demandas_perdidas = []
+
+        for idx, row in df_rupturas.iterrows():
+            filial = row['cod_empresa']
+            produto = row['codigo']
+            data_ruptura = row['data']
+
+            # Buscar vendas dos N dias anteriores (excluindo rupturas)
+            df_historico = self.df_diario[
+                (self.df_diario['cod_empresa'] == filial) &
+                (self.df_diario['codigo'] == produto) &
+                (self.df_diario['data'] < data_ruptura) &
+                (self.df_diario['data'] >= data_ruptura - timedelta(days=janela_dias)) &
+                (self.df_diario['qtd_venda'] > 0)  # Apenas dias com venda
+            ]
+
+            if len(df_historico) > 0:
+                # Média das vendas dos dias anteriores
+                demanda_estimada = df_historico['qtd_venda'].mean()
+            else:
+                # Se não houver histórico, usar 0 (conservador)
+                demanda_estimada = 0
+
+            demandas_perdidas.append({
+                'data': data_ruptura,
+                'cod_empresa': filial,
+                'codigo': produto,
+                'demanda_perdida_estimada': round(demanda_estimada, 2),
+                'dias_historico_usados': len(df_historico)
+            })
+
+        return pd.DataFrame(demandas_perdidas)
+
+    def ajustar_vendas_com_rupturas(self) -> pd.DataFrame:
+        """
+        Ajusta o histórico de vendas adicionando a demanda perdida durante rupturas
+
+        Retorna DataFrame com coluna 'qtd_ajustada' que inclui demanda perdida
+
+        Returns:
+            DataFrame diário com vendas ajustadas
+        """
+        if not self.tem_estoque:
+            # Se não tem estoque, retornar vendas originais
+            df_ajustado = self.df_diario.copy()
+            df_ajustado['qtd_ajustada'] = df_ajustado['qtd_venda']
+            df_ajustado['tem_ruptura'] = False
+            df_ajustado['demanda_perdida'] = 0
+            return df_ajustado
+
+        # Calcular demanda perdida
+        df_demanda_perdida = self.calcular_demanda_perdida()
+
+        # Criar cópia do DataFrame original
+        df_ajustado = self.df_diario.copy()
+
+        # Inicializar colunas
+        df_ajustado['qtd_ajustada'] = df_ajustado['qtd_venda']
+        df_ajustado['tem_ruptura'] = False
+        df_ajustado['demanda_perdida'] = 0
+
+        # Aplicar ajustes nas rupturas
+        if len(df_demanda_perdida) > 0:
+            for _, ruptura in df_demanda_perdida.iterrows():
+                mascara = (
+                    (df_ajustado['data'] == ruptura['data']) &
+                    (df_ajustado['cod_empresa'] == ruptura['cod_empresa']) &
+                    (df_ajustado['codigo'] == ruptura['codigo'])
+                )
+
+                df_ajustado.loc[mascara, 'qtd_ajustada'] = ruptura['demanda_perdida_estimada']
+                df_ajustado.loc[mascara, 'tem_ruptura'] = True
+                df_ajustado.loc[mascara, 'demanda_perdida'] = ruptura['demanda_perdida_estimada']
+
+        return df_ajustado
+
+    def processar_historico_hibrido(self, threshold_filtrar: float = 20.0) -> pd.DataFrame:
+        """
+        ABORDAGEM HÍBRIDA: Escolhe automaticamente a melhor estratégia por SKU/Filial
+
+        Estratégia adaptativa baseada no % de rupturas:
+        - Se < threshold_filtrar (default 20%): FILTRAR rupturas (mais simples e rápido)
+        - Se >= threshold_filtrar: AJUSTAR com demanda estimada (preserva dados)
+
+        Esta abordagem combina o melhor dos dois mundos:
+        - Produtos com poucas rupturas: processamento rápido via filtro
+        - Produtos com rupturas frequentes: ajuste preserva continuidade temporal
+
+        Args:
+            threshold_filtrar: % de rupturas abaixo do qual usa filtro (default: 20%)
+
+        Returns:
+            DataFrame com coluna 'qtd_processada' e informações da abordagem usada
+        """
+        if not self.tem_estoque:
+            # Se não tem estoque, retornar vendas originais
+            df_processado = self.df_diario.copy()
+            df_processado['qtd_processada'] = df_processado['qtd_venda']
+            df_processado['abordagem'] = 'original'
+            df_processado['pct_rupturas'] = 0
+            return df_processado
+
+        # Calcular % de rupturas por SKU/Filial
+        estatisticas_rupturas = []
+
+        for (filial, produto), grupo in self.df_diario.groupby(['cod_empresa', 'codigo']):
+            # Considerar apenas registros com informação de estoque
+            grupo_com_estoque = grupo[grupo['estoque_diario'].notna()]
+
+            if len(grupo_com_estoque) == 0:
+                continue
+
+            # Contar rupturas
+            rupturas = ((grupo_com_estoque['qtd_venda'] == 0) &
+                       (grupo_com_estoque['estoque_diario'] == 0)).sum()
+
+            pct_rupturas = (rupturas / len(grupo_com_estoque)) * 100
+
+            # Decidir abordagem
+            abordagem = 'filtrar' if pct_rupturas < threshold_filtrar else 'ajustar'
+
+            estatisticas_rupturas.append({
+                'cod_empresa': filial,
+                'codigo': produto,
+                'dias_com_info_estoque': len(grupo_com_estoque),
+                'dias_ruptura': rupturas,
+                'pct_rupturas': round(pct_rupturas, 1),
+                'abordagem': abordagem
+            })
+
+        df_estrategias = pd.DataFrame(estatisticas_rupturas)
+
+        # Preparar DataFrame de saída
+        df_processado = self.df_diario.copy()
+        df_processado['qtd_processada'] = df_processado['qtd_venda']
+        df_processado['abordagem'] = 'original'
+        df_processado['pct_rupturas'] = 0.0
+        df_processado['rupturas_removidas'] = False
+
+        # Calcular demanda perdida UMA VEZ (para SKUs que usarão ajuste)
+        skus_ajustar = df_estrategias[df_estrategias['abordagem'] == 'ajustar']
+
+        if len(skus_ajustar) > 0:
+            df_demanda_perdida = self.calcular_demanda_perdida()
+        else:
+            df_demanda_perdida = pd.DataFrame()
+
+        # Aplicar estratégia por SKU
+        for _, estrategia in df_estrategias.iterrows():
+            filial = estrategia['cod_empresa']
+            produto = estrategia['codigo']
+            abordagem = estrategia['abordagem']
+            pct_rupturas = estrategia['pct_rupturas']
+
+            # Máscara para este SKU
+            mascara_sku = ((df_processado['cod_empresa'] == filial) &
+                          (df_processado['codigo'] == produto))
+
+            # Aplicar informações estatísticas
+            df_processado.loc[mascara_sku, 'abordagem'] = abordagem
+            df_processado.loc[mascara_sku, 'pct_rupturas'] = pct_rupturas
+
+            if abordagem == 'filtrar':
+                # ABORDAGEM 1: FILTRAR - Remover rupturas
+                mascara_ruptura = (mascara_sku &
+                                  (df_processado['qtd_venda'] == 0) &
+                                  (df_processado['estoque_diario'] == 0))
+
+                df_processado.loc[mascara_ruptura, 'rupturas_removidas'] = True
+                # qtd_processada permanece 0, mas será filtrada posteriormente
+
+            else:  # ajustar
+                # ABORDAGEM 2: AJUSTAR - Substituir por demanda estimada
+                # Buscar rupturas deste SKU na demanda perdida
+                df_rupturas_sku = df_demanda_perdida[
+                    (df_demanda_perdida['cod_empresa'] == filial) &
+                    (df_demanda_perdida['codigo'] == produto)
+                ]
+
+                for _, ruptura in df_rupturas_sku.iterrows():
+                    mascara_data = (mascara_sku &
+                                   (df_processado['data'] == ruptura['data']))
+
+                    df_processado.loc[mascara_data, 'qtd_processada'] = ruptura['demanda_perdida_estimada']
+
+        return df_processado
+
+    def get_resumo_abordagem_hibrida(self, df_processado: pd.DataFrame) -> Dict:
+        """
+        Gera resumo estatístico da abordagem híbrida aplicada
+
+        Args:
+            df_processado: DataFrame retornado por processar_historico_hibrido()
+
+        Returns:
+            Dicionário com estatísticas da aplicação
+        """
+        resumo = {
+            'total_skus': df_processado.groupby(['cod_empresa', 'codigo']).ngroups,
+            'skus_filtrados': 0,
+            'skus_ajustados': 0,
+            'skus_originais': 0,
+            'registros_rupturas_removidos': 0,
+            'registros_ajustados': 0,
+            'pct_rupturas_medio': 0
+        }
+
+        # Contar por abordagem
+        abordagens = df_processado.groupby(['cod_empresa', 'codigo', 'abordagem']).size().reset_index()
+        resumo['skus_filtrados'] = (abordagens['abordagem'] == 'filtrar').sum()
+        resumo['skus_ajustados'] = (abordagens['abordagem'] == 'ajustar').sum()
+        resumo['skus_originais'] = (abordagens['abordagem'] == 'original').sum()
+
+        # Contar registros afetados
+        resumo['registros_rupturas_removidos'] = (df_processado['rupturas_removidas'] == True).sum()
+        resumo['registros_ajustados'] = ((df_processado['qtd_processada'] != df_processado['qtd_venda']) &
+                                         (df_processado['abordagem'] == 'ajustar')).sum()
+
+        # % médio de rupturas
+        if len(df_processado) > 0:
+            resumo['pct_rupturas_medio'] = df_processado['pct_rupturas'].mean()
+
+        return resumo
+
+    def calcular_nivel_servico(self) -> pd.DataFrame:
+        """
+        Calcula métricas de nível de serviço por SKU/Filial
+
+        Métricas calculadas:
+        - dias_total: Total de dias no período
+        - dias_com_estoque: Dias onde estoque > 0
+        - dias_em_ruptura: Dias onde estoque = 0
+        - taxa_disponibilidade: % de dias com estoque disponível
+        - demanda_total: Vendas totais realizadas
+        - demanda_perdida: Demanda estimada durante rupturas
+
+        Returns:
+            DataFrame com métricas por cod_empresa e codigo
+        """
+        if not self.tem_estoque:
+            raise ValueError("Coluna 'estoque_diario' não disponível.")
+
+        # Calcular demanda perdida
+        df_demanda_perdida = self.calcular_demanda_perdida()
+
+        # Agregar demanda perdida por filial/produto
+        demanda_perdida_total = df_demanda_perdida.groupby(
+            ['cod_empresa', 'codigo']
+        )['demanda_perdida_estimada'].sum().reset_index()
+        demanda_perdida_total.rename(columns={'demanda_perdida_estimada': 'demanda_perdida'}, inplace=True)
+
+        # Calcular métricas por filial/produto
+        metricas = []
+
+        for (filial, produto), grupo in self.df_diario.groupby(['cod_empresa', 'codigo']):
+            # Filtrar apenas registros onde temos informação de estoque
+            grupo_com_estoque = grupo[grupo['estoque_diario'].notna()]
+
+            if len(grupo_com_estoque) == 0:
+                continue  # Pular se não houver dados de estoque
+
+            dias_total = len(grupo_com_estoque)
+            dias_com_estoque = (grupo_com_estoque['estoque_diario'] > 0).sum()
+            dias_em_ruptura = (grupo_com_estoque['estoque_diario'] == 0).sum()
+            taxa_disponibilidade = (dias_com_estoque / dias_total * 100) if dias_total > 0 else 0
+
+            demanda_total = grupo['qtd_venda'].sum()
+
+            # Buscar demanda perdida
+            dp = demanda_perdida_total[
+                (demanda_perdida_total['cod_empresa'] == filial) &
+                (demanda_perdida_total['codigo'] == produto)
+            ]
+            demanda_perdida = dp['demanda_perdida'].values[0] if len(dp) > 0 else 0
+
+            metricas.append({
+                'cod_empresa': filial,
+                'codigo': produto,
+                'dias_total': dias_total,
+                'dias_com_estoque': dias_com_estoque,
+                'dias_em_ruptura': dias_em_ruptura,
+                'taxa_disponibilidade': round(taxa_disponibilidade, 1),
+                'demanda_total': round(demanda_total, 2),
+                'demanda_perdida': round(demanda_perdida, 2),
+                'demanda_potencial': round(demanda_total + demanda_perdida, 2)
+            })
+
+        return pd.DataFrame(metricas)
