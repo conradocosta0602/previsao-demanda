@@ -1,487 +1,612 @@
-# Sistema de Previsão de Demanda e Reabastecimento v3.0
+# Sistema de Demanda e Reabastecimento v4.0
 
-Sistema completo para gestão de estoque multi-loja com Centro de Distribuição (CD), combinando métodos estatísticos avançados, machine learning e cálculos de reabastecimento baseados em níveis de serviço.
+Sistema completo para gestão de estoque multi-loja com Centro de Distribuição (CD), combinando previsão de demanda Bottom-Up com política de estoque baseada em curva ABC.
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/flask-3.0.0-green.svg)](https://flask.palletsprojects.com/)
+[![PostgreSQL](https://img.shields.io/badge/postgresql-15+-blue.svg)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## 📋 Características Principais
+---
 
-### 🔮 Previsão de Demanda
-- **6 Métodos Estatísticos:**
-  - Simple Moving Average (SMA) com janela adaptativa
-  - Weighted Moving Average (WMA) adaptativo
-  - Simple Exponential Smoothing (SES)
-  - Linear Regression Forecast
-  - TSB (Trigg and Leach Smoothing with BIAS)
-  - Decomposição Sazonal Mensal (Híbrida)
+## Indice
 
-- **Seleção Automática Inteligente:**
-  - **Modo AUTO:** Baseado em características da demanda (CV, tendência, sazonalidade)
-  - **Modo ML:** Machine Learning (Random Forest) com 15+ features
+1. [Caracteristicas Principais](#-caracteristicas-principais)
+2. [Arquitetura do Sistema](#-arquitetura-do-sistema)
+3. [Instalacao Rapida](#-instalacao-rapida)
+4. [Como Usar](#-como-usar)
+5. [Modulo de Previsao de Demanda](#-modulo-de-previsao-de-demanda)
+6. [Modulo de Pedido ao Fornecedor](#-modulo-de-pedido-ao-fornecedor)
+7. [Politica de Estoque ABC](#-politica-de-estoque-abc)
+8. [Estrutura do Projeto](#-estrutura-do-projeto)
+9. [Formato dos Arquivos](#-formato-dos-arquivos)
+10. [Changelog](#-changelog)
+11. [FAQ](#-faq)
+12. [Documentacao Completa](#-documentacao-completa)
 
-### 🎯 Recursos Avançados
+---
 
-#### 🔍 Detecção Automática
-- **Sazonalidade:** Autocorrelação com lag de 12 meses
-- **Outliers:** Métodos IQR e Z-Score com substituição automática
-- **Tendências:** Análise de slope e R²
+## Caracteristicas Principais
 
-#### 📊 Métricas e Alertas
-- **WMAPE:** Weighted Mean Absolute Percentage Error (acurácia ponderada por volume)
-- **BIAS:** Tendência sistemática de erro
-- **Alertas Inteligentes:** 4 níveis (🔴 Crítico, 🟡 Alerta, 🔵 Atenção, 🟢 Normal)
-- **YoY:** Comparação Year-over-Year
+### Previsao de Demanda V2 (Bottom-Up)
 
-#### 🛠️ Funcionalidades Operacionais
-- **Calendário Promocional:** Ajuste automático para eventos
-- **Simulador de Cenários:** What-If Analysis
-- **Logging Completo:** Auditoria de decisões
-- **Séries Curtas:** Tratamento especializado
+O sistema utiliza uma abordagem **Bottom-Up** que analisa cada produto individualmente e seleciona o melhor metodo estatistico:
 
-### 📦 Reabastecimento
+| Metodo | Descricao | Quando e Usado |
+|--------|-----------|----------------|
+| **SMA** | Simple Moving Average | Demanda estavel, baixa variabilidade |
+| **WMA** | Weighted Moving Average | Demanda com tendencia recente |
+| **SES** | Simple Exponential Smoothing | Demanda com ruido moderado |
+| **Linear Regression** | Regressao Linear | Tendencia clara de crescimento/queda |
+| **TSB** | Trigg-Leach Smoothing | Demanda intermitente |
+| **Decomposicao Sazonal** | Hibrida | Padroes sazonais detectados |
 
-#### 3 Fluxos Suportados
-1. **Fornecedor → CD/Loja**
-   - Lead time do fornecedor
-   - Ciclo de pedido
-   - Múltiplos de palete/carreta
+**Diferenciais:**
+- Selecao automatica do melhor metodo por SKU
+- Limitadores de tendencia (queda >40% ignorada, alta >50% limitada)
+- Sazonalidade anual (12 meses ou 52 semanas)
+- Deteccao automatica de outliers (IQR + Z-Score)
 
-2. **CD → Loja**
-   - Lead time interno
-   - Priorização por criticidade
+### Pedido ao Fornecedor Integrado
 
-3. **Transferências entre Lojas**
-   - Identifica excesso vs ruptura
-   - Otimiza redistribuição
+Novo modulo que integra previsao de demanda com calculo de pedidos:
 
-#### Cálculos Implementados
-- **Estoque de Segurança:** `SS = Z × σ × √LT`
-- **Ponto de Pedido:** `ROP = (Demanda × LT) + SS`
-- **Nível de Serviço ABC:**
-  - Classe A (>500 un/mês): 98%
-  - Classe B (100-500 un/mês): 95%
-  - Classe C (<100 un/mês): 90%
+- **Cobertura ABC**: Lead Time + Ciclo (7d) + Seguranca ABC
+- **Estoque de Seguranca**: ES = Z x Sigma x Raiz(LT)
+- **Arredondamento**: Multiplo de caixa automatico
+- **Destino Configuravel**: Lojas (direto) ou CD (centralizado)
 
-## 🚀 Instalação Rápida
+### Modulos Disponiveis
 
-### Pré-requisitos
+| Modulo | Descricao | Status |
+|--------|-----------|--------|
+| Previsao de Demanda | Forecasting Bottom-Up multi-metodo | Ativo |
+| Simulador | Cenarios what-if | Ativo |
+| Eventos | Calendario promocional | Ativo |
+| KPIs e Metricas | Dashboard de performance | Ativo |
+| **Pedido ao Fornecedor** | Calculo integrado com previsao | **Novo v4.0** |
+| Transferencias | Redistribuicao entre lojas | Ativo |
+| Pedido Manual | Entrada manual de pedidos | Ativo |
+
+---
+
+## Arquitetura do Sistema
+
+```
++------------------+     +-------------------+     +------------------+
+|                  |     |                   |     |                  |
+|  BANCO DE DADOS  |---->|  PREVISAO V2      |---->|  PEDIDO          |
+|  PostgreSQL      |     |  (Bottom-Up)      |     |  FORNECEDOR      |
+|                  |     |                   |     |                  |
++------------------+     +-------------------+     +------------------+
+        |                        |                        |
+        v                        v                        v
++------------------+     +-------------------+     +------------------+
+| - Historico      |     | - 6 Metodos       |     | - Cobertura ABC  |
+| - Cadastros      |     | - Sazonalidade    |     | - Estoque Seg.   |
+| - Estoques       |     | - Limitadores     |     | - Multiplo Caixa |
+| - Parametros     |     | - Outliers        |     | - Agregacao      |
++------------------+     +-------------------+     +------------------+
+```
+
+---
+
+## Instalacao Rapida
+
+### Pre-requisitos
+
 - Python 3.8 ou superior
+- PostgreSQL 15 ou superior
 - pip (gerenciador de pacotes Python)
 
 ### Passo a Passo
 
-1. **Clone o repositório:**
+**1. Clone o repositorio:**
 ```bash
 git clone https://github.com/conradocosta0602/previsao-demanda.git
 cd previsao-demanda
 ```
 
-2. **Instale as dependências:**
+**2. Crie o ambiente virtual (recomendado):**
 ```bash
-pip install flask pandas numpy scikit-learn statsmodels python-docx openpyxl
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate     # Windows
 ```
 
-Ou usando requirements.txt (se disponível):
+**3. Instale as dependencias:**
+```bash
+pip install flask pandas numpy scipy scikit-learn statsmodels psycopg2-binary openpyxl
+```
+
+Ou usando requirements.txt:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. **Execute o sistema:**
+**4. Configure o banco de dados PostgreSQL:**
+
+Crie o banco de dados:
+```sql
+CREATE DATABASE demanda_reabastecimento;
+```
+
+Configure a conexao em `app.py` (linha ~1265):
+```python
+conn = psycopg2.connect(
+    host="localhost",
+    database="demanda_reabastecimento",
+    user="postgres",
+    password="sua_senha",
+    port="5432"
+)
+```
+
+**5. Execute o sistema:**
 ```bash
 python app.py
 ```
 
-4. **Acesse no navegador:**
+**6. Acesse no navegador:**
 ```
-http://localhost:5000
+http://localhost:5001/menu
 ```
 
-## 📖 Como Usar
+---
 
-### 1️⃣ Previsão de Demanda
+## Como Usar
 
-1. Acesse a tela principal
-2. Faça upload do arquivo Excel com histórico de vendas
-   - **Colunas necessárias:** `Local`, `SKU`, `Ano`, `Mes_Numero`, `Quantidade`
-3. Configure meses de previsão (1-24)
-4. Clique em "Processar"
-5. Analise resultados: cards, tabela YoY, gráfico, alertas
-6. Download do Excel com previsões
+### 1. Menu Principal
 
-### 2️⃣ Cadastrar Eventos (Opcional)
+Acesse `http://localhost:5001/menu` para ver todos os modulos disponiveis:
 
-1. Acesse "Gerenciar Eventos"
-2. Cadastre eventos promocionais (Black Friday, Natal, etc.)
-3. Configure impacto esperado (%)
-4. Sistema ajusta previsões automaticamente
+- **Previsao de Demanda** - Gere previsoes de vendas
+- **Simulador** - Simule cenarios
+- **Eventos** - Cadastre eventos promocionais
+- **KPIs e Metricas** - Acompanhe indicadores
+- **Pedido ao Fornecedor -> CD/Loja** - **NOVO** - Gere pedidos integrados
+- **Transferencias** - Gerencie redistribuicoes
+- **Pedido Manual** - Crie pedidos manualmente
 
-### 3️⃣ Calcular Pedidos
+### 2. Fluxo Tipico de Uso
 
-1. **Escolha o fluxo:**
-   - Pedidos ao Fornecedor
-   - Pedidos CD → Loja
-   - Transferências entre Lojas
+```
+1. Gerar Previsao de Demanda
+   |
+   v
+2. (Opcional) Cadastrar Eventos Promocionais
+   |
+   v
+3. Gerar Pedido ao Fornecedor
+   |
+   v
+4. Analisar KPIs
+```
 
-2. Upload do arquivo com estoque atual e parâmetros
-3. Revise pedidos sugeridos
-4. Download do Excel de pedidos
+---
 
-### 4️⃣ Simulador (Opcional)
+## Modulo de Previsao de Demanda
 
-1. Acesse "Simulador de Cenários"
-2. Teste diferentes parâmetros
-3. Compare resultados
+### Funcionamento
 
-## 📁 Estrutura do Projeto
+O sistema utiliza a abordagem **Bottom-Up V2** que:
+
+1. **Busca dados** do banco PostgreSQL (historico de vendas)
+2. **Limpa outliers** usando IQR e Z-Score
+3. **Detecta sazonalidade** por autocorrelacao
+4. **Avalia 6 metodos** estatisticos
+5. **Seleciona o melhor** baseado em WMAPE historico
+6. **Aplica limitadores** de tendencia
+7. **Gera previsao** para o periodo solicitado
+
+### Limitadores de Tendencia
+
+Para evitar previsoes irrealistas:
+
+| Tipo | Limite | Acao |
+|------|--------|------|
+| Queda | > 40% | Tendencia ignorada |
+| Alta | > 50% | Limitada a 50% |
+
+**Exemplo:**
+- Historico: 100 un/mes
+- Tendencia detectada: -60% (queda)
+- Resultado: Tendencia ignorada, previsao mantem 100 un/mes
+
+### Granularidades Suportadas
+
+| Granularidade | Periodos | Historico Minimo | Uso Recomendado |
+|---------------|----------|------------------|-----------------|
+| Mensal | 1-24 meses | 12 meses | Planejamento estrategico |
+| Semanal | 4-104 semanas | 52 semanas | Reabastecimento |
+| Diario | 7-365 dias | 365 dias | Operacoes day-to-day |
+
+### Metricas de Acuracia
+
+- **WMAPE**: Weighted Mean Absolute Percentage Error
+- **BIAS**: Tendencia sistematica de erro
+- **YoY**: Comparacao com mesmo periodo ano anterior
+
+---
+
+## Modulo de Pedido ao Fornecedor
+
+### Nova Abordagem Integrada (v4.0)
+
+O modulo de Pedido ao Fornecedor foi completamente reformulado para integrar com a previsao de demanda V2:
+
+**Antes (v3.x):**
+- Upload de arquivo Excel
+- Calculos isolados da previsao
+- Cobertura fixa
+
+**Agora (v4.0):**
+- Dados do banco PostgreSQL
+- Previsao V2 em tempo real
+- Cobertura baseada em ABC
+
+### Formula de Cobertura
+
+```
+Cobertura (dias) = Lead Time + Ciclo Pedido + Seguranca ABC
+```
+
+Onde:
+- **Lead Time**: Tempo de entrega do fornecedor (cadastro)
+- **Ciclo Pedido**: 7 dias (pedido semanal)
+- **Seguranca ABC**: Dias adicionais por classificacao
+
+| Curva ABC | Seguranca (dias) | Justificativa |
+|-----------|------------------|---------------|
+| A | +2 dias | Alto giro, reposicao frequente |
+| B | +4 dias | Medio giro, equilibrio |
+| C | +6 dias | Baixo giro, maior variabilidade |
+
+**Exemplo:**
+- Lead Time: 15 dias
+- Ciclo: 7 dias
+- Curva ABC: B (+4 dias)
+- **Cobertura Total**: 15 + 7 + 4 = **26 dias**
+
+### Estoque de Seguranca
+
+```
+ES = Z x Sigma x Raiz(LT)
+```
+
+Onde:
+- **Z**: Fator Z do nivel de servico (por curva ABC)
+- **Sigma**: Desvio padrao diario da demanda
+- **LT**: Lead time em dias
+
+| Curva ABC | Nivel Servico | Fator Z |
+|-----------|---------------|---------|
+| A | 98% | 2.05 |
+| B | 95% | 1.65 |
+| C | 90% | 1.28 |
+
+### Calculo da Quantidade a Pedir
+
+```
+Qtd Pedido = (Demanda x Cobertura) + ES - Estoque Disponivel - Estoque Transito
+```
+
+Com arredondamento para o multiplo de caixa mais proximo (para cima).
+
+### Filtros Disponiveis
+
+- **Destino**: Lojas (direto) ou CD (centralizado)
+- **Empresa**: Loja/CD especifico ou todas
+- **Fornecedor**: Fornecedor especifico ou todos
+- **Categoria**: Categoria especifica ou todas
+- **Cobertura**: Automatica (ABC) ou fixa (15, 21, 30, 45 dias)
+
+---
+
+## Politica de Estoque ABC
+
+### Classificacao ABC
+
+A classificacao ABC e definida no cadastro de produtos e reflete a importancia de cada item:
+
+| Curva | Caracteristica | % SKUs (tipico) | % Faturamento (tipico) |
+|-------|----------------|-----------------|------------------------|
+| A | Alto giro | 20% | 80% |
+| B | Medio giro | 30% | 15% |
+| C | Baixo giro | 50% | 5% |
+
+### Impacto da Curva ABC
+
+A classificacao ABC influencia:
+
+1. **Nivel de Servico**: A=98%, B=95%, C=90%
+2. **Dias de Seguranca**: A=+2d, B=+4d, C=+6d
+3. **Prioridade de Atencao**: Itens A recebem mais foco
+
+### Por que nao usamos CV (Coeficiente de Variacao)?
+
+Na versao v3.x, o sistema usava uma formula hibrida ABC + CV. Na v4.0, simplificamos para apenas ABC. Motivos:
+
+1. **Previsao V2 ja captura variabilidade**: Os 6 metodos estatisticos, limitadores de tendencia e deteccao de outliers ja tratam a variabilidade da demanda
+2. **Redundancia**: Calcular CV sobre dados que ja foram processados pela previsao V2 adiciona complexidade sem ganho proporcional
+3. **Simplicidade operacional**: ABC e uma classificacao conhecida e usada pela equipe de compras
+
+---
+
+## Estrutura do Projeto
 
 ```
 previsao-demanda/
-├── app.py                          # Aplicação Flask principal
-├── core/                           # Módulos principais
-│   ├── forecasting_models.py      # 6 métodos de previsão
-│   ├── method_selector.py         # Seleção automática
-│   ├── ml_selector.py             # Machine Learning
-│   ├── seasonality_detector.py    # Detecção de sazonalidade
-│   ├── outlier_detector.py        # Detecção de outliers
-│   ├── auto_logger.py             # Logging automático
-│   ├── smart_alerts.py            # Alertas inteligentes
-│   ├── event_manager.py           # Gerenciador de eventos
-│   ├── scenario_simulator.py      # Simulador
-│   └── replenishment_calculator.py # Reabastecimento
-├── templates/                      # Templates HTML
-│   ├── index.html                 # Previsão
-│   ├── pedido_fornecedor.html     # Pedidos fornecedor
-│   ├── pedido_cd.html             # Pedidos CD
-│   ├── transferencias.html        # Transferências
-│   ├── eventos_simples.html       # Eventos
-│   └── simulador.html             # Simulador
-├── static/
-│   ├── css/style.css              # Estilos
-│   └── js/                        # JavaScript
-├── Documentacao_Sistema_Previsao_v3.0.docx  # Manual completo
-├── Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx
-└── README.md                       # Este arquivo
+|
+|-- app.py                              # Aplicacao Flask principal (~4500 linhas)
+|
+|-- core/                               # Modulos de negocio
+|   |-- forecasting_models.py           # 6 metodos de previsao
+|   |-- method_selector.py              # Selecao automatica de metodo
+|   |-- ml_selector.py                  # Machine Learning (Random Forest)
+|   |-- seasonality_detector.py         # Deteccao de sazonalidade
+|   |-- outlier_detector.py             # Deteccao de outliers
+|   |-- pedido_fornecedor_integrado.py  # NOVO - Calculo de pedidos ABC
+|   |-- auto_logger.py                  # Logging automatico
+|   |-- smart_alerts.py                 # Alertas inteligentes
+|   |-- event_manager.py                # Gerenciador de eventos
+|   |-- scenario_simulator.py           # Simulador de cenarios
+|   |-- replenishment_calculator.py     # Calculos de reabastecimento
+|   +-- flow_processor.py               # Processador de fluxos
+|
+|-- templates/                          # Templates HTML
+|   |-- menu.html                       # Menu principal
+|   |-- index.html                      # Previsao de demanda
+|   |-- pedido_fornecedor_integrado.html # NOVO - Pedido integrado
+|   |-- simulador.html                  # Simulador
+|   |-- eventos_simples.html            # Eventos
+|   |-- kpis.html                       # KPIs
+|   |-- transferencias.html             # Transferencias
+|   +-- pedido_manual.html              # Pedido manual
+|
+|-- static/
+|   |-- css/style.css                   # Estilos CSS
+|   +-- js/app.js                       # JavaScript principal
+|
+|-- docs/                               # Documentacao
+|   |-- GRANULARIDADE_E_PREVISOES.md    # Guia de granularidades
+|   +-- CORRECAO_SAZONALIDADE_ANUAL.md  # Correcao v3.1.2
+|
++-- README.md                           # Este arquivo
 ```
 
-## 📊 Formato de Arquivos
+---
 
-### Histórico de Vendas
+## Formato dos Arquivos
+
+### Tabelas do Banco de Dados
+
+**historico_vendas_diario:**
+```sql
+CREATE TABLE historico_vendas_diario (
+    id SERIAL PRIMARY KEY,
+    codigo INTEGER NOT NULL,
+    cod_empresa INTEGER NOT NULL,
+    data DATE NOT NULL,
+    qtd_venda NUMERIC(12,2)
+);
 ```
-Local,SKU,Ano,Mes_Numero,Quantidade
-LOJA_01,PROD001,2023,1,150
-LOJA_01,PROD001,2023,2,180
+
+**cadastro_produtos:**
+```sql
+CREATE TABLE cadastro_produtos (
+    id SERIAL PRIMARY KEY,
+    codigo INTEGER UNIQUE NOT NULL,
+    descricao VARCHAR(200),
+    categoria VARCHAR(100),
+    subcategoria VARCHAR(100),
+    curva_abc CHAR(1),  -- 'A', 'B' ou 'C'
+    und_venda VARCHAR(20),
+    id_fornecedor INTEGER,
+    ativo BOOLEAN DEFAULT TRUE
+);
 ```
 
-### Pedidos ao Fornecedor
+**cadastro_fornecedores:**
+```sql
+CREATE TABLE cadastro_fornecedores (
+    id_fornecedor SERIAL PRIMARY KEY,
+    codigo_fornecedor VARCHAR(20),
+    nome_fornecedor VARCHAR(200),
+    lead_time_dias INTEGER DEFAULT 15,
+    pedido_minimo NUMERIC(12,2)
+);
 ```
-Fornecedor,SKU,Destino,Tipo_Destino,Lead_Time_Dias,Ciclo_Pedido_Dias,Custo_Unitario,Estoque_Disponivel
-FORN_A,PROD001,CD_PRINCIPAL,CD,30,30,15.50,200
+
+**estoque_atual:**
+```sql
+CREATE TABLE estoque_atual (
+    id SERIAL PRIMARY KEY,
+    codigo INTEGER NOT NULL,
+    cod_empresa INTEGER NOT NULL,
+    qtd_disponivel NUMERIC(12,2)
+);
 ```
 
-## 🔄 Changelog v3.1
+**parametros_gondola:**
+```sql
+CREATE TABLE parametros_gondola (
+    id SERIAL PRIMARY KEY,
+    codigo INTEGER NOT NULL,
+    cod_empresa INTEGER NOT NULL,
+    multiplo INTEGER DEFAULT 1,
+    lote_minimo INTEGER DEFAULT 1,
+    estoque_seguranca NUMERIC(12,2) DEFAULT 0
+);
+```
 
-### Melhorias Críticas Implementadas ✅
+---
 
-1. ✅ **Correção do Cálculo YoY** - Comparação correta mesmo período ano anterior
-2. ✅ **Interface Reorganizada** - Layout executivo, tabela acima do gráfico
-3. ✅ **Exibição de Custos** - Custo unitário sempre visível
-4. ✅ **Modelo Sazonal Corrigido** - Híbrido (sazonalidade + tendência)
-5. ✅ **Compatibilidade ML Selector** - Aliases completos
-6. ✅ **Detecção Automática de Sazonalidade** - Autocorrelação lag 12
-7. ✅ **Detecção de Outliers** - IQR e Z-Score
-8. ✅ **Logging de Seleção AUTO** - Auditoria completa
-9. ✅ **Alertas Inteligentes** - 4 níveis visuais
-10. ✅ **Machine Learning** - Random Forest com 15+ features
-11. ✅ **Calendário Promocional** - Ajuste automático
-12. ✅ **Tratamento Séries Curtas** - Estratégias especializadas
+## Changelog
 
-### Novas Melhorias v3.1 (Janeiro 2026) ✅
+### v4.0 (Janeiro 2026) - ATUAL
 
-13. ✅ **Escala Dinâmica de Gráficos** - Y-axis se ajusta automaticamente aos dados
-14. ✅ **Ajuste Sazonal Baseado em Granularidade** - Fatores sazonais sempre calculados
-15. ✅ **Correção de Previsões Planas** - Variação mês a mês garantida
-16. ✅ **Ajuste Automático da Tabela YoY** - Períodos comparativos sincronizados
-17. ✅ **Separação de Conceitos** - tamanho_validacao_futura vs meses_previsao
-18. ✅ **Aplicação de Ajuste Sazonal no Teste** - Período de teste também ajustado
-19. ✅ **Correção de Número de Períodos** - Conversão correta meses→semanas/dias (6 meses = 24 semanas)
-20. ✅ **Cabeçalhos Dinâmicos na Tabela** - S1, S2 para semanal; Jan, Fev para mensal
-21. ✅ **Queries SQL Consistentes** - Mesmo intervalo de datas entre granularidades
-22. ✅ **Logging Detalhado de Previsões** - Total base, ajustes e previsão final
-23. ✅ **Documentação de Granularidade** - Guia completo sobre diferenças esperadas
-24. ✅ **🔴 CRÍTICO: Sazonalidade Anual Semanal (52 semanas)** - Semana 50 agora influenciada por semanas 50 históricas
+**Novas Funcionalidades:**
+- Modulo de Pedido ao Fornecedor Integrado com previsao V2
+- Politica de estoque baseada exclusivamente em curva ABC
+- Formula de cobertura simplificada: Lead Time + Ciclo + Seguranca ABC
+- Interface unificada no menu principal
 
-## 📖 Documentação Completa
+**Remocoes:**
+- Modulo de Reabastecimento antigo (upload Excel)
+- Modulo de Pedido por Fornecedor antigo
+- Modulo de Pedido CD antigo
+- Calculo de CV (Coeficiente de Variacao) - substituido por ABC puro
 
-- **[Documentacao_Sistema_Previsao_v3.0.docx](Documentacao_Sistema_Previsao_v3.0.docx)** - Manual completo (30+ páginas)
-  - Visão geral do sistema
-  - Métodos estatísticos detalhados
-  - Telas e funcionalidades
-  - Conceitos de reabastecimento
-  - FAQ completo
+**Melhorias:**
+- Renomeacao do sistema para "Sistema de Demanda e Reabastecimento"
+- Consolidacao do botao V2 no botao "Gerar Previsao" principal
+- Limpeza de codigo e rotas nao utilizadas
 
-- **[GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md)** - ⚠️ **LEITURA OBRIGATÓRIA**
-  - Por que previsões variam entre granularidades (mensal/semanal/diária)
-  - Diferenças esperadas e aceitáveis
-  - Recomendações de uso por caso de negócio
-  - Validação e interpretação de resultados
+### v3.1.2 (Janeiro 2026)
 
-- **[CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md](CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md)** - 🔴 **CORREÇÃO CRÍTICA v3.1.2**
-  - Mudança de ciclo artificial de 4 semanas para sazonalidade anual de 52 semanas
-  - Amplitude aumentou de 1.8% para 31.27%
-  - Cada semana agora tem seu próprio padrão histórico
-  - Requer mínimo de 52 semanas (1 ano) de dados históricos
+**Correcao Critica:**
+- Sazonalidade semanal agora usa 52 semanas (anual) em vez de 4 semanas (ciclo artificial)
+- Amplitude dos fatores sazonais aumentou de 1.8% para 31.27%
 
-- **[Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx](Sugestoes_Melhoria_Sistema_Previsao_Atualizado.docx)** - Status das melhorias
+### v3.1 (Janeiro 2026)
 
-## 🛠️ Requisitos Técnicos
+**Melhorias de Previsao:**
+- Escala dinamica de graficos
+- Ajuste sazonal baseado em granularidade
+- Correcao de previsoes planas
+- Logging detalhado de previsoes
+- Documentacao sobre granularidades
+
+### v3.0 (Dezembro 2025)
+
+**Lancamento Inicial:**
+- Previsao de demanda com 6 metodos
+- Selecao automatica (AUTO) e Machine Learning (ML)
+- Reabastecimento com 3 fluxos
+- Calendario promocional
+- Simulador de cenarios
+
+---
+
+## FAQ
+
+### Previsao de Demanda
+
+**P: Qual a diferenca entre AUTO e ML na selecao de metodo?**
+R: AUTO usa regras baseadas em caracteristicas da demanda (CV, tendencia, sazonalidade). ML usa Random Forest com 15+ features para selecionar o metodo. ML tende a ser mais preciso, AUTO e mais rapido.
+
+**P: Quantos meses de historico preciso?**
+R:
+- Mensal: Minimo 12 meses. Ideal: 24+ meses
+- Semanal: Minimo 52 semanas. Ideal: 104 semanas
+- Diario: Minimo 365 dias. Ideal: 730 dias
+
+**P: Por que previsoes mensais e semanais dao resultados diferentes?**
+R: Diferencas de 5-15% sao normais devido a janelas adaptativas, agregacao e fatores sazonais distintos. Consulte a documentacao de granularidade para detalhes.
+
+**P: O que significam os limitadores de tendencia?**
+R: Quedas >40% sao ignoradas (protecao contra dados anomalos). Altas >50% sao limitadas a 50% (protecao contra otimismo excessivo).
+
+### Pedido ao Fornecedor
+
+**P: Por que a cobertura e calculada com ABC e nao com CV?**
+R: A previsao V2 ja captura a variabilidade da demanda atraves dos 6 metodos estatisticos, limitadores e deteccao de outliers. Adicionar CV seria redundante.
+
+**P: Posso usar uma cobertura fixa?**
+R: Sim. O filtro "Cobertura (dias)" permite escolher entre automatica (ABC) ou valores fixos de 15, 21, 30 ou 45 dias.
+
+**P: Como funciona o arredondamento para multiplo de caixa?**
+R: A quantidade calculada e arredondada para cima ate o proximo multiplo de caixa. Se o multiplo e 12 e a necessidade e 15, o pedido sera de 24.
+
+**P: Qual a diferenca entre destino Loja e CD?**
+R: "Lojas" processa pedidos para lojas que compram diretamente do fornecedor. "CD" processa pedidos para o Centro de Distribuicao que depois distribui para as lojas.
+
+### Politica de Estoque
+
+**P: Como a curva ABC e definida?**
+R: A curva ABC deve estar cadastrada no campo `curva_abc` da tabela `cadastro_produtos`. Valores aceitos: 'A', 'B' ou 'C'.
+
+**P: O que acontece se um produto nao tem curva ABC cadastrada?**
+R: O sistema assume curva 'B' como padrao (nivel de servico 95%, +4 dias de seguranca).
+
+**P: Os parametros de nivel de servico podem ser alterados?**
+R: Sim. No arquivo `core/pedido_fornecedor_integrado.py`, edite as constantes `NIVEL_SERVICO_ABC` e `SEGURANCA_BASE_ABC`.
+
+---
+
+## Documentacao Completa
+
+- **[GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md)** - Guia sobre diferencas entre granularidades
+- **[CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md](CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md)** - Correcao critica v3.1.2
+- **[README_ABORDAGEM_HIBRIDA.md](README_ABORDAGEM_HIBRIDA.md)** - Documentacao tecnica da abordagem
+
+---
+
+## Requisitos Tecnicos
 
 ```
 Python 3.8+
 Flask 3.0.0
 Pandas 2.1.3
 NumPy 1.26.2
+SciPy 1.11.4
 Scikit-learn 1.3.2
 Statsmodels 0.14.0
-python-docx 1.1.0
+psycopg2-binary 2.9.9
 openpyxl 3.1.2
 ```
 
-## ❓ FAQ
+---
 
-**P: Qual método devo usar: AUTO ou ML?**
-R: Use ML para melhor precisão. AUTO é mais rápido para análises exploratórias.
+## Contribuicao
 
-**P: Quantos meses de histórico preciso?**
-R:
-- Mensal: Mínimo 12 meses. Ideal: 24+ meses para detecção de sazonalidade.
-- Semanal: Mínimo 52 semanas (1 ano). Recomendado: 104 semanas (2 anos) para melhor qualidade.
-- Diária: Mínimo 365 dias. Ideal: 730+ dias.
-
-**P: Como funciona a classificação ABC?**
-R: Automática baseada na demanda mensal média.
-
-**P: Por que previsões mensais e semanais dão resultados diferentes?**
-R: ⚠️ **IMPORTANTE:** Diferenças de 5-15% são normais e esperadas ao mudar granularidade. Consulte [GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md) para detalhes.
-
-**P: Qual granularidade devo usar?**
-R: Mensal para planejamento estratégico, Semanal para reabastecimento, Diária para operações day-to-day.
-
-## 🤝 Contribuição
-
-Contribuições são bem-vindas!
+Contribuicoes sao bem-vindas!
 
 1. Fork o projeto
 2. Crie uma branch (`git checkout -b feature/NovaFuncionalidade`)
-3. Commit suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
+3. Commit suas mudancas (`git commit -m 'Adiciona nova funcionalidade'`)
 4. Push para a branch (`git push origin feature/NovaFuncionalidade`)
 5. Abra um Pull Request
 
-## 📝 Licença
+---
 
-Este projeto está sob licença MIT. Veja [LICENSE](LICENSE) para mais detalhes.
+## Licenca
 
-## 👥 Autores
+Este projeto esta sob licenca MIT. Veja [LICENSE](LICENSE) para mais detalhes.
+
+---
+
+## Autores
 
 - **Valter Lino** ([@valterlino01](https://github.com/valterlino01)) - Desenvolvedor Principal
 - **Conrado Costa** ([@conradocosta0602](https://github.com/conradocosta0602)) - Co-desenvolvedor
-- **Consultoria Técnica:** Claude Sonnet 4.5 (Anthropic)
+- **Consultoria Tecnica:** Claude (Anthropic)
 
-## 📞 Suporte
+---
 
-Para dúvidas ou problemas:
-- 📖 Consulte a documentação completa
-- 🐛 Abra uma [issue](https://github.com/conradocosta0602/previsao-demanda/issues)
-- 💬 Entre em contato via GitHub
+## Suporte
 
-## 🌟 Features Planejadas
+Para duvidas ou problemas:
+- Consulte a documentacao completa
+- Abra uma [issue](https://github.com/conradocosta0602/previsao-demanda/issues)
+- Entre em contato via GitHub
 
-- [ ] API REST para integração
+---
+
+## Features Planejadas
+
+- [ ] API REST para integracao com ERP
 - [ ] Dashboard Power BI
-- [ ] Exportação de gráficos
-- [ ] Versionamento de previsões
+- [ ] Pedido CD -> Lojas integrado
+- [ ] Transferencias automaticas
+- [ ] Exportacao de graficos
 - [ ] Modo batch para grandes volumes
 
 ---
 
-## 📝 Detalhamento das Melhorias v3.1
+**Versao:** 4.0
+**Status:** Em Producao
+**Ultima Atualizacao:** Janeiro 2026
 
-### 1. Escala Dinâmica de Gráficos
-**Problema resolvido:** Gráficos com escala fixa iniciando em zero desperdiçavam espaço visual e dificultavam a leitura de variações.
-
-**Solução implementada:**
-- Cálculo automático de min/max com margem de 10%
-- Aplicado em 3 gráficos: Previsão, Agregação de Demanda, Comparação YoY
-- Arquivo: `static/js/app.js` (linhas 1440-1509, 349-459, 491-587)
-
-### 2. Ajuste Sazonal Baseado em Granularidade
-**Problema resolvido:** Previsões mostravam valores idênticos para todos os meses quando sazonalidade não era estatisticamente significativa.
-
-**Solução implementada:**
-- Fatores sazonais SEMPRE calculados baseado na granularidade solicitada
-- Mensal: 12 fatores (um por mês)
-- Semanal: 7 fatores (um por dia da semana)
-- Diário: 7 fatores (um por dia da semana)
-- Arquivo: `app.py` (linhas 2511-2568)
-
-**Resultado:**
-- Alimentos (6 meses): Variação de 92.210 a 100.179 (amplitude: 8.64%)
-- TODAS (12 meses): Variação de 309.229 a 350.062 (amplitude: 13.20%)
-
-### 3. Correção de Previsões Planas
-**Problema resolvido:** Condição `if periodo_sazonal == 12 and granularidade == 'mensal'` era muito restritiva, resultando em `fatores_sazonais = {}`.
-
-**Solução implementada:**
-- Lógica alterada para calcular fatores independente da detecção estatística
-- Ajuste sazonal aplicado também no período de teste
-- Proteção contra index out of range com `min(len(datas), len(serie))`
-
-### 4. Ajuste Automático da Tabela YoY
-**Problema resolvido:** Tabela comparativa mostrava todos os 12 meses do ano anterior mesmo quando previsão era de 6 meses.
-
-**Solução implementada:**
-- Loop limitado a `numPeriodos` (número de períodos de previsão)
-- Arquivo: `static/js/app.js` (linhas 1323-1333)
-- Sincronização automática entre previsão e dados reais
-
-### 5. Separação de Conceitos
-**Problema resolvido:** Confusão entre períodos de validação histórica e períodos de previsão futura.
-
-**Solução implementada:**
-- `tamanho_validacao_futura`: Períodos restantes nos dados históricos para comparação YoY
-- `meses_previsao`: Períodos futuros a prever além dos dados históricos
-- Arquivo: `app.py` (linhas 2459-2471)
-
-### 6. Aplicação de Ajuste Sazonal no Teste
-**Problema resolvido:** Ajuste sazonal só era aplicado às previsões futuras, não ao período de teste.
-
-**Solução implementada:**
-- Ajuste sazonal aplicado também às previsões do período de teste
-- Garante consistência entre teste e previsão futura
-- Arquivo: `app.py` (linhas 2591-2623)
-
-### 7. Correção de Número de Períodos por Granularidade
-**Problema resolvido:** Ao solicitar "6 meses" com granularidade semanal, sistema gerava apenas 6 semanas em vez de 24 semanas (~6 meses).
-
-**Solução implementada:**
-```python
-# Conversão de meses para períodos baseado na granularidade
-if granularidade == 'semanal':
-    periodos_previsao = meses_previsao * 4  # 4 semanas por mês
-elif granularidade == 'diario':
-    periodos_previsao = meses_previsao * 30  # ~30 dias por mês
-else:  # mensal
-    periodos_previsao = meses_previsao
-```
-- Arquivo: `app.py` (linhas 2258-2268)
-- Substituição de `meses_previsao` por `periodos_previsao` em 7 locais críticos
-- Log: "Periodos de previsao: 24 (6 meses em granularidade semanal)"
-
-**Resultado:** 6 meses agora gera corretamente 6 períodos mensais, 24 períodos semanais ou 180 períodos diários.
-
-### 8. Cabeçalhos Dinâmicos na Tabela Comparativa
-**Problema resolvido:** Tabela YoY sempre mostrava nomes de meses (Jan, Fev) independente da granularidade.
-
-**Solução implementada:**
-```javascript
-if (granularidade === 'semanal') {
-    const semanaAno = getWeekNumber(data);
-    nomePeriodo = `S${semanaAno}`;  // S1, S2, S3...
-} else if (granularidade === 'diaria') {
-    nomePeriodo = `${data.getDate()}/${data.getMonth() + 1}`;  // 15/01
-} else {
-    nomePeriodo = meses[data.getMonth()];  // Jan, Fev
-}
-```
-- Arquivo: `static/js/app.js` (linhas 1287-1321)
-- Adicionada função `getWeekNumber` para cálculo ISO de semana
-- Tabela agora exibe corretamente S1-S52 para semanal, dias para diário
-
-### 9. Queries SQL Consistentes entre Granularidades
-**Problema resolvido:** `DATE_TRUNC('week')` e `DATE_TRUNC('month')` capturavam intervalos diferentes de datas, resultando em totais históricos divergentes (3,913k vs 3,957k = 1.1% diferença).
-
-**Solução implementada:**
-```sql
--- Query semanal agora usa CTE para garantir mesmo intervalo
-WITH dados_diarios AS (
-    SELECT h.data, SUM(h.qtd_venda) as qtd_venda
-    FROM historico_vendas_diario h
-    WHERE h.data >= CURRENT_DATE - INTERVAL '2 years'
-    GROUP BY h.data
-)
-SELECT DATE_TRUNC('week', data)::date as data,
-       SUM(qtd_venda) as qtd_venda
-FROM dados_diarios
-GROUP BY DATE_TRUNC('week', data)
-```
-- Arquivo: `app.py` (linhas 2311-2334, 2388-2408)
-- Garante que agregação semanal usa apenas dias dentro do intervalo de 2 anos
-- Mesma lógica aplicada para query do ano anterior
-
-### 10. Logging Detalhado de Previsões e Ajustes
-**Problema resolvido:** Difícil diagnosticar diferenças entre granularidades sem visibilidade dos valores intermediários.
-
-**Solução implementada:**
-```python
-# Logs adicionados em pontos críticos
-print(f"Total dados históricos (últimos 2 anos): {total:,.2f} em {n} períodos")
-print(f"Total da série completa: {total:,.2f}")
-print(f"Valores dos fatores mensais: {dict(sorted(fatores_sazonais.items()))}")
-print(f"Previsão base (sem ajuste): Total={total:,.2f}, Média={media:,.2f}")
-print(f"Total previsto para {n} períodos: {total:,.2f}")
-```
-- Arquivo: `app.py` (linhas 2352-2355, 2490-2494, 2547, 2569, 2698-2701, 2744-2746)
-- Rastreamento completo: dados históricos → série limpa → previsão base → ajustes sazonais → previsão final
-
-**Resultado:** Possibilita análise detalhada do fluxo de previsão e identificação precisa de divergências.
-
-### 11. Documentação Completa sobre Granularidade
-**Problema resolvido:** Usuários não entendiam por que previsões mensais e semanais divergiam em 5-15%.
-
-**Solução implementada:**
-- Criado documento [GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md) com:
-  - Explicação técnica das causas (janelas adaptativas, agregação, fatores sazonais)
-  - Tabelas de diferenças esperadas vs problemáticas
-  - Recomendações por caso de uso (estratégico, operacional, day-to-day)
-  - FAQ e exemplos práticos
-- Adicionado FAQ no README sobre granularidade
-- Marcado como "LEITURA OBRIGATÓRIA" na seção de documentação
-
-**Resultado:** Transparência total sobre comportamento do sistema e expectativas corretas para usuários.
-
-### 12. 🔴 CRÍTICO: Sazonalidade Anual Semanal (52 semanas) - v3.1.2
-**Problema resolvido:** Previsões semanais usavam ciclo artificial de 4 semanas em vez de sazonalidade anual de 52 semanas. Semana 50 da previsão era comparada com semanas 2, 6, 10, 14, 18, 22, 26, 30, 34, 38, 42, 46 (semana % 4).
-
-**Solução implementada:**
-```python
-# ANTES (INCORRETO)
-posicao_ciclo = semana_ano % 4  # 0, 1, 2 ou 3
-chave_sazonal = posicao_ciclo
-
-# DEPOIS (CORRETO)
-semana_ano = data_previsao.isocalendar()[1]  # 1-52/53
-chave_sazonal = semana_ano  # Usar semana do ano diretamente
-```
-- Mudança de 4 fatores sazonais para 52 fatores (um por semana do ano)
-- Análogo à granularidade mensal: 12 meses → 12 fatores | 52 semanas → 52 fatores
-- Arquivo: `app.py` (linhas 2581-2601, 2663-2668, 2750-2755)
-- Requisito mínimo aumentado de 4 para 52 semanas de dados históricos
-
-**Métricas ANTES vs DEPOIS:**
-| Métrica | ANTES (4 semanas) | DEPOIS (52 semanas) | Melhoria |
-|---------|-------------------|---------------------|----------|
-| Fatores sazonais | 4 | 52 | +1200% |
-| Amplitude dos fatores | 1.8% | 31.27% | +17x |
-| Valores únicos (48 períodos) | ~4 | 43 | +975% |
-| Realismo | Linear/Artificial | Natural/Histórico | ✅ |
-
-**Resultado:** Semana 50 da previsão agora é influenciada pela média histórica de TODAS as semanas 50 dos anos anteriores, respeitando tendências e sazonalidades reais. Documentação completa: [CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md](CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md)
-
----
-
-**Versão:** 3.1.2
-**Status:** Em Produção
-**Última Atualização:** Janeiro 2026
-
-**⭐ Se este projeto foi útil, considere dar uma estrela!**
+**Se este projeto foi util, considere dar uma estrela!**

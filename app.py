@@ -1206,22 +1206,214 @@ def excluir_evento():
         return jsonify({'success': False, 'erro': str(e)}), 500
 
 
-@app.route('/reabastecimento')
-def reabastecimento():
-    """Página de reabastecimento"""
-    return render_template('reabastecimento.html')
+@app.route('/pedido_fornecedor_integrado')
+def pedido_fornecedor_integrado_page():
+    """Página de pedidos ao fornecedor integrado com previsão V2"""
+    return render_template('pedido_fornecedor_integrado.html')
 
 
-@app.route('/pedido_fornecedor')
-def pedido_fornecedor():
-    """Página de pedidos ao fornecedor"""
-    return render_template('pedido_fornecedor.html')
+@app.route('/api/pedido_fornecedor_integrado', methods=['POST'])
+def api_pedido_fornecedor_integrado():
+    """
+    API para gerar pedidos ao fornecedor integrado com previsão V2.
 
+    Características:
+    - Usa previsão V2 (Bottom-Up) em tempo real
+    - Cobertura baseada em ABC: Lead Time + Ciclo + Segurança_ABC
+    - Curva ABC do cadastro de produtos para nível de serviço
+    - Arredondamento para múltiplo de caixa
+    - Destino configurável (Lojas ou CD)
 
-@app.route('/pedido_cd')
-def pedido_cd():
-    """Página de pedidos CD → Lojas"""
-    return render_template('pedido_cd.html')
+    Request JSON:
+    {
+        "fornecedor": "TODOS" ou código específico,
+        "categoria": "TODAS" ou categoria específica,
+        "destino_tipo": "LOJA" ou "CD",
+        "cod_empresa": código da loja/CD de destino (ou "TODAS"),
+        "cobertura_dias": null (automático) ou número específico
+    }
+
+    Returns:
+        JSON com pedidos calculados e agregação por fornecedor
+    """
+    try:
+        from core.pedido_fornecedor_integrado import (
+            PedidoFornecedorIntegrado,
+            agregar_por_fornecedor,
+            calcular_cobertura_abc
+        )
+
+        dados = request.get_json()
+
+        # Parâmetros de filtro
+        fornecedor_filtro = dados.get('fornecedor', 'TODOS')
+        categoria_filtro = dados.get('categoria', 'TODAS')
+        destino_tipo = dados.get('destino_tipo', 'LOJA')  # 'LOJA' ou 'CD'
+        cod_empresa = dados.get('cod_empresa', 'TODAS')
+        cobertura_dias = dados.get('cobertura_dias')  # None = automático
+
+        print(f"\n{'='*60}")
+        print("PEDIDO FORNECEDOR INTEGRADO")
+        print(f"{'='*60}")
+        print(f"  Fornecedor: {fornecedor_filtro}")
+        print(f"  Categoria: {categoria_filtro}")
+        print(f"  Destino: {destino_tipo}")
+        print(f"  Empresa: {cod_empresa}")
+        print(f"  Cobertura: {'Automática (ABC)' if cobertura_dias is None else f'{cobertura_dias} dias'}")
+
+        # Conectar ao banco
+        import psycopg2
+        conn = psycopg2.connect(
+            host="localhost",
+            database="demanda_reabastecimento",
+            user="postgres",
+            password="1234",
+            port="5432"
+        )
+
+        # 1. Buscar lista de itens x filiais para processar
+        query_itens = """
+            SELECT DISTINCT
+                p.codigo,
+                p.descricao,
+                p.categoria,
+                p.curva_abc,
+                f.codigo_fornecedor,
+                f.nome_fornecedor,
+                f.lead_time_dias,
+                l.cod_empresa,
+                l.nome_loja
+            FROM cadastro_produtos p
+            LEFT JOIN cadastro_fornecedores f ON p.id_fornecedor = f.id_fornecedor
+            CROSS JOIN cadastro_lojas l
+            WHERE p.ativo = TRUE
+              AND l.ativo = TRUE
+              AND l.tipo = %s
+        """
+        params = [destino_tipo]
+
+        # Filtros opcionais
+        if fornecedor_filtro != 'TODOS':
+            query_itens += " AND f.codigo_fornecedor = %s"
+            params.append(fornecedor_filtro)
+
+        if categoria_filtro != 'TODAS':
+            query_itens += " AND p.categoria = %s"
+            params.append(categoria_filtro)
+
+        if cod_empresa != 'TODAS':
+            query_itens += " AND l.cod_empresa = %s"
+            params.append(int(cod_empresa))
+
+        query_itens += " LIMIT 500"  # Limitar para performance
+
+        df_itens = pd.read_sql(query_itens, conn, params=params)
+
+        if df_itens.empty:
+            conn.close()
+            return jsonify({
+                'success': False,
+                'erro': 'Nenhum item encontrado com os filtros selecionados'
+            }), 400
+
+        print(f"  Itens a processar: {len(df_itens)}")
+
+        # 2. Processar cada item usando previsão V2
+        processador = PedidoFornecedorIntegrado(conn)
+        resultados = []
+
+        for idx, row in df_itens.iterrows():
+            try:
+                codigo = int(row['codigo'])
+                cod_emp = int(row['cod_empresa'])
+
+                # Buscar histórico para calcular demanda média
+                historico = processador.buscar_historico_vendas(codigo, cod_emp, dias=365)
+
+                if not historico or len(historico) < 30:
+                    continue  # Pular itens sem histórico suficiente
+
+                # Calcular demanda média diária e desvio padrão
+                demanda_diaria = np.mean(historico)
+                desvio_padrao = np.std(historico, ddof=1) if len(historico) > 1 else demanda_diaria * 0.3
+
+                if demanda_diaria <= 0:
+                    continue  # Pular itens sem demanda
+
+                # Processar item
+                resultado = processador.processar_item(
+                    codigo=codigo,
+                    cod_empresa=cod_emp,
+                    previsao_diaria=demanda_diaria,
+                    desvio_padrao=desvio_padrao,
+                    cobertura_dias=cobertura_dias
+                )
+
+                if 'erro' not in resultado:
+                    resultado['nome_loja'] = row['nome_loja']
+                    resultados.append(resultado)
+
+            except Exception as e:
+                print(f"  [AVISO] Erro ao processar item {row.get('codigo')}: {e}")
+                continue
+
+            # Progresso
+            if (idx + 1) % 50 == 0:
+                print(f"  Processados {idx + 1}/{len(df_itens)} itens...")
+
+        conn.close()
+
+        if not resultados:
+            return jsonify({
+                'success': False,
+                'erro': 'Nenhum item com dados suficientes para gerar pedido'
+            }), 400
+
+        print(f"  Total processado: {len(resultados)} itens")
+
+        # 3. Agregar por fornecedor
+        agregacao = agregar_por_fornecedor(resultados)
+
+        # 4. Separar itens que devem ser pedidos
+        itens_pedido = [r for r in resultados if r.get('deve_pedir')]
+        itens_ok = [r for r in resultados if not r.get('deve_pedir')]
+
+        # 5. Estatísticas
+        estatisticas = {
+            'total_itens_analisados': len(resultados),
+            'total_itens_pedido': len(itens_pedido),
+            'total_itens_ok': len(itens_ok),
+            'valor_total_pedido': round(sum(r.get('valor_pedido', 0) for r in itens_pedido), 2),
+            'itens_ruptura_iminente': len([r for r in resultados if r.get('ruptura_iminente')]),
+            'itens_risco_ruptura': len([r for r in resultados if r.get('risco_ruptura')]),
+            'cobertura_media_atual': round(np.mean([r.get('cobertura_atual_dias', 0) for r in resultados if r.get('cobertura_atual_dias', 0) < 900]), 1),
+            'cobertura_media_pos_pedido': round(np.mean([r.get('cobertura_pos_pedido_dias', 0) for r in itens_pedido if r.get('cobertura_pos_pedido_dias', 0) < 900]), 1) if itens_pedido else 0
+        }
+
+        print(f"\n{'='*60}")
+        print("RESULTADO")
+        print(f"{'='*60}")
+        print(f"  Itens a pedir: {estatisticas['total_itens_pedido']}")
+        print(f"  Valor total: R$ {estatisticas['valor_total_pedido']:,.2f}")
+        print(f"  Fornecedores: {agregacao['total_fornecedores']}")
+        print(f"{'='*60}\n")
+
+        return jsonify({
+            'success': True,
+            'estatisticas': estatisticas,
+            'agregacao_fornecedor': agregacao,
+            'itens_pedido': itens_pedido,
+            'itens_ok': itens_ok[:50]  # Limitar itens OK para não sobrecarregar resposta
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"[ERRO] {e}")
+        print(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'erro': str(e)
+        }), 500
 
 
 @app.route('/transferencias')
@@ -1489,346 +1681,6 @@ def buscar_item():
 
     except Exception as e:
         return jsonify({'success': False, 'erro': str(e)}), 500
-
-
-@app.route('/processar_reabastecimento', methods=['POST'])
-def processar_reabastecimento_route():
-    """
-    Processa cálculo de reabastecimento com modo automático ou manual
-    """
-    try:
-        # Verificar arquivo
-        if 'file' not in request.files:
-            return jsonify({'success': False, 'erro': 'Nenhum arquivo enviado'}), 400
-
-        file = request.files['file']
-
-        if file.filename == '':
-            return jsonify({'success': False, 'erro': 'Nenhum arquivo selecionado'}), 400
-
-        if not file.filename.endswith(('.xlsx', '.xls')):
-            return jsonify({'success': False, 'erro': 'Arquivo deve ser Excel (.xlsx ou .xls)'}), 400
-
-        # Parâmetros
-        modo_calculo = request.form.get('modo_calculo', 'automatico')
-        nivel_servico = float(request.form.get('nivel_servico', 0.95))
-        revisao_dias = int(request.form.get('revisao_dias', 7))
-
-        # Salvar arquivo
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-
-        # Carregar dados
-        df_entrada = pd.read_excel(filepath)
-
-        # MODO AUTOMÁTICO: Calcula demanda do histórico
-        if modo_calculo == 'automatico':
-            print("Modo AUTOMÁTICO: Calculando demanda do histórico...")
-
-            # Validar colunas para modo automático
-            colunas_obrigatorias_auto = [
-                'Loja', 'SKU', 'Mes', 'Vendas',
-                'Lead_Time_Dias', 'Estoque_Disponivel'
-            ]
-            colunas_faltantes = [col for col in colunas_obrigatorias_auto if col not in df_entrada.columns]
-
-            if colunas_faltantes:
-                return jsonify({
-                    'success': False,
-                    'erro': f'MODO AUTOMÁTICO requer colunas: {", ".join(colunas_faltantes)}'
-                }), 400
-
-            # Separar histórico de vendas e dados de estoque
-            df_historico = df_entrada[['Loja', 'SKU', 'Mes', 'Vendas']].copy()
-
-            # Pegar última linha de cada Loja+SKU para dados de estoque
-            df_estoque = df_entrada.drop_duplicates(subset=['Loja', 'SKU'], keep='last')[
-                ['Loja', 'SKU', 'Lead_Time_Dias', 'Estoque_Disponivel']
-            ].copy()
-
-            # Adicionar colunas opcionais se existirem
-            if 'Estoque_Transito' in df_entrada.columns:
-                df_estoque['Estoque_Transito'] = df_entrada.drop_duplicates(
-                    subset=['Loja', 'SKU'], keep='last'
-                )['Estoque_Transito']
-
-            if 'Pedidos_Abertos' in df_entrada.columns:
-                df_estoque['Pedidos_Abertos'] = df_entrada.drop_duplicates(
-                    subset=['Loja', 'SKU'], keep='last'
-                )['Pedidos_Abertos']
-
-            if 'Lote_Minimo' in df_entrada.columns:
-                df_estoque['Lote_Minimo'] = df_entrada.drop_duplicates(
-                    subset=['Loja', 'SKU'], keep='last'
-                )['Lote_Minimo']
-
-            # Processar com cálculo inteligente de demanda
-            from core.replenishment_calculator import processar_reabastecimento_com_historico
-
-            df_resultado = processar_reabastecimento_com_historico(
-                df_historico=df_historico,
-                df_estoque_atual=df_estoque,
-                metodo_demanda='auto',  # Sempre automático
-                nivel_servico=nivel_servico,
-                revisao_dias=revisao_dias
-            )
-
-        # MODO MANUAL: Usa demanda fornecida pelo usuário
-        else:
-            print("Modo MANUAL: Usando demanda fornecida pelo usuário...")
-
-            # Validar colunas para modo manual
-            colunas_obrigatorias_manual = [
-                'Loja', 'SKU', 'Demanda_Media_Mensal', 'Desvio_Padrao_Mensal',
-                'Lead_Time_Dias', 'Estoque_Disponivel'
-            ]
-            colunas_faltantes = [col for col in colunas_obrigatorias_manual if col not in df_entrada.columns]
-
-            if colunas_faltantes:
-                return jsonify({
-                    'success': False,
-                    'erro': f'MODO MANUAL requer colunas: {", ".join(colunas_faltantes)}'
-                }), 400
-
-            # Processar reabastecimento tradicional
-            df_resultado = processar_reabastecimento(
-                df_entrada,
-                nivel_servico=nivel_servico,
-                revisao_dias=revisao_dias
-            )
-
-        # Gerar resumo
-        total_itens = len(df_resultado)
-        total_a_pedir = len(df_resultado[df_resultado['Deve_Pedir'] == 'Sim'])
-        total_em_risco = len(df_resultado[df_resultado['Risco_Ruptura'] == 'Sim'])
-        cobertura_media = df_resultado['Cobertura_Atual_Dias'].mean()
-
-        # Top 10 itens com maior urgência (menor cobertura e deve pedir)
-        itens_urgentes = df_resultado[df_resultado['Deve_Pedir'] == 'Sim'].nsmallest(10, 'Cobertura_Atual_Dias')
-
-        # Estatísticas de método usado (modo automático)
-        resumo_metodos = {}
-        if modo_calculo == 'automatico' and 'Metodo_Usado' in df_resultado.columns:
-            metodos_count = df_resultado['Metodo_Usado'].value_counts().to_dict()
-            resumo_metodos = {
-                'metodos_usados': metodos_count,
-                'modo': 'automatico'
-            }
-        else:
-            resumo_metodos = {'modo': 'manual'}
-
-        # Salvar resultado em Excel
-        nome_arquivo_saida = f"reabastecimento_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        caminho_saida = os.path.join(app.config['OUTPUT_FOLDER'], nome_arquivo_saida)
-
-        with pd.ExcelWriter(caminho_saida, engine='openpyxl') as writer:
-            df_resultado.to_excel(writer, sheet_name='Reabastecimento', index=False)
-            itens_urgentes.to_excel(writer, sheet_name='Top_10_Urgentes', index=False)
-
-            # Adicionar aba de resumo do método (modo automático)
-            if modo_calculo == 'automatico' and 'Metodo_Usado' in df_resultado.columns:
-                df_resumo_metodo = df_resultado.groupby('Metodo_Usado').size().reset_index(name='Quantidade')
-                df_resumo_metodo.to_excel(writer, sheet_name='Resumo_Metodos', index=False)
-
-        # Limpar arquivo de upload
-        try:
-            os.remove(filepath)
-        except:
-            pass
-
-        resumo = {
-            'total_itens': total_itens,
-            'total_a_pedir': total_a_pedir,
-            'total_em_risco': total_em_risco,
-            'cobertura_media_dias': round(cobertura_media, 1),
-            'percentual_a_pedir': round((total_a_pedir / total_itens * 100), 1) if total_itens > 0 else 0,
-            'modo_calculo': modo_calculo,
-            **resumo_metodos
-        }
-
-        return jsonify({
-            'success': True,
-            'arquivo_saida': nome_arquivo_saida,
-            'resumo': resumo,
-            'dados_tabela': df_resultado.to_dict('records'),
-            'itens_urgentes': itens_urgentes.to_dict('records')
-        })
-
-    except ValueError as e:
-        return jsonify({'success': False, 'erro': str(e)}), 400
-    except Exception as e:
-        return jsonify({'success': False, 'erro': f'Erro interno: {str(e)}'}), 500
-
-
-@app.route('/processar_reabastecimento_v3', methods=['POST'])
-def processar_reabastecimento_v3():
-    """
-    Processa reabastecimento com múltiplas abas (v3.0)
-    - PEDIDOS_FORNECEDOR: Compras de fornecedor
-    - PEDIDOS_CD: Distribuição CD → Loja
-    - TRANSFERENCIAS: Transferências Loja ↔ Loja
-    """
-    try:
-        from core.flow_processor import (
-            processar_pedidos_fornecedor,
-            processar_pedidos_cd,
-            processar_transferencias,
-            gerar_relatorio_pedido_fornecedor,
-            gerar_relatorio_pedido_cd,
-            gerar_relatorio_transferencias
-        )
-
-        # Verificar arquivo
-        if 'file' not in request.files:
-            return jsonify({'success': False, 'erro': 'Nenhum arquivo enviado'}), 400
-
-        file = request.files['file']
-
-        if file.filename == '':
-            return jsonify({'success': False, 'erro': 'Nenhum arquivo selecionado'}), 400
-
-        if not file.filename.endswith(('.xlsx', '.xls')):
-            return jsonify({'success': False, 'erro': 'Arquivo deve ser Excel'}), 400
-
-        # Salvar arquivo
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-
-        # Ler abas disponíveis
-        excel_file = pd.ExcelFile(filepath)
-        abas_disponiveis = excel_file.sheet_names
-
-        print(f"[INFO] Abas encontradas: {abas_disponiveis}")
-
-        # Validar que tem pelo menos HISTORICO_VENDAS
-        if 'HISTORICO_VENDAS' not in abas_disponiveis:
-            return jsonify({
-                'success': False,
-                'erro': 'Arquivo deve conter aba HISTORICO_VENDAS'
-            }), 400
-
-        # Ler histórico (compartilhado por todos os fluxos)
-        df_historico = pd.read_excel(filepath, sheet_name='HISTORICO_VENDAS')
-
-        resultados = {}
-        arquivos_gerados = []
-
-        # 1. Processar PEDIDOS_FORNECEDOR (se existe)
-        if 'PEDIDOS_FORNECEDOR' in abas_disponiveis:
-            print("[INFO] Processando PEDIDOS_FORNECEDOR...")
-            df_fornecedor = pd.read_excel(filepath, sheet_name='PEDIDOS_FORNECEDOR')
-
-            resultado_fornecedor = processar_pedidos_fornecedor(df_fornecedor, df_historico)
-
-            # Gerar relatório
-            nome_arquivo = f"pedido_fornecedor_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            caminho_saida = os.path.join(app.config['OUTPUT_FOLDER'], nome_arquivo)
-            gerar_relatorio_pedido_fornecedor(resultado_fornecedor, caminho_saida)
-
-            resultados['PEDIDOS_FORNECEDOR'] = {
-                'resumo': {
-                    'total_itens': int(resultado_fornecedor['total_itens']),
-                    'total_a_pedir': int(len(resultado_fornecedor['pedidos'][resultado_fornecedor['pedidos']['Deve_Pedir'] == 'Sim'])) if 'pedidos' in resultado_fornecedor and len(resultado_fornecedor['pedidos']) > 0 else 0,
-                    'custo_total': float(resultado_fornecedor['pedidos']['Custo_Total'].sum()) if 'pedidos' in resultado_fornecedor and len(resultado_fornecedor['pedidos']) > 0 and 'Custo_Total' in resultado_fornecedor['pedidos'].columns else 0.0,
-                    'total_unidades': int(resultado_fornecedor['total_unidades']),
-                    'total_caixas': int(resultado_fornecedor['total_caixas']),
-                    'total_paletes': int(resultado_fornecedor['total_paletes']),
-                    'total_carretas': int(resultado_fornecedor['total_carretas'])
-                },
-                'dados_tabela': resultado_fornecedor['pedidos'].replace([np.nan, np.inf, -np.inf], None).replace({pd.NA: None, pd.NaT: None}).to_dict('records') if 'pedidos' in resultado_fornecedor else []
-            }
-            arquivos_gerados.append(nome_arquivo)
-
-        # 2. Processar PEDIDOS_CD (se existe)
-        if 'PEDIDOS_CD' in abas_disponiveis:
-            print("[INFO] Processando PEDIDOS_CD...")
-            df_cd = pd.read_excel(filepath, sheet_name='PEDIDOS_CD')
-
-            resultado_cd = processar_pedidos_cd(df_cd, df_historico)
-
-            # Gerar relatório
-            nome_arquivo = f"pedido_cd_lojas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            caminho_saida = os.path.join(app.config['OUTPUT_FOLDER'], nome_arquivo)
-            gerar_relatorio_pedido_cd(resultado_cd, caminho_saida)
-
-            resultados['PEDIDOS_CD'] = {
-                'resumo': {
-                    'total_itens': int(resultado_cd['total_itens']),
-                    'total_a_pedir': int(len(resultado_cd['pedidos'][resultado_cd['pedidos']['Deve_Pedir'] == 'Sim'])) if 'pedidos' in resultado_cd and len(resultado_cd['pedidos']) > 0 else 0,
-                    'total_em_risco': int(len(resultado_cd['pedidos'][resultado_cd['pedidos']['Risco_Ruptura'] == 'Sim'])) if 'pedidos' in resultado_cd and len(resultado_cd['pedidos']) > 0 else 0,
-                    'cobertura_media_dias': float(resultado_cd['pedidos']['Cobertura_Dias_Apos_Pedido'].mean()) if 'pedidos' in resultado_cd and len(resultado_cd['pedidos']) > 0 and 'Cobertura_Dias_Apos_Pedido' in resultado_cd['pedidos'].columns else 0.0,
-                    'total_unidades': int(resultado_cd['total_unidades']),
-                    'alertas_count': int(resultado_cd['alertas_count'])
-                },
-                'dados_tabela': resultado_cd['pedidos'].replace([np.nan, np.inf, -np.inf], None).replace({pd.NA: None, pd.NaT: None}).to_dict('records') if 'pedidos' in resultado_cd else []
-            }
-            arquivos_gerados.append(nome_arquivo)
-
-        # 3. Processar TRANSFERENCIAS (se existe)
-        if 'TRANSFERENCIAS' in abas_disponiveis:
-            print("[INFO] Processando TRANSFERENCIAS...")
-            df_transf = pd.read_excel(filepath, sheet_name='TRANSFERENCIAS')
-
-            resultado_transf = processar_transferencias(df_transf, df_historico)
-
-            if resultado_transf['total_transferencias'] > 0:
-                # Gerar relatório
-                nome_arquivo = f"transferencias_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                caminho_saida = os.path.join(app.config['OUTPUT_FOLDER'], nome_arquivo)
-                gerar_relatorio_transferencias(resultado_transf, caminho_saida)
-
-                resultados['TRANSFERENCIAS'] = {
-                    'resumo': {
-                        'total_transferencias': int(resultado_transf['total_transferencias']),
-                        'total_a_pedir': int(resultado_transf['total_transferencias']),
-                        'total_unidades': int(resultado_transf['total_unidades']),
-                        'valor_total_estoque': float(resultado_transf['valor_total_estoque']),
-                        'custo_operacional_total': float(resultado_transf['custo_operacional_total']),
-                        'urgencia_alta': int(resultado_transf.get('alta_prioridade', 0))
-                    },
-                    'dados_tabela': resultado_transf['transferencias'].replace([np.nan, np.inf, -np.inf], None).replace({pd.NA: None, pd.NaT: None}).to_dict('records') if 'transferencias' in resultado_transf else []
-                }
-                arquivos_gerados.append(nome_arquivo)
-            else:
-                resultados['TRANSFERENCIAS'] = {
-                    'resumo': {
-                        'total_transferencias': 0,
-                        'total_a_pedir': 0,
-                        'total_unidades': 0,
-                        'valor_total_estoque': 0.0,
-                        'custo_operacional_total': 0.0,
-                        'urgencia_alta': 0
-                    },
-                    'dados_tabela': []
-                }
-
-        # Limpar arquivo de upload
-        try:
-            os.remove(filepath)
-        except:
-            pass
-
-        # Verificar se processou alguma aba
-        if not resultados:
-            return jsonify({
-                'success': False,
-                'erro': 'Nenhuma aba de fluxo encontrada (PEDIDOS_FORNECEDOR, PEDIDOS_CD ou TRANSFERENCIAS)'
-            }), 400
-
-        return jsonify({
-            'success': True,
-            'resultados': resultados,
-            'arquivos_gerados': arquivos_gerados,
-            'total_arquivos': len(arquivos_gerados)
-        })
-
-    except Exception as e:
-        import traceback
-        print(f"[ERRO] {str(e)}")
-        print(traceback.format_exc())
-        return jsonify({'success': False, 'erro': f'Erro interno: {str(e)}'}), 500
 
 
 # ===== ROTAS DE KPIs =====
@@ -2403,10 +2255,24 @@ def api_vendas():
 def api_gerar_previsao_banco():
     """
     Gera previsão de demanda usando dados do banco PostgreSQL
-    Aceita período customizado baseado na granularidade:
-    - Mensal: mes_inicio, ano_inicio, mes_fim, ano_fim
-    - Semanal: semana_inicio, ano_semana_inicio, semana_fim, ano_semana_fim
-    - Diário: data_inicio, data_fim
+
+    Esta função agora redireciona para a versão otimizada (Bottom-Up),
+    que calcula cada item individualmente e depois agrega.
+
+    Benefícios:
+    - Sazonalidade por dia da semana (diário) ou semana do ano (semanal)
+    - Tendência com limitadores (queda >40% ignorada, alta >50% limitada)
+    - Soma dos itens = Total (consistência matemática)
+    """
+    # Redirecionar para a função otimizada (Bottom-Up)
+    return api_gerar_previsao_banco_v2_interno()
+
+
+# Função legada mantida para referência (não utilizada)
+def _api_gerar_previsao_banco_legado():
+    """
+    [LEGADO] Versão anterior da previsão - mantida apenas para referência.
+    A versão atual usa Bottom-Up (api_gerar_previsao_banco_v2_interno).
     """
     try:
         # Inicializar auto-logger para auditoria
@@ -4052,9 +3918,22 @@ def api_gerar_previsao_banco():
 @app.route('/api/gerar_previsao_banco_v2', methods=['POST'])
 def api_gerar_previsao_banco_v2():
     """
-    VERSÃO 2 - BOTTOM-UP FORECASTING
+    [COMPATIBILIDADE] Endpoint V2 mantido para compatibilidade.
+    Ambos os endpoints agora usam a mesma lógica otimizada.
+    """
+    return api_gerar_previsao_banco_v2_interno()
+
+
+def api_gerar_previsao_banco_v2_interno():
+    """
+    BOTTOM-UP FORECASTING (Versão Otimizada)
     Calcula previsão para cada item individualmente, depois agrega para o total.
     Isso garante que: Soma dos itens = Total do gráfico/tabela
+
+    Características:
+    - Sazonalidade por dia da semana (diário) ou semana do ano (semanal)
+    - Tendência com limitadores (queda >40% ignorada, alta >50% limitada)
+    - Comparação mesmo dia da semana do ano anterior (granularidade diária)
     """
     try:
         dados = request.get_json()

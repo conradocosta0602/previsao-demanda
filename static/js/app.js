@@ -1571,13 +1571,13 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
         previsaoChart.destroy();
     }
 
-    // Preparar dados da base histórica (50%)
-    const datasBase = historicoBase.datas || [];
-    const valoresBase = historicoBase.valores || [];
+    // Preparar dados da base histórica (50%) - tratar caso seja null/undefined
+    const datasBase = historicoBase?.datas || [];
+    const valoresBase = historicoBase?.valores || [];
 
-    // Preparar dados do período de teste (25%)
-    const datasTeste = historicoTeste.datas || [];
-    const valoresTeste = historicoTeste.valores || [];
+    // Preparar dados do período de teste (25%) - tratar caso seja null/undefined
+    const datasTeste = historicoTeste?.datas || [];
+    const valoresTeste = historicoTeste?.valores || [];
 
     // Preparar dados de previsão do melhor modelo
     const previsaoTeste = modelos[melhorModelo]?.teste?.valores || [];
@@ -1980,7 +1980,7 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
         console.log('Tipo período:', dados.tipo_periodo);
         console.log('Dados completos:', JSON.stringify(dados, null, 2));
 
-        // Enviar requisição
+        // Enviar requisição (Bottom-Up com sazonalidade, tendência e limitadores)
         const response = await fetch('/api/gerar_previsao_banco', {
             method: 'POST',
             headers: {
@@ -2007,10 +2007,13 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
 
             // Obter métricas do melhor modelo
             const melhorModelo = resultado.melhor_modelo;
-            const metricasMelhor = resultado.metricas[melhorModelo] || {};
+
+            // V2 tem métricas dentro de modelos[modelo].metricas, V1 tem em resultado.metricas[modelo]
+            const modeloData = resultado.modelos[melhorModelo] || {};
+            const metricasMelhor = modeloData.metricas || resultado.metricas?.[melhorModelo] || {};
 
             // Calcular totais de previsão futura
-            const previsaoFuturo = resultado.modelos[melhorModelo]?.futuro?.valores || [];
+            const previsaoFuturo = modeloData?.futuro?.valores || [];
             const totalPrevisao = previsaoFuturo.reduce((sum, val) => sum + val, 0);
 
             // Total do ano anterior (apenas os períodos correspondentes à previsão)
@@ -2030,10 +2033,31 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
             const variacaoSinal = variacaoDemanda >= 0 ? '+' : '';
             document.getElementById('kpi_variacao').textContent = `${variacaoSinal}${variacaoDemanda.toFixed(1)}%`;
 
+            // V2 usa serie_temporal, V1 usa historico_base e historico_teste
+            // Para V2, dividimos a série temporal em base e teste
+            let historicoBase = resultado.historico_base;
+            let historicoTeste = resultado.historico_teste;
+
+            if (!historicoBase && resultado.serie_temporal) {
+                // V2: dividir serie_temporal em base e teste (80/20)
+                const datas = resultado.serie_temporal.datas || [];
+                const valores = resultado.serie_temporal.valores || [];
+                const splitIndex = Math.floor(datas.length * 0.8);
+
+                historicoBase = {
+                    datas: datas.slice(0, splitIndex),
+                    valores: valores.slice(0, splitIndex)
+                };
+                historicoTeste = {
+                    datas: datas.slice(splitIndex),
+                    valores: valores.slice(splitIndex)
+                };
+            }
+
             // Criar gráfico principal com 3 linhas (base, teste, futuro) + ano anterior
             criarGraficoPrevisao(
-                resultado.historico_base,
-                resultado.historico_teste,
+                historicoBase,
+                historicoTeste,
                 resultado.modelos,
                 melhorModelo,
                 resultado.granularidade || 'mensal',  // Passar granularidade para formatação de labels
@@ -2396,166 +2420,4 @@ function exibirResumoRelatorio(itens) {
     resumoSection.style.display = 'block';
 }
 
-// =====================================================
-// FUNÇÃO PARA GERAR PREVISÃO V2 (BOTTOM-UP)
-// =====================================================
-
-async function gerarPrevisaoV2() {
-    // Esconder resultados e erros anteriores
-    document.getElementById('results').style.display = 'none';
-    document.getElementById('error').style.display = 'none';
-
-    // Mostrar progresso
-    document.getElementById('progress').style.display = 'block';
-    const progressFill = document.getElementById('progressFill');
-    const progressText = document.getElementById('progressText');
-
-    // Simular progresso (V2 pode ser mais lento)
-    let progress = 0;
-    const progressInterval = setInterval(() => {
-        progress += 3;
-        if (progress <= 90) {
-            progressFill.style.width = progress + '%';
-            if (progress < 20) {
-                progressText.textContent = 'Buscando lista de itens...';
-            } else if (progress < 40) {
-                progressText.textContent = 'Calculando previsão para cada item...';
-            } else if (progress < 60) {
-                progressText.textContent = 'Aplicando sazonalidade...';
-            } else if (progress < 80) {
-                progressText.textContent = 'Agregando resultados...';
-            } else {
-                progressText.textContent = 'Finalizando...';
-            }
-        }
-    }, 500);
-
-    try {
-        // Coletar dados do formulário
-        const dadosPeriodo = coletarDadosPeriodo();
-        const dados = {
-            loja: document.getElementById('loja_banco').value,
-            fornecedor: document.getElementById('fornecedor_banco').value,
-            linha: document.getElementById('linha_banco').value,
-            sublinha: document.getElementById('sublinha_banco').value,
-            produto: document.getElementById('produto_banco').value,
-            granularidade: document.getElementById('granularidade_banco').value,
-            ...dadosPeriodo
-        };
-
-        console.log('=== DADOS ENVIADOS (V2 Bottom-Up) ===');
-        console.log('Granularidade:', dados.granularidade);
-        console.log('Dados completos:', JSON.stringify(dados, null, 2));
-
-        // Enviar requisição para API V2
-        const response = await fetch('/api/gerar_previsao_banco_v2', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(dados)
-        });
-
-        const resultado = await response.json();
-
-        clearInterval(progressInterval);
-        progressFill.style.width = '100%';
-        progressText.textContent = 'Concluído! (V2 Bottom-Up)';
-
-        setTimeout(() => {
-            document.getElementById('progress').style.display = 'none';
-        }, 500);
-
-        if (response.status === 200) {
-            console.log('Resultado V2 recebido:', resultado);
-            console.log('Estatísticas de modelos:', resultado.estatisticas_modelos);
-
-            // Mostrar resultados
-            document.getElementById('results').style.display = 'block';
-
-            // Obter métricas do modelo Bottom-Up
-            const melhorModelo = resultado.melhor_modelo;
-            const dadosModelo = resultado.modelos[melhorModelo] || {};
-            const metricasMelhor = dadosModelo.metricas || {};
-
-            // Calcular totais
-            const previsaoFuturo = dadosModelo.futuro?.valores || [];
-            const totalPrevisao = previsaoFuturo.reduce((sum, val) => sum + val, 0);
-
-            const valoresAnoAnterior = resultado.ano_anterior?.valores || [];
-            const numPeriodos = previsaoFuturo.length;
-            const totalAnoAnterior = valoresAnoAnterior.slice(0, numPeriodos).reduce((sum, val) => sum + val, 0);
-
-            const variacaoDemanda = totalAnoAnterior > 0
-                ? ((totalPrevisao - totalAnoAnterior) / totalAnoAnterior * 100)
-                : 0;
-
-            // Preencher KPIs
-            document.getElementById('kpi_wmape').textContent = `${(metricasMelhor.wmape || 0).toFixed(1)}%`;
-            document.getElementById('kpi_bias').textContent = `${(metricasMelhor.bias || 0).toFixed(1)}%`;
-
-            const variacaoSinal = variacaoDemanda >= 0 ? '+' : '';
-            document.getElementById('kpi_variacao').textContent = `${variacaoSinal}${variacaoDemanda.toFixed(1)}%`;
-
-            // Criar estrutura compatível com função existente
-            const resultadoCompativel = {
-                ...resultado,
-                historico_base: {
-                    datas: resultado.serie_temporal.datas,
-                    valores: resultado.serie_temporal.valores
-                },
-                historico_teste: {
-                    datas: [],
-                    valores: []
-                },
-                metricas: {
-                    [melhorModelo]: metricasMelhor
-                }
-            };
-
-            // Criar gráfico
-            criarGraficoPrevisao(
-                resultadoCompativel.historico_base,
-                resultadoCompativel.historico_teste,
-                resultado.modelos,
-                melhorModelo,
-                resultado.granularidade || 'mensal',
-                resultado.ano_anterior
-            );
-
-            // Preencher tabela comparativa
-            console.log('=== DEBUG ANO ANTERIOR (V2) ===');
-            console.log('Granularidade:', resultado.granularidade);
-            console.log('Datas ano anterior:', resultado.ano_anterior?.datas?.slice(0, 5));
-            console.log('Valores ano anterior:', resultado.ano_anterior?.valores?.slice(0, 5));
-            console.log('Total ano anterior:', resultado.ano_anterior?.total);
-            preencherTabelaComparativa(resultadoCompativel, melhorModelo, resultado.granularidade || 'mensal');
-
-            // Exibir relatório detalhado
-            if (resultado.relatorio_detalhado) {
-                exibirRelatorioDetalhado(resultado.relatorio_detalhado);
-            }
-
-            // Mostrar estatísticas de modelos utilizados
-            if (resultado.estatisticas_modelos) {
-                console.log('=== ESTATÍSTICAS DE MODELOS (V2) ===');
-                for (const [modelo, qtd] of Object.entries(resultado.estatisticas_modelos)) {
-                    console.log(`  ${modelo}: ${qtd} itens`);
-                }
-            }
-
-        } else {
-            document.getElementById('error').style.display = 'block';
-            document.getElementById('errorMessage').innerHTML = `
-                <strong>Erro na V2:</strong> ${resultado.erro || 'Erro desconhecido'}
-            `;
-        }
-
-    } catch (error) {
-        clearInterval(progressInterval);
-        document.getElementById('progress').style.display = 'none';
-        document.getElementById('error').style.display = 'block';
-        document.getElementById('errorMessage').textContent = 'Erro de conexão: ' + error.message;
-        console.error('Erro V2:', error);
-    }
-}
+// Função gerarPrevisaoV2 removida - lógica V2 (Bottom-Up) agora é padrão no botão "Gerar Previsão"

@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedido ao Fornecedor - Integrado</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .filtros-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .filtro-item label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        .filtro-item select, .filtro-item input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .info-cobertura {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .info-cobertura h4 {
+            margin: 0 0 8px 0;
+            color: #1565c0;
+        }
+        .info-cobertura p {
+            margin: 4px 0;
+            font-size: 0.9em;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stat-card .valor {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #333;
+        }
+        .stat-card .label {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
+        }
+        .stat-card.destaque {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .stat-card.destaque .valor, .stat-card.destaque .label {
+            color: white;
+        }
+        .stat-card.alerta {
+            background: #fff3e0;
+            border-left: 4px solid #ff9800;
+        }
+        .fornecedor-card {
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .fornecedor-header {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+            color: white;
+            padding: 15px;
+        }
+        .fornecedor-header h3 {
+            margin: 0;
+            font-size: 1.1em;
+        }
+        .fornecedor-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .fornecedor-stats div {
+            text-align: center;
+        }
+        .fornecedor-stats .stat-valor {
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        .fornecedor-stats .stat-label {
+            font-size: 0.75em;
+            opacity: 0.9;
+        }
+        .itens-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+        }
+        .itens-table th {
+            background: #f8f9fa;
+            padding: 10px 8px;
+            text-align: left;
+            border-bottom: 2px solid #dee2e6;
+            position: sticky;
+            top: 0;
+        }
+        .itens-table td {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+        .itens-table tr:hover {
+            background: #f8f9fa;
+        }
+        .badge-abc {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.8em;
+        }
+        .badge-abc.A { background: #4caf50; color: white; }
+        .badge-abc.B { background: #ff9800; color: white; }
+        .badge-abc.C { background: #f44336; color: white; }
+        .cobertura-valor {
+            font-weight: bold;
+        }
+        .cobertura-valor.critico { color: #c62828; }
+        .cobertura-valor.baixo { color: #e65100; }
+        .cobertura-valor.ok { color: #2e7d32; }
+        .btn-gerar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+        }
+        .btn-gerar:hover {
+            opacity: 0.9;
+        }
+        .btn-gerar:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header-compact" style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="logo-section">
+                <h1>Pedido ao Fornecedor - Integrado</h1>
+                <p>Cobertura baseada em ABC com Previsao de Demanda</p>
+            </div>
+            <a href="/menu" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; font-size: 0.9em;">
+                Menu Principal
+            </a>
+        </div>
+
+        <div class="main-grid">
+            <!-- Sidebar: Filtros -->
+            <div class="sidebar-left">
+                <div class="card-compact">
+                    <h3>Filtros</h3>
+
+                    <div class="filtros-grid" style="grid-template-columns: 1fr;">
+                        <div class="filtro-item">
+                            <label>Destino</label>
+                            <select id="destino_tipo">
+                                <option value="Loja">Lojas (Direto)</option>
+                                <option value="CD">CD (Centralizado)</option>
+                            </select>
+                        </div>
+
+                        <div class="filtro-item">
+                            <label>Loja/CD</label>
+                            <select id="cod_empresa">
+                                <option value="TODAS">Todas</option>
+                            </select>
+                        </div>
+
+                        <div class="filtro-item">
+                            <label>Fornecedor</label>
+                            <select id="fornecedor">
+                                <option value="TODOS">Todos</option>
+                            </select>
+                        </div>
+
+                        <div class="filtro-item">
+                            <label>Categoria</label>
+                            <select id="categoria">
+                                <option value="TODAS">Todas</option>
+                            </select>
+                        </div>
+
+                        <div class="filtro-item">
+                            <label>Cobertura (dias)</label>
+                            <select id="cobertura_dias">
+                                <option value="">Automatica (ABC)</option>
+                                <option value="15">15 dias</option>
+                                <option value="21">21 dias</option>
+                                <option value="30">30 dias</option>
+                                <option value="45">45 dias</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="info-cobertura">
+                        <h4>Formula de Cobertura (ABC)</h4>
+                        <p><strong>Cobertura = Lead Time + Ciclo (7d) + Seguranca ABC</strong></p>
+                        <p>Seguranca ABC: A=+2d, B=+4d, C=+6d</p>
+                        <p>Nivel Servico: A=98%, B=95%, C=90%</p>
+                    </div>
+
+                    <button id="btnGerar" class="btn-gerar" onclick="gerarPedido()">
+                        Gerar Pedido Integrado
+                    </button>
+
+                    <!-- Navegacao -->
+                    <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd;">
+                        <a href="/menu" style="display: block; text-align: center; padding: 8px; color: #666; text-decoration: none;">
+                            Voltar ao Menu
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="main-content">
+                <!-- Progress -->
+                <div id="progress" class="card-compact" style="display: none;">
+                    <div class="progress-bar-compact">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <p id="progressText" style="text-align: center; margin-top: 10px;">Processando...</p>
+                </div>
+
+                <!-- Resultados -->
+                <div id="results" style="display: none;">
+                    <!-- Estatisticas -->
+                    <div class="stats-grid" id="statsGrid"></div>
+
+                    <!-- Agregacao por Fornecedor -->
+                    <div class="card-compact">
+                        <h3>Pedidos por Fornecedor</h3>
+                        <div id="fornecedoresLista"></div>
+                    </div>
+
+                    <!-- Tabela de Itens -->
+                    <div class="card-compact">
+                        <h3>Detalhamento de Itens</h3>
+                        <div style="max-height: 500px; overflow-y: auto;">
+                            <table class="itens-table">
+                                <thead>
+                                    <tr>
+                                        <th>Codigo</th>
+                                        <th>Descricao</th>
+                                        <th>Loja</th>
+                                        <th>ABC</th>
+                                        <th>Demanda/Dia</th>
+                                        <th>Estoque</th>
+                                        <th>Cob. Atual</th>
+                                        <th>Cob. Neces.</th>
+                                        <th>Qtd Pedido</th>
+                                        <th>Cob. Pos</th>
+                                        <th>Valor</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="itensBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Erro -->
+                <div id="error" class="card-compact" style="display: none; background: #ffebee;">
+                    <h3 style="color: #c62828;">Erro</h3>
+                    <p id="errorMessage"></p>
+                    <button onclick="location.reload()" class="btn-secondary-compact">Tentar Novamente</button>
+                </div>
+
+                <!-- Instrucoes iniciais -->
+                <div id="instrucoes" class="card-compact">
+                    <h3>Pedido ao Fornecedor Integrado</h3>
+                    <p>Este modulo integra a previsao de demanda com o calculo de pedidos ao fornecedor.</p>
+
+                    <h4>Caracteristicas:</h4>
+                    <ul>
+                        <li><strong>Cobertura ABC:</strong> Calculo automatico baseado em Lead Time + Ciclo + Seguranca ABC</li>
+                        <li><strong>Curva ABC:</strong> Usa a classificacao do cadastro de produtos</li>
+                        <li><strong>Nivel de Servico:</strong> A=98%, B=95%, C=90%</li>
+                        <li><strong>Seguranca ABC:</strong> A=+2d, B=+4d, C=+6d</li>
+                        <li><strong>Arredondamento:</strong> Multiplo de caixa</li>
+                    </ul>
+
+                    <h4>Como usar:</h4>
+                    <ol>
+                        <li>Selecione o destino (Lojas ou CD)</li>
+                        <li>Opcionalmente filtre por fornecedor ou categoria</li>
+                        <li>Escolha cobertura automatica ou fixa</li>
+                        <li>Clique em "Gerar Pedido Integrado"</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Carregar filtros ao iniciar
+        document.addEventListener('DOMContentLoaded', async () => {
+            await carregarFiltros();
+        });
+
+        async function carregarFiltros() {
+            try {
+                // Carregar lojas
+                const lojasResp = await fetch('/api/lojas');
+                const lojas = await lojasResp.json();
+                const selectLoja = document.getElementById('cod_empresa');
+                lojas.forEach(loja => {
+                    const opt = document.createElement('option');
+                    opt.value = loja.cod_empresa;
+                    opt.textContent = loja.nome_loja;
+                    selectLoja.appendChild(opt);
+                });
+
+                // Carregar fornecedores
+                const fornResp = await fetch('/api/fornecedores');
+                const fornecedores = await fornResp.json();
+                const selectForn = document.getElementById('fornecedor');
+                fornecedores.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.codigo_fornecedor;
+                    opt.textContent = f.nome_fornecedor;
+                    selectForn.appendChild(opt);
+                });
+
+                // Carregar categorias
+                const catResp = await fetch('/api/categorias');
+                const categorias = await catResp.json();
+                const selectCat = document.getElementById('categoria');
+                categorias.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c;
+                    opt.textContent = c;
+                    selectCat.appendChild(opt);
+                });
+
+            } catch (error) {
+                console.error('Erro ao carregar filtros:', error);
+            }
+        }
+
+        async function gerarPedido() {
+            const btnGerar = document.getElementById('btnGerar');
+            btnGerar.disabled = true;
+            btnGerar.textContent = 'Processando...';
+
+            document.getElementById('progress').style.display = 'block';
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('instrucoes').style.display = 'none';
+
+            // Simular progresso
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += 5;
+                if (progress <= 90) {
+                    document.getElementById('progressFill').style.width = progress + '%';
+                    if (progress < 30) {
+                        document.getElementById('progressText').textContent = 'Buscando itens...';
+                    } else if (progress < 60) {
+                        document.getElementById('progressText').textContent = 'Calculando cobertura hibrida...';
+                    } else {
+                        document.getElementById('progressText').textContent = 'Agregando por fornecedor...';
+                    }
+                }
+            }, 300);
+
+            try {
+                const coberturaValue = document.getElementById('cobertura_dias').value;
+
+                const response = await fetch('/api/pedido_fornecedor_integrado', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        destino_tipo: document.getElementById('destino_tipo').value,
+                        cod_empresa: document.getElementById('cod_empresa').value,
+                        fornecedor: document.getElementById('fornecedor').value,
+                        categoria: document.getElementById('categoria').value,
+                        cobertura_dias: coberturaValue ? parseInt(coberturaValue) : null
+                    })
+                });
+
+                clearInterval(progressInterval);
+                document.getElementById('progressFill').style.width = '100%';
+                document.getElementById('progressText').textContent = 'Concluido!';
+
+                const data = await response.json();
+
+                setTimeout(() => {
+                    document.getElementById('progress').style.display = 'none';
+
+                    if (data.success) {
+                        exibirResultados(data);
+                    } else {
+                        document.getElementById('error').style.display = 'block';
+                        document.getElementById('errorMessage').textContent = data.erro || 'Erro desconhecido';
+                    }
+                }, 500);
+
+            } catch (error) {
+                clearInterval(progressInterval);
+                document.getElementById('progress').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('errorMessage').textContent = 'Erro de conexao: ' + error.message;
+            }
+
+            btnGerar.disabled = false;
+            btnGerar.textContent = 'Gerar Pedido Integrado';
+        }
+
+        function exibirResultados(data) {
+            document.getElementById('results').style.display = 'block';
+
+            const stats = data.estatisticas;
+            const agregacao = data.agregacao_fornecedor;
+
+            // Estatisticas
+            document.getElementById('statsGrid').innerHTML = `
+                <div class="stat-card destaque">
+                    <div class="valor">${stats.total_itens_pedido}</div>
+                    <div class="label">Itens a Pedir</div>
+                </div>
+                <div class="stat-card destaque">
+                    <div class="valor">R$ ${stats.valor_total_pedido.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</div>
+                    <div class="label">Valor Total</div>
+                </div>
+                <div class="stat-card">
+                    <div class="valor">${agregacao.total_fornecedores}</div>
+                    <div class="label">Fornecedores</div>
+                </div>
+                <div class="stat-card">
+                    <div class="valor">${stats.total_itens_analisados}</div>
+                    <div class="label">Itens Analisados</div>
+                </div>
+                <div class="stat-card ${stats.itens_ruptura_iminente > 0 ? 'alerta' : ''}">
+                    <div class="valor">${stats.itens_ruptura_iminente}</div>
+                    <div class="label">Ruptura Iminente</div>
+                </div>
+                <div class="stat-card">
+                    <div class="valor">${stats.cobertura_media_atual} dias</div>
+                    <div class="label">Cob. Media Atual</div>
+                </div>
+            `;
+
+            // Fornecedores
+            let fornHtml = '';
+            if (agregacao.fornecedores && agregacao.fornecedores.length > 0) {
+                agregacao.fornecedores.forEach(f => {
+                    fornHtml += `
+                        <div class="fornecedor-card">
+                            <div class="fornecedor-header">
+                                <h3>${f.nome_fornecedor || f.codigo_fornecedor}</h3>
+                                <div class="fornecedor-stats">
+                                    <div>
+                                        <div class="stat-valor">${f.total_itens}</div>
+                                        <div class="stat-label">Itens</div>
+                                    </div>
+                                    <div>
+                                        <div class="stat-valor">${f.total_unidades.toLocaleString('pt-BR')}</div>
+                                        <div class="stat-label">Unidades</div>
+                                    </div>
+                                    <div>
+                                        <div class="stat-valor">${f.total_caixas.toLocaleString('pt-BR')}</div>
+                                        <div class="stat-label">Caixas</div>
+                                    </div>
+                                    <div>
+                                        <div class="stat-valor">R$ ${f.valor_total.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</div>
+                                        <div class="stat-label">Valor</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                fornHtml = '<p style="text-align: center; color: #666;">Nenhum pedido necessario</p>';
+            }
+            document.getElementById('fornecedoresLista').innerHTML = fornHtml;
+
+            // Tabela de itens
+            let tbodyHtml = '';
+            const itens = data.itens_pedido || [];
+
+            itens.forEach(item => {
+                const cobAtualClass = item.cobertura_atual_dias < 3 ? 'critico' :
+                                     item.cobertura_atual_dias < 7 ? 'baixo' : 'ok';
+
+                tbodyHtml += `
+                    <tr>
+                        <td>${item.codigo}</td>
+                        <td>${item.descricao?.substring(0, 30) || ''}</td>
+                        <td>${item.nome_loja || item.cod_empresa}</td>
+                        <td><span class="badge-abc ${item.curva_abc}">${item.curva_abc}</span></td>
+                        <td>${item.demanda_media_diaria.toFixed(1)}</td>
+                        <td>${item.estoque_efetivo}</td>
+                        <td class="cobertura-valor ${cobAtualClass}">${item.cobertura_atual_dias.toFixed(1)}</td>
+                        <td>${item.cobertura_necessaria_dias}</td>
+                        <td><strong>${item.quantidade_pedido}</strong></td>
+                        <td class="cobertura-valor ok">${item.cobertura_pos_pedido_dias}</td>
+                        <td>R$ ${item.valor_pedido.toFixed(2)}</td>
+                    </tr>
+                `;
+            });
+
+            if (!tbodyHtml) {
+                tbodyHtml = '<tr><td colspan="11" style="text-align: center; padding: 20px;">Nenhum item precisa ser pedido</td></tr>';
+            }
+
+            document.getElementById('itensBody').innerHTML = tbodyHtml;
+        }
+    </script>
+</body>
+</html>
