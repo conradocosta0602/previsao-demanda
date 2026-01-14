@@ -11,11 +11,14 @@
 <body>
     <div class="container">
         <!-- Header Compacto -->
-        <div class="header-compact">
+        <div class="header-compact" style="display: flex; justify-content: space-between; align-items: center;">
             <div class="logo-section">
                 <h1>Previsao de Demanda</h1>
                 <p>Multi-Loja + CD</p>
             </div>
+            <a href="/menu" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; font-size: 0.9em;">
+                🏠 Menu Principal
+            </a>
         </div>
 
         <!-- Grid Layout Principal -->
@@ -43,8 +46,22 @@
                         </div>
 
                         <div class="config-compact">
-                            <label for="categoria_banco">Categoria:</label>
-                            <select id="categoria_banco" name="categoria" required>
+                            <label for="fornecedor_banco">Fornecedor:</label>
+                            <select id="fornecedor_banco" name="fornecedor">
+                                <option value="">Carregando...</option>
+                            </select>
+                        </div>
+
+                        <div class="config-compact">
+                            <label for="linha_banco">Linha 1:</label>
+                            <select id="linha_banco" name="linha">
+                                <option value="">Carregando...</option>
+                            </select>
+                        </div>
+
+                        <div class="config-compact">
+                            <label for="sublinha_banco">Linha 3:</label>
+                            <select id="sublinha_banco" name="sublinha">
                                 <option value="">Carregando...</option>
                             </select>
                         </div>
@@ -140,6 +157,9 @@
 
                         <button type="submit" class="btn-primary-compact">
                             Gerar Previsão
+                        </button>
+                        <button type="button" class="btn-primary-compact" onclick="gerarPrevisaoV2()" style="background: #28a745; margin-left: 5px;" title="Bottom-Up: Calcula cada item individualmente e agrega">
+                            Gerar V2 (Bottom-Up)
                         </button>
                     </form>
 
@@ -303,6 +323,85 @@
                             <table id="fornecedorItemTable" style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
                                 <tbody id="fornecedorItemBody"></tbody>
                             </table>
+                        </div>
+                    </div>
+
+                    <!-- Relatório Detalhado por Fornecedor/Item -->
+                    <div id="relatorioDetalhadoSection" class="card-compact" style="display: none; margin-top: 20px;">
+                        <h3 style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px; border-radius: 8px; margin: -15px -15px 15px -15px;">
+                            📊 Relatório Detalhado por Fornecedor/Item
+                        </h3>
+
+                        <!-- Filtros do Relatório -->
+                        <div style="display: flex; gap: 15px; margin-bottom: 15px; flex-wrap: wrap; align-items: center;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label style="font-weight: 500; color: #495057; font-size: 0.9em;">Fornecedor:</label>
+                                <select id="filtroFornecedorRelatorio" style="padding: 6px 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 0.85em;">
+                                    <option value="">Todos os Fornecedores</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label style="font-weight: 500; color: #495057; font-size: 0.9em;">Alerta:</label>
+                                <select id="filtroAlertaRelatorio" style="padding: 6px 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 0.85em;">
+                                    <option value="">Todos</option>
+                                    <option value="vermelho">🔴 Crítico</option>
+                                    <option value="amarelo">🟡 Alerta</option>
+                                    <option value="azul">🔵 Atenção</option>
+                                    <option value="verde">🟢 Normal</option>
+                                    <option value="cinza">⚪ Sem Previsão</option>
+                                </select>
+                            </div>
+                            <button onclick="filtrarRelatorioDetalhado()" style="padding: 6px 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 0.85em;">
+                                🔍 Filtrar
+                            </button>
+                            <button onclick="expandirTodosFornecedores()" style="padding: 6px 15px; background: #f8f9fa; color: #495057; border: 1px solid #ddd; border-radius: 5px; cursor: pointer; font-size: 0.85em;">
+                                ➕ Expandir Todos
+                            </button>
+                            <button onclick="recolherTodosFornecedores()" style="padding: 6px 15px; background: #f8f9fa; color: #495057; border: 1px solid #ddd; border-radius: 5px; cursor: pointer; font-size: 0.85em;">
+                                ➖ Recolher Todos
+                            </button>
+                        </div>
+
+                        <!-- Tabela do Relatório Detalhado -->
+                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                            <table id="relatorioDetalhadoTable" style="width: 100%; border-collapse: collapse; font-size: 0.8em;">
+                                <thead id="relatorioDetalhadoHeader" style="position: sticky; top: 0; background: white; z-index: 10;">
+                                    <!-- Preenchido dinamicamente -->
+                                </thead>
+                                <tbody id="relatorioDetalhadoBody">
+                                    <!-- Preenchido dinamicamente -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Resumo do Relatório -->
+                        <div id="resumoRelatorioDetalhado" style="margin-top: 15px; padding: 12px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef; display: none;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; text-align: center;">
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">Total Fornecedores</div>
+                                    <div id="resumoTotalFornecedores" style="font-size: 1.4em; font-weight: bold; color: #495057;">-</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">Total Itens</div>
+                                    <div id="resumoTotalItens" style="font-size: 1.4em; font-weight: bold; color: #495057;">-</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">🔴 Críticos</div>
+                                    <div id="resumoCriticos" style="font-size: 1.4em; font-weight: bold; color: #dc2626;">-</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">🟡 Alertas</div>
+                                    <div id="resumoAlertas" style="font-size: 1.4em; font-weight: bold; color: #f59e0b;">-</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">🔵 Atenção</div>
+                                    <div id="resumoAtencao" style="font-size: 1.4em; font-weight: bold; color: #3b82f6;">-</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">🟢 Normais</div>
+                                    <div id="resumoNormais" style="font-size: 1.4em; font-weight: bold; color: #10b981;">-</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

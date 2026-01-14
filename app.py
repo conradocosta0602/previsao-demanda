@@ -671,9 +671,15 @@ def processar_previsao(arquivo_excel: str,
     }
 
 
+@app.route('/menu')
+def menu():
+    """Menu principal - Capa do sistema"""
+    return render_template('menu.html')
+
+
 @app.route('/')
 def index():
-    """Página principal"""
+    """Página de previsão de demanda"""
     return render_template('index.html')
 
 
@@ -2144,6 +2150,181 @@ def api_produtos():
         return jsonify({'erro': str(e)}), 500
 
 
+@app.route('/api/fornecedores', methods=['GET'])
+def api_fornecedores():
+    """Retorna lista de fornecedores do banco"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT DISTINCT nome_fornecedor, cnpj_fornecedor
+            FROM cadastro_produtos_completo
+            WHERE ativo = TRUE AND nome_fornecedor IS NOT NULL
+            ORDER BY nome_fornecedor
+        """)
+
+        fornecedores = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Adicionar opcao "Todos"
+        resultado = [{'nome_fornecedor': 'TODOS', 'cnpj_fornecedor': None}]
+        resultado.extend(fornecedores)
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar fornecedores: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/linhas', methods=['GET'])
+def api_linhas():
+    """Retorna lista de linhas (categorias nivel 1) do banco"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT DISTINCT categoria as linha
+            FROM cadastro_produtos_completo
+            WHERE ativo = TRUE AND categoria IS NOT NULL
+            ORDER BY categoria
+        """)
+
+        linhas = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Adicionar opcao "Todas"
+        resultado = [{'linha': 'TODAS'}]
+        resultado.extend(linhas)
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar linhas: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/sublinhas', methods=['GET'])
+def api_sublinhas():
+    """Retorna lista de sublinhas (categorias nivel 3) do banco"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Parametro de filtro por linha
+        linha = request.args.get('linha', 'TODAS')
+
+        query = """
+            SELECT DISTINCT codigo_linha, descricao_linha
+            FROM cadastro_produtos_completo
+            WHERE ativo = TRUE AND codigo_linha IS NOT NULL
+        """
+        params = []
+
+        if linha and linha != 'TODAS':
+            query += " AND categoria = %s"
+            params.append(linha)
+
+        query += " ORDER BY descricao_linha"
+
+        cursor.execute(query, params)
+        sublinhas = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Adicionar opcao "Todas"
+        resultado = [{'codigo_linha': 'TODAS', 'descricao_linha': 'TODAS - Todas as Sublinhas'}]
+        resultado.extend(sublinhas)
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar sublinhas: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/produtos_completo', methods=['GET'])
+def api_produtos_completo():
+    """Retorna lista de produtos com dados completos (fornecedor, linha, sublinha)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Parametros de filtro
+        loja = request.args.get('loja', 'TODAS')
+        fornecedor = request.args.get('fornecedor', 'TODOS')
+        linha = request.args.get('linha', 'TODAS')
+        sublinha = request.args.get('sublinha', 'TODAS')
+
+        query = """
+            SELECT DISTINCT
+                p.cod_produto as codigo,
+                p.descricao,
+                p.nome_fornecedor,
+                p.cnpj_fornecedor,
+                p.categoria as linha,
+                p.codigo_linha,
+                p.descricao_linha as sublinha
+            FROM cadastro_produtos_completo p
+            WHERE p.ativo = TRUE
+        """
+        params = []
+
+        # Filtrar por fornecedor
+        if fornecedor and fornecedor != 'TODOS':
+            query += " AND p.nome_fornecedor = %s"
+            params.append(fornecedor)
+
+        # Filtrar por linha
+        if linha and linha != 'TODAS':
+            query += " AND p.categoria = %s"
+            params.append(linha)
+
+        # Filtrar por sublinha
+        if sublinha and sublinha != 'TODAS':
+            query += " AND p.codigo_linha = %s"
+            params.append(sublinha)
+
+        # Se filtrar por loja especifica, mostrar so produtos com vendas nessa loja
+        if loja and loja != 'TODAS':
+            query += """
+                AND EXISTS (
+                    SELECT 1 FROM historico_vendas_diario h
+                    WHERE h.codigo = p.cod_produto AND h.cod_empresa = %s
+                )
+            """
+            params.append(int(loja))
+
+        query += " ORDER BY p.descricao LIMIT 500"
+
+        cursor.execute(query, params)
+        produtos = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Adicionar opcao "Todos"
+        resultado = [{
+            'codigo': 'TODOS',
+            'descricao': 'TODOS - Todos os Produtos (Agregado)',
+            'nome_fornecedor': None,
+            'cnpj_fornecedor': None,
+            'linha': None,
+            'codigo_linha': None,
+            'sublinha': None
+        }]
+        resultado.extend(produtos)
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        print(f"Erro ao buscar produtos completo: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
 @app.route('/api/vendas', methods=['GET'])
 def api_vendas():
     """Retorna dados de vendas históricos"""
@@ -3519,6 +3700,334 @@ def api_gerar_previsao_banco():
         else:
             resposta['alertas'] = []
 
+        # =====================================================
+        # RELATÓRIO DETALHADO POR ITEM/FORNECEDOR
+        # =====================================================
+        print(f"\nGerando relatório detalhado por item/fornecedor...", flush=True)
+
+        try:
+            # Criar nova conexão para o relatório (a anterior foi fechada)
+            conn_rel = psycopg2.connect(**DB_CONFIG)
+            cursor_rel = conn_rel.cursor(cursor_factory=RealDictCursor)
+
+            # Buscar lista de itens com seus fornecedores
+            # Nota: h.codigo é integer, p.cod_produto é varchar - precisa cast
+            query_itens = f"""
+                SELECT DISTINCT
+                    h.codigo as cod_produto,
+                    p.descricao,
+                    p.nome_fornecedor,
+                    p.cnpj_fornecedor,
+                    p.categoria,
+                    p.descricao_linha
+                FROM historico_vendas_diario h
+                JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+                {where_sql}
+                ORDER BY p.nome_fornecedor, p.descricao
+            """
+            cursor_rel.execute(query_itens, params)
+            lista_itens = cursor_rel.fetchall()
+
+            if lista_itens and len(lista_itens) > 0:
+                print(f"  Encontrados {len(lista_itens)} itens para o relatório", flush=True)
+
+                # Buscar vendas por item e período
+                if granularidade == 'mensal':
+                    query_vendas_item = f"""
+                        SELECT
+                            h.codigo as cod_produto,
+                            DATE_TRUNC('month', h.data) as periodo,
+                            SUM(h.qtd_venda) as qtd_venda
+                        FROM historico_vendas_diario h
+                        JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                        WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+                        {where_sql}
+                        GROUP BY h.codigo, DATE_TRUNC('month', h.data)
+                        ORDER BY h.codigo, DATE_TRUNC('month', h.data)
+                    """
+                elif granularidade == 'semanal':
+                    query_vendas_item = f"""
+                        SELECT
+                            h.codigo as cod_produto,
+                            DATE_TRUNC('week', h.data) as periodo,
+                            SUM(h.qtd_venda) as qtd_venda
+                        FROM historico_vendas_diario h
+                        JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                        WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+                        {where_sql}
+                        GROUP BY h.codigo, DATE_TRUNC('week', h.data)
+                        ORDER BY h.codigo, DATE_TRUNC('week', h.data)
+                    """
+                else:  # diario
+                    query_vendas_item = f"""
+                        SELECT
+                            h.codigo as cod_produto,
+                            h.data as periodo,
+                            SUM(h.qtd_venda) as qtd_venda
+                        FROM historico_vendas_diario h
+                        JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                        WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+                        {where_sql}
+                        GROUP BY h.codigo, h.data
+                        ORDER BY h.codigo, h.data
+                    """
+
+                cursor_rel.execute(query_vendas_item, params)
+                vendas_por_item = cursor_rel.fetchall()
+
+                # Organizar vendas por item
+                vendas_item_dict = {}
+                for venda in vendas_por_item:
+                    cod = venda['cod_produto']
+                    if cod not in vendas_item_dict:
+                        vendas_item_dict[cod] = []
+                    vendas_item_dict[cod].append({
+                        'periodo': venda['periodo'].strftime('%Y-%m-%d') if venda['periodo'] else None,
+                        'qtd_venda': float(venda['qtd_venda']) if venda['qtd_venda'] else 0
+                    })
+
+                # Calcular previsão para cada item com seleção INDIVIDUAL de modelo
+                relatorio_itens = []
+                datas_previsao = resposta.get('modelos', {}).get(melhor_modelo, {}).get('futuro', {}).get('datas', [])
+
+                # Modelos disponíveis para teste individual
+                modelos_disponiveis = [
+                    'Média Móvel Simples',
+                    'Média Móvel Ponderada',
+                    'Suavização Exponencial Simples',
+                    'Holt',
+                    'Holt-Winters',
+                    'Regressão Linear'
+                ]
+
+                print(f"  Selecionando melhor modelo para cada item individualmente...", flush=True)
+
+                for idx, item in enumerate(lista_itens):
+                    cod_produto = item['cod_produto']
+                    vendas_hist = vendas_item_dict.get(cod_produto, [])
+
+                    # Calcular total histórico do item
+                    total_item_hist = sum(v['qtd_venda'] for v in vendas_hist)
+
+                    # Extrair série temporal do item (ordenada por período)
+                    vendas_hist_sorted = sorted(vendas_hist, key=lambda x: x['periodo'] if x['periodo'] else '')
+                    serie_item = [v['qtd_venda'] for v in vendas_hist_sorted]
+
+                    # Selecionar melhor modelo para ESTE item
+                    melhor_modelo_item = melhor_modelo  # Fallback para modelo agregado
+                    previsao_item_periodos = []
+
+                    if len(serie_item) >= 6:  # Mínimo de 6 períodos para testar modelos
+                        # Dividir série do item: 70% treino, 30% teste
+                        tamanho_treino = int(len(serie_item) * 0.7)
+                        if tamanho_treino < 3:
+                            tamanho_treino = 3
+                        tamanho_teste_item = len(serie_item) - tamanho_treino
+
+                        if tamanho_teste_item >= 2:
+                            serie_treino_item = serie_item[:tamanho_treino]
+                            serie_teste_item = serie_item[tamanho_treino:]
+
+                            melhor_wmape_item = float('inf')
+
+                            for nome_modelo in modelos_disponiveis:
+                                try:
+                                    modelo_item = get_modelo(nome_modelo)
+                                    modelo_item.fit(serie_treino_item)
+                                    previsoes_teste_item = modelo_item.predict(tamanho_teste_item)
+
+                                    # Calcular WMAPE para este modelo neste item
+                                    if len(previsoes_teste_item) == len(serie_teste_item):
+                                        erros_pct = []
+                                        for i in range(len(serie_teste_item)):
+                                            if serie_teste_item[i] > 0:
+                                                erro = abs(previsoes_teste_item[i] - serie_teste_item[i]) / serie_teste_item[i] * 100
+                                                erros_pct.append(erro)
+
+                                        if erros_pct:
+                                            wmape_item = sum(erros_pct) / len(erros_pct)
+                                            if wmape_item < melhor_wmape_item:
+                                                melhor_wmape_item = wmape_item
+                                                melhor_modelo_item = nome_modelo
+                                except:
+                                    pass  # Modelo falhou para este item, tentar próximo
+
+                            # Gerar previsão com o melhor modelo selecionado para este item
+                            try:
+                                modelo_final = get_modelo(melhor_modelo_item)
+                                modelo_final.fit(serie_item)  # Treinar com toda a série do item
+                                previsao_item_base = modelo_final.predict(periodos_previsao)
+
+                                # APLICAR AJUSTE SAZONAL nas previsões do item
+                                if fatores_sazonais and len(previsao_item_base) > 0:
+                                    previsao_item_periodos = []
+                                    for i in range(len(previsao_item_base)):
+                                        # Calcular chave sazonal baseada na granularidade
+                                        if granularidade == 'mensal':
+                                            mes_previsao = ((ultima_data_historico.month + i) % 12) + 1
+                                            chave_sazonal = mes_previsao
+                                        elif granularidade == 'semanal':
+                                            from datetime import timedelta
+                                            data_prev = ultima_data_historico + timedelta(weeks=i)
+                                            chave_sazonal = data_prev.isocalendar()[1]
+                                        elif granularidade == 'diario':
+                                            from datetime import timedelta
+                                            data_prev = ultima_data_historico + timedelta(days=i+1)
+                                            chave_sazonal = data_prev.weekday()
+                                        else:
+                                            chave_sazonal = None
+
+                                        # Aplicar fator sazonal
+                                        fator = fatores_sazonais.get(chave_sazonal, 1.0)
+                                        valor_ajustado = previsao_item_base[i] * fator
+                                        previsao_item_periodos.append(valor_ajustado)
+                                else:
+                                    previsao_item_periodos = previsao_item_base
+                            except:
+                                previsao_item_periodos = []
+
+                    # Se não conseguiu gerar previsão individual, usar proporção do agregado
+                    # (que já tem sazonalidade aplicada)
+                    if not previsao_item_periodos or len(previsao_item_periodos) == 0:
+                        total_historico = sum(serie_temporal_original) if serie_temporal_original else 1
+                        proporcao_item = total_item_hist / total_historico if total_historico > 0 else 0
+                        previsoes_modelo = resultados_modelos.get(melhor_modelo, {}).get('previsao_futuro', [])
+                        previsao_item_periodos = [p * proporcao_item for p in previsoes_modelo]
+                        melhor_modelo_item = melhor_modelo + " (proporcional)"
+
+                    # Montar previsão por período
+                    previsao_por_periodo = []
+                    total_previsao_item = 0
+                    for i, data_prev in enumerate(datas_previsao):
+                        if i < len(previsao_item_periodos):
+                            prev_periodo = round(previsao_item_periodos[i], 1)
+                            previsao_por_periodo.append({
+                                'periodo': data_prev,
+                                'previsao': prev_periodo
+                            })
+                            total_previsao_item += prev_periodo
+
+                    # Buscar demanda REAL do ano anterior para este item
+                    # Filtrar vendas do item que estão dentro do período do ano anterior
+                    demanda_ano_anterior_item = 0
+
+                    if ano_anterior_datas and len(ano_anterior_datas) > 0:
+                        # Determinar período do ano anterior (datas já estão no formato 'YYYY-MM-DD')
+                        data_inicio_aa = ano_anterior_datas[0]   # Primeira data do ano anterior
+                        data_fim_aa = ano_anterior_datas[-1]     # Última data do ano anterior
+
+                        # Filtrar vendas do item que caem dentro desse período
+                        for venda in vendas_hist_sorted:
+                            data_venda = venda['periodo']
+                            if data_venda and data_inicio_aa <= data_venda <= data_fim_aa:
+                                demanda_ano_anterior_item += venda['qtd_venda']
+
+                    demanda_ano_anterior_item = round(demanda_ano_anterior_item, 1)
+
+                    # Calcular variação
+                    if demanda_ano_anterior_item > 0:
+                        variacao_pct = round(((total_previsao_item - demanda_ano_anterior_item) / demanda_ano_anterior_item) * 100, 1)
+                    else:
+                        variacao_pct = None
+
+                    # Determinar sinal de alerta baseado na variação
+                    if variacao_pct is None:
+                        sinal_alerta = 'cinza'
+                        sinal_emoji = '⚪'
+                    elif abs(variacao_pct) > 50:
+                        sinal_alerta = 'vermelho' if variacao_pct < -50 else 'amarelo'
+                        sinal_emoji = '🔴' if variacao_pct < -50 else '🟡'
+                    elif abs(variacao_pct) > 20:
+                        sinal_alerta = 'azul'
+                        sinal_emoji = '🔵'
+                    else:
+                        sinal_alerta = 'verde'
+                        sinal_emoji = '🟢'
+
+                    relatorio_itens.append({
+                        'cod_produto': cod_produto,
+                        'descricao': item['descricao'],
+                        'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
+                        'cnpj_fornecedor': item['cnpj_fornecedor'],
+                        'categoria': item['categoria'],
+                        'linha': item['descricao_linha'],
+                        'demanda_prevista_total': round(total_previsao_item, 1),
+                        'demanda_ano_anterior': demanda_ano_anterior_item,
+                        'variacao_percentual': variacao_pct,
+                        'sinal_alerta': sinal_alerta,
+                        'sinal_emoji': sinal_emoji,
+                        'metodo_estatistico': melhor_modelo_item,
+                        'previsao_por_periodo': previsao_por_periodo,
+                        'historico_total': round(total_item_hist, 1)
+                    })
+
+                    # Log de progresso a cada 50 itens
+                    if (idx + 1) % 50 == 0:
+                        print(f"    Processados {idx + 1}/{len(lista_itens)} itens...", flush=True)
+
+                # Formatar períodos para o frontend
+                periodos_formatados = []
+                for data_str in datas_previsao:
+                    if data_str:
+                        try:
+                            from datetime import datetime as dt_parse
+                            data_obj = dt_parse.strptime(data_str, '%Y-%m-%d')
+                            if granularidade == 'mensal':
+                                periodos_formatados.append({
+                                    'mes': data_obj.month,
+                                    'ano': data_obj.year
+                                })
+                            elif granularidade == 'semanal':
+                                # Calcular número da semana ISO
+                                semana_iso = data_obj.isocalendar()[1]
+                                ano_iso = data_obj.isocalendar()[0]
+                                periodos_formatados.append({
+                                    'semana': semana_iso,
+                                    'ano': ano_iso
+                                })
+                            else:  # diario
+                                periodos_formatados.append(data_str)
+                        except:
+                            periodos_formatados.append(data_str)
+
+                # Adicionar à resposta
+                resposta['relatorio_detalhado'] = {
+                    'itens': relatorio_itens,
+                    'periodos_previsao': periodos_formatados,
+                    'total_itens': len(relatorio_itens),
+                    'granularidade': granularidade
+                }
+
+                print(f"  Relatório gerado com {len(relatorio_itens)} itens", flush=True)
+            else:
+                resposta['relatorio_detalhado'] = {
+                    'itens': [],
+                    'periodos_previsao': [],
+                    'total_itens': 0,
+                    'granularidade': granularidade
+                }
+                print(f"  Nenhum item encontrado para o relatório", flush=True)
+
+            # Fechar conexão do relatório
+            cursor_rel.close()
+            conn_rel.close()
+
+        except Exception as e_relatorio:
+            print(f"  Erro ao gerar relatório detalhado: {e_relatorio}", flush=True)
+            resposta['relatorio_detalhado'] = {
+                'itens': [],
+                'periodos_previsao': [],
+                'total_itens': 0,
+                'erro': str(e_relatorio)
+            }
+            # Tentar fechar conexão em caso de erro
+            try:
+                cursor_rel.close()
+                conn_rel.close()
+            except:
+                pass
+
         print(f"\nPrevisão gerada com sucesso! Melhor modelo: {melhor_modelo}")
 
         return jsonify(resposta)
@@ -3533,6 +4042,1123 @@ def api_gerar_previsao_banco():
             print(f"Erro ao gerar previsao: {e}", flush=True)
         except:
             pass
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==============================================================================
+# API V2 - BOTTOM-UP FORECASTING (Calcula itens primeiro, depois agrega)
+# ==============================================================================
+
+@app.route('/api/gerar_previsao_banco_v2', methods=['POST'])
+def api_gerar_previsao_banco_v2():
+    """
+    VERSÃO 2 - BOTTOM-UP FORECASTING
+    Calcula previsão para cada item individualmente, depois agrega para o total.
+    Isso garante que: Soma dos itens = Total do gráfico/tabela
+    """
+    try:
+        dados = request.get_json()
+
+        # Extrair parâmetros
+        loja = dados.get('loja', 'TODAS')
+        categoria = dados.get('categoria', 'TODAS')
+        produto = dados.get('produto', 'TODOS')
+        granularidade = dados.get('granularidade', 'mensal')
+
+        # Parâmetros adicionais de filtro
+        fornecedor = dados.get('fornecedor', 'TODOS')
+        linha = dados.get('linha', 'TODAS')
+        sublinha = dados.get('sublinha', 'TODAS')
+
+        # Parâmetros de período
+        mes_inicio = dados.get('mes_inicio')
+        ano_inicio = dados.get('ano_inicio')
+        mes_fim = dados.get('mes_fim')
+        ano_fim = dados.get('ano_fim')
+        semana_inicio = dados.get('semana_inicio')
+        semana_fim = dados.get('semana_fim')
+        ano_semana_inicio = dados.get('ano_semana_inicio')
+        ano_semana_fim = dados.get('ano_semana_fim')
+        data_inicio = dados.get('data_inicio')
+        data_fim = dados.get('data_fim')
+
+        # Calcular número de períodos de previsão baseado no período selecionado
+        meses_previsao = 6  # Default
+        if granularidade == 'mensal' and mes_inicio and ano_inicio and mes_fim and ano_fim:
+            # Calcular meses entre as datas
+            meses_previsao = (int(ano_fim) - int(ano_inicio)) * 12 + (int(mes_fim) - int(mes_inicio)) + 1
+        elif granularidade == 'semanal' and semana_inicio and ano_semana_inicio and semana_fim and ano_semana_fim:
+            # Calcular semanas entre as datas
+            semanas = (int(ano_semana_fim) - int(ano_semana_inicio)) * 52 + (int(semana_fim) - int(semana_inicio)) + 1
+            meses_previsao = semanas  # Será convertido depois
+        elif granularidade == 'diario' and data_inicio and data_fim:
+            # Calcular dias entre as datas
+            from datetime import datetime
+            d1 = datetime.strptime(data_inicio, '%Y-%m-%d')
+            d2 = datetime.strptime(data_fim, '%Y-%m-%d')
+            dias = (d2 - d1).days + 1
+            meses_previsao = dias  # Será usado diretamente
+
+        print(f"\n{'='*60}", flush=True)
+        print(f"=== PREVISÃO V2 - BOTTOM-UP FORECASTING ===", flush=True)
+        print(f"{'='*60}", flush=True)
+        print(f"Loja: {loja}", flush=True)
+        print(f"Fornecedor: {fornecedor}", flush=True)
+        print(f"Linha: {linha}", flush=True)
+        print(f"Granularidade: {granularidade}", flush=True)
+        print(f"Períodos de previsão calculados: {meses_previsao}", flush=True)
+
+        # Para granularidade mensal, meses_previsao já é o número correto de períodos
+        # Para semanal e diário, já foi calculado corretamente acima
+        periodos_previsao = meses_previsao
+
+        # Conectar ao banco
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Construir filtros SQL
+        where_conditions = []
+        params = []
+
+        if loja and loja != 'TODAS':
+            where_conditions.append("h.cod_empresa = %s")
+            params.append(int(loja))
+
+        if fornecedor and fornecedor != 'TODOS':
+            where_conditions.append("p.nome_fornecedor = %s")
+            params.append(fornecedor)
+
+        if linha and linha != 'TODAS':
+            where_conditions.append("p.categoria = %s")
+            params.append(linha)
+
+        if sublinha and sublinha != 'TODAS':
+            where_conditions.append("p.codigo_linha = %s")
+            params.append(sublinha)
+
+        if produto and produto != 'TODOS':
+            where_conditions.append("h.codigo = %s")
+            params.append(int(produto))
+
+        where_sql = ""
+        if where_conditions:
+            where_sql = "AND " + " AND ".join(where_conditions)
+
+        # =====================================================
+        # PASSO 1: BUSCAR LISTA DE ITENS
+        # =====================================================
+        print(f"\n[PASSO 1] Buscando lista de itens...", flush=True)
+
+        query_itens = f"""
+            SELECT DISTINCT
+                h.codigo as cod_produto,
+                p.descricao,
+                p.nome_fornecedor,
+                p.cnpj_fornecedor,
+                p.categoria,
+                p.descricao_linha
+            FROM historico_vendas_diario h
+            JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+            WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+            {where_sql}
+            ORDER BY p.nome_fornecedor, p.descricao
+        """
+        cursor.execute(query_itens, params)
+        lista_itens = cursor.fetchall()
+
+        if not lista_itens or len(lista_itens) == 0:
+            cursor.close()
+            conn.close()
+            return jsonify({'erro': 'Nenhum item encontrado com os filtros selecionados'}), 400
+
+        print(f"  Encontrados {len(lista_itens)} itens", flush=True)
+
+        # =====================================================
+        # PASSO 2: BUSCAR VENDAS HISTÓRICAS POR ITEM
+        # =====================================================
+        print(f"\n[PASSO 2] Buscando vendas históricas por item...", flush=True)
+
+        if granularidade == 'mensal':
+            query_vendas = f"""
+                SELECT
+                    h.codigo as cod_produto,
+                    DATE_TRUNC('month', h.data) as periodo,
+                    SUM(h.qtd_venda) as qtd_venda
+                FROM historico_vendas_diario h
+                JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+                {where_sql}
+                GROUP BY h.codigo, DATE_TRUNC('month', h.data)
+                ORDER BY h.codigo, DATE_TRUNC('month', h.data)
+            """
+        elif granularidade == 'semanal':
+            query_vendas = f"""
+                SELECT
+                    h.codigo as cod_produto,
+                    DATE_TRUNC('week', h.data) as periodo,
+                    SUM(h.qtd_venda) as qtd_venda
+                FROM historico_vendas_diario h
+                JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+                {where_sql}
+                GROUP BY h.codigo, DATE_TRUNC('week', h.data)
+                ORDER BY h.codigo, DATE_TRUNC('week', h.data)
+            """
+        else:  # diario
+            query_vendas = f"""
+                SELECT
+                    h.codigo as cod_produto,
+                    h.data as periodo,
+                    SUM(h.qtd_venda) as qtd_venda
+                FROM historico_vendas_diario h
+                JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+                {where_sql}
+                GROUP BY h.codigo, h.data
+                ORDER BY h.codigo, h.data
+            """
+
+        cursor.execute(query_vendas, params)
+        vendas_por_item = cursor.fetchall()
+
+        # Organizar vendas por item
+        vendas_item_dict = {}
+        todas_datas = set()
+        for venda in vendas_por_item:
+            cod = venda['cod_produto']
+            if cod not in vendas_item_dict:
+                vendas_item_dict[cod] = []
+            data_str = venda['periodo'].strftime('%Y-%m-%d') if venda['periodo'] else None
+            if data_str:
+                todas_datas.add(data_str)
+            vendas_item_dict[cod].append({
+                'periodo': data_str,
+                'qtd_venda': float(venda['qtd_venda']) if venda['qtd_venda'] else 0
+            })
+
+        # Ordenar datas
+        datas_ordenadas = sorted(list(todas_datas))
+        print(f"  Período histórico: {datas_ordenadas[0] if datas_ordenadas else 'N/A'} até {datas_ordenadas[-1] if datas_ordenadas else 'N/A'}", flush=True)
+
+        # =====================================================
+        # PASSO 3: CALCULAR FATORES SAZONAIS (do agregado)
+        # =====================================================
+        print(f"\n[PASSO 3] Calculando fatores sazonais...", flush=True)
+
+        # Agregar vendas para calcular sazonalidade
+        vendas_agregadas = {}
+        for cod, vendas in vendas_item_dict.items():
+            for v in vendas:
+                periodo = v['periodo']
+                if periodo:
+                    if periodo not in vendas_agregadas:
+                        vendas_agregadas[periodo] = 0
+                    vendas_agregadas[periodo] += v['qtd_venda']
+
+        # Criar série temporal agregada ordenada
+        serie_agregada = [vendas_agregadas.get(d, 0) for d in datas_ordenadas]
+
+        # Calcular fatores sazonais
+        fatores_sazonais = {}
+        if len(serie_agregada) >= 12:
+            if granularidade == 'mensal':
+                # Calcular média por mês
+                vendas_por_mes = {}
+                for i, data_str in enumerate(datas_ordenadas):
+                    mes = int(data_str[5:7])
+                    if mes not in vendas_por_mes:
+                        vendas_por_mes[mes] = []
+                    vendas_por_mes[mes].append(serie_agregada[i])
+
+                media_geral = sum(serie_agregada) / len(serie_agregada) if serie_agregada else 1
+
+                for mes in range(1, 13):
+                    if mes in vendas_por_mes and len(vendas_por_mes[mes]) > 0:
+                        media_mes = sum(vendas_por_mes[mes]) / len(vendas_por_mes[mes])
+                        fatores_sazonais[mes] = media_mes / media_geral if media_geral > 0 else 1.0
+                    else:
+                        fatores_sazonais[mes] = 1.0
+
+                print(f"  Fatores sazonais mensais calculados: {len(fatores_sazonais)} meses", flush=True)
+
+            elif granularidade == 'semanal':
+                # Calcular média por semana do ano
+                vendas_por_semana = {}
+                for i, data_str in enumerate(datas_ordenadas):
+                    from datetime import datetime as dt
+                    data_obj = dt.strptime(data_str, '%Y-%m-%d')
+                    semana = data_obj.isocalendar()[1]
+                    if semana not in vendas_por_semana:
+                        vendas_por_semana[semana] = []
+                    vendas_por_semana[semana].append(serie_agregada[i])
+
+                media_geral = sum(serie_agregada) / len(serie_agregada) if serie_agregada else 1
+
+                for semana in range(1, 53):
+                    if semana in vendas_por_semana and len(vendas_por_semana[semana]) > 0:
+                        media_semana = sum(vendas_por_semana[semana]) / len(vendas_por_semana[semana])
+                        fatores_sazonais[semana] = media_semana / media_geral if media_geral > 0 else 1.0
+                    else:
+                        fatores_sazonais[semana] = 1.0
+
+                print(f"  Fatores sazonais semanais calculados: {len(fatores_sazonais)} semanas", flush=True)
+
+            else:  # diario
+                # Calcular média por dia da semana
+                vendas_por_dia = {}
+                for i, data_str in enumerate(datas_ordenadas):
+                    from datetime import datetime as dt
+                    data_obj = dt.strptime(data_str, '%Y-%m-%d')
+                    dia_semana = data_obj.weekday()
+                    if dia_semana not in vendas_por_dia:
+                        vendas_por_dia[dia_semana] = []
+                    vendas_por_dia[dia_semana].append(serie_agregada[i])
+
+                media_geral = sum(serie_agregada) / len(serie_agregada) if serie_agregada else 1
+
+                for dia in range(7):
+                    if dia in vendas_por_dia and len(vendas_por_dia[dia]) > 0:
+                        media_dia = sum(vendas_por_dia[dia]) / len(vendas_por_dia[dia])
+                        fatores_sazonais[dia] = media_dia / media_geral if media_geral > 0 else 1.0
+                    else:
+                        fatores_sazonais[dia] = 1.0
+
+                print(f"  Fatores sazonais diários calculados: {len(fatores_sazonais)} dias", flush=True)
+
+        # Determinar última data do histórico
+        from datetime import datetime as dt
+        ultima_data_historico = dt.strptime(datas_ordenadas[-1], '%Y-%m-%d') if datas_ordenadas else dt.now()
+
+        # =====================================================
+        # PASSO 4: CALCULAR PREVISÃO PARA CADA ITEM (BOTTOM-UP)
+        # =====================================================
+        print(f"\n[PASSO 4] Calculando previsão para cada item (Bottom-Up)...", flush=True)
+
+        modelos_disponiveis = [
+            'Média Móvel Simples',
+            'Média Móvel Ponderada',
+            'Suavização Exponencial Simples',
+            'Holt',
+            'Holt-Winters',
+            'Regressão Linear'
+        ]
+
+        # Gerar datas de previsão BASEADO NO PERÍODO SELECIONADO PELO USUÁRIO
+        datas_previsao = []
+        from datetime import timedelta
+        import pandas as pd
+
+        if granularidade == 'mensal' and mes_inicio and ano_inicio:
+            # Usar as datas que o usuário selecionou
+            for i in range(periodos_previsao):
+                mes_atual = int(mes_inicio) + i
+                ano_atual = int(ano_inicio)
+                # Ajustar se passar de dezembro
+                while mes_atual > 12:
+                    mes_atual -= 12
+                    ano_atual += 1
+                data_prev = f"{ano_atual:04d}-{mes_atual:02d}-01"
+                datas_previsao.append(data_prev)
+        elif granularidade == 'semanal' and semana_inicio and ano_semana_inicio:
+            # Calcular data inicial da semana
+            from datetime import datetime
+            ano_base = int(ano_semana_inicio)
+            semana_base = int(semana_inicio)
+            # Primeiro dia do ano + semanas
+            data_base = datetime(ano_base, 1, 1)
+            # Ajustar para primeira segunda-feira
+            dias_ate_segunda = (7 - data_base.weekday()) % 7
+            data_base = data_base + timedelta(days=dias_ate_segunda)
+            data_base = data_base + timedelta(weeks=semana_base - 1)
+            for i in range(periodos_previsao):
+                data_prev = data_base + timedelta(weeks=i)
+                datas_previsao.append(data_prev.strftime('%Y-%m-%d'))
+        elif granularidade == 'diario' and data_inicio:
+            from datetime import datetime
+            data_base = datetime.strptime(data_inicio, '%Y-%m-%d')
+            for i in range(periodos_previsao):
+                data_prev = data_base + timedelta(days=i)
+                datas_previsao.append(data_prev.strftime('%Y-%m-%d'))
+        else:
+            # Fallback: usar última data histórica
+            for i in range(periodos_previsao):
+                if granularidade == 'mensal':
+                    data_prev = ultima_data_historico + pd.DateOffset(months=i+1)
+                    data_prev = data_prev.replace(day=1)
+                elif granularidade == 'semanal':
+                    data_prev = ultima_data_historico + timedelta(weeks=i+1)
+                else:  # diario
+                    data_prev = ultima_data_historico + timedelta(days=i+1)
+                datas_previsao.append(data_prev.strftime('%Y-%m-%d'))
+
+        print(f"  Datas de previsão geradas: {datas_previsao[:3]}...{datas_previsao[-1] if len(datas_previsao) > 3 else ''}", flush=True)
+
+        # Estruturas para armazenar resultados
+        relatorio_itens = []
+        previsoes_agregadas_por_periodo = {d: 0 for d in datas_previsao}
+        contagem_modelos = {}
+
+        # Buscar período do ano anterior para comparação
+        if datas_previsao:
+            from datetime import datetime as dt
+            data_inicio_prev = dt.strptime(datas_previsao[0], '%Y-%m-%d')
+            data_fim_prev = dt.strptime(datas_previsao[-1], '%Y-%m-%d')
+            data_inicio_aa = (data_inicio_prev - pd.DateOffset(years=1)).strftime('%Y-%m-%d')
+            data_fim_aa = (data_fim_prev - pd.DateOffset(years=1)).strftime('%Y-%m-%d')
+        else:
+            data_inicio_aa = None
+            data_fim_aa = None
+
+        for idx, item in enumerate(lista_itens):
+            cod_produto = item['cod_produto']
+            vendas_hist = vendas_item_dict.get(cod_produto, [])
+
+            # Ordenar vendas por período
+            vendas_hist_sorted = sorted(vendas_hist, key=lambda x: x['periodo'] if x['periodo'] else '')
+            serie_item = [v['qtd_venda'] for v in vendas_hist_sorted]
+            total_item_hist = sum(serie_item)
+
+            # =====================================================
+            # DETECTAR SAZONALIDADE INDIVIDUAL DO ITEM
+            # =====================================================
+            tem_sazonalidade_item = False
+            fatores_sazonais_item = {}
+            forca_sazonalidade = 0
+            tendencia_por_mes_item = {}  # NOVO: tendência de crescimento por mês
+            tendencia_anomala = False  # NOVO: flag para queda extrema (< -40%)
+            tendencia_limitada = False  # NOVO: flag para alta extrema (> +50%)
+
+            if granularidade == 'mensal' and len(serie_item) >= 12:
+                # Calcular média por mês para ESTE item
+                vendas_por_mes_item = {}
+                # NOVO: Armazenar vendas por ano/mês para calcular tendência
+                vendas_por_ano_mes_item = {}
+
+                for i, v in enumerate(vendas_hist_sorted):
+                    if v['periodo']:
+                        ano = int(v['periodo'][:4])
+                        mes = int(v['periodo'][5:7])
+                        if mes not in vendas_por_mes_item:
+                            vendas_por_mes_item[mes] = []
+                        vendas_por_mes_item[mes].append(v['qtd_venda'])
+
+                        # Armazenar por ano/mês
+                        if mes not in vendas_por_ano_mes_item:
+                            vendas_por_ano_mes_item[mes] = {}
+                        if ano not in vendas_por_ano_mes_item[mes]:
+                            vendas_por_ano_mes_item[mes][ano] = 0
+                        vendas_por_ano_mes_item[mes][ano] += v['qtd_venda']
+
+                # Calcular média geral do item
+                media_geral_item = sum(serie_item) / len(serie_item) if serie_item else 1
+
+                # Calcular fatores sazonais individuais
+                for mes in range(1, 13):
+                    if mes in vendas_por_mes_item and len(vendas_por_mes_item[mes]) > 0:
+                        media_mes = sum(vendas_por_mes_item[mes]) / len(vendas_por_mes_item[mes])
+                        fatores_sazonais_item[mes] = media_mes / media_geral_item if media_geral_item > 0 else 1.0
+                    else:
+                        fatores_sazonais_item[mes] = 1.0
+
+                # =====================================================
+                # NOVO: CALCULAR TENDÊNCIA DE CRESCIMENTO POR MÊS
+                # =====================================================
+                tendencia_por_mes_item = {}
+
+                # Flag para detectar se houve queda extrema (possível anomalia)
+                tendencia_anomala = False
+                tendencias_brutas = []
+
+                for mes in range(1, 13):
+                    if mes in vendas_por_ano_mes_item:
+                        anos_ordenados = sorted(vendas_por_ano_mes_item[mes].keys())
+                        valores_por_ano = [vendas_por_ano_mes_item[mes][ano] for ano in anos_ordenados]
+
+                        if len(anos_ordenados) >= 3:
+                            # Com 3+ anos: usar regressão linear para projetar tendência
+                            n = len(anos_ordenados)
+                            x_mean = sum(range(n)) / n
+                            y_mean = sum(valores_por_ano) / n
+
+                            numerador = sum((i - x_mean) * (valores_por_ano[i] - y_mean) for i in range(n))
+                            denominador = sum((i - x_mean) ** 2 for i in range(n))
+
+                            if denominador > 0 and y_mean > 0:
+                                slope = numerador / denominador
+                                # Tendência = crescimento relativo por ano
+                                tendencia_bruta = slope / y_mean
+                                tendencias_brutas.append(tendencia_bruta)
+                                tendencia_por_mes_item[mes] = tendencia_bruta
+                            else:
+                                tendencia_por_mes_item[mes] = 0
+
+                        elif len(anos_ordenados) == 2:
+                            # Com 2 anos: usar crescimento simples YoY
+                            v_antigo = valores_por_ano[0]
+                            v_recente = valores_por_ano[1]
+
+                            if v_antigo > 0:
+                                tendencia_bruta = (v_recente - v_antigo) / v_antigo
+                                tendencias_brutas.append(tendencia_bruta)
+                                tendencia_por_mes_item[mes] = tendencia_bruta
+                            else:
+                                tendencia_por_mes_item[mes] = 0
+                        else:
+                            tendencia_por_mes_item[mes] = 0
+                    else:
+                        tendencia_por_mes_item[mes] = 0
+
+                # =====================================================
+                # DETECTAR ANOMALIA E LIMITAR TENDÊNCIAS EXTREMAS
+                # - Queda extrema (< -40%): Ignora tendência (possível anomalia)
+                # - Alta extrema (> +50%): Limita a +50% (evita projeções irrealistas)
+                # =====================================================
+                if tendencias_brutas:
+                    media_tendencia = sum(tendencias_brutas) / len(tendencias_brutas)
+
+                    # Se a média das tendências é muito negativa (< -40%), considerar anomalia
+                    if media_tendencia < -0.40:
+                        tendencia_anomala = True
+                        # Zerar tendências para usar apenas sazonalidade
+                        for mes in tendencia_por_mes_item:
+                            tendencia_por_mes_item[mes] = 0
+
+                    # Se a média das tendências é muito positiva (> +50%), limitar
+                    elif media_tendencia > 0.50:
+                        tendencia_limitada = True
+                        # Limitar cada tendência individual a +50%
+                        for mes in tendencia_por_mes_item:
+                            if tendencia_por_mes_item[mes] > 0.50:
+                                tendencia_por_mes_item[mes] = 0.50
+
+                # Detectar força da sazonalidade (coeficiente de variação dos fatores)
+                if fatores_sazonais_item:
+                    valores_fatores = list(fatores_sazonais_item.values())
+                    media_fatores = sum(valores_fatores) / len(valores_fatores)
+                    variancia = sum((f - media_fatores) ** 2 for f in valores_fatores) / len(valores_fatores)
+                    desvio = variancia ** 0.5
+                    forca_sazonalidade = desvio / media_fatores if media_fatores > 0 else 0
+
+                    # Sazonalidade forte se CV dos fatores > 0.3 (30% de variação)
+                    tem_sazonalidade_item = forca_sazonalidade > 0.3
+
+            elif granularidade == 'semanal' and len(serie_item) >= 52:
+                # Calcular média por semana do ano
+                vendas_por_semana_item = {}
+                # NOVO: Armazenar vendas por ano/semana para calcular tendência
+                vendas_por_ano_semana_item = {}
+
+                for v in vendas_hist_sorted:
+                    if v['periodo']:
+                        data_obj = dt.strptime(v['periodo'], '%Y-%m-%d')
+                        ano = data_obj.year
+                        semana = data_obj.isocalendar()[1]
+                        if semana not in vendas_por_semana_item:
+                            vendas_por_semana_item[semana] = []
+                        vendas_por_semana_item[semana].append(v['qtd_venda'])
+
+                        # Armazenar por ano/semana
+                        if semana not in vendas_por_ano_semana_item:
+                            vendas_por_ano_semana_item[semana] = {}
+                        if ano not in vendas_por_ano_semana_item[semana]:
+                            vendas_por_ano_semana_item[semana][ano] = 0
+                        vendas_por_ano_semana_item[semana][ano] += v['qtd_venda']
+
+                media_geral_item = sum(serie_item) / len(serie_item) if serie_item else 1
+
+                for semana in range(1, 53):
+                    if semana in vendas_por_semana_item and len(vendas_por_semana_item[semana]) > 0:
+                        media_semana = sum(vendas_por_semana_item[semana]) / len(vendas_por_semana_item[semana])
+                        fatores_sazonais_item[semana] = media_semana / media_geral_item if media_geral_item > 0 else 1.0
+                    else:
+                        fatores_sazonais_item[semana] = 1.0
+
+                # NOVO: Calcular tendência por semana
+                tendencias_brutas_semana = []
+                for semana in range(1, 53):
+                    if semana in vendas_por_ano_semana_item:
+                        anos_ordenados = sorted(vendas_por_ano_semana_item[semana].keys())
+                        valores_por_ano = [vendas_por_ano_semana_item[semana][ano] for ano in anos_ordenados]
+
+                        if len(anos_ordenados) >= 2:
+                            v_antigo = valores_por_ano[0]
+                            v_recente = valores_por_ano[-1]
+                            if v_antigo > 0:
+                                tendencia_bruta = (v_recente - v_antigo) / v_antigo
+                                tendencias_brutas_semana.append(tendencia_bruta)
+                                tendencia_por_mes_item[semana] = tendencia_bruta
+                            else:
+                                tendencia_por_mes_item[semana] = 0
+                        else:
+                            tendencia_por_mes_item[semana] = 0
+                    else:
+                        tendencia_por_mes_item[semana] = 0
+
+                # Aplicar limitadores de tendência para semanal
+                if tendencias_brutas_semana:
+                    media_tendencia = sum(tendencias_brutas_semana) / len(tendencias_brutas_semana)
+                    if media_tendencia < -0.40:
+                        tendencia_anomala = True
+                        for semana in tendencia_por_mes_item:
+                            tendencia_por_mes_item[semana] = 0
+                    elif media_tendencia > 0.50:
+                        tendencia_limitada = True
+                        for semana in tendencia_por_mes_item:
+                            if tendencia_por_mes_item[semana] > 0.50:
+                                tendencia_por_mes_item[semana] = 0.50
+
+                if fatores_sazonais_item:
+                    valores_fatores = list(fatores_sazonais_item.values())
+                    media_fatores = sum(valores_fatores) / len(valores_fatores)
+                    variancia = sum((f - media_fatores) ** 2 for f in valores_fatores) / len(valores_fatores)
+                    desvio = variancia ** 0.5
+                    forca_sazonalidade = desvio / media_fatores if media_fatores > 0 else 0
+                    tem_sazonalidade_item = forca_sazonalidade > 0.3
+
+            elif granularidade == 'diario' and len(serie_item) >= 14:
+                # Calcular média por dia da semana (0=segunda, 6=domingo)
+                vendas_por_dia_item = {}
+                # Armazenar vendas por semana/dia para calcular tendência
+                vendas_por_semana_dia_item = {}
+
+                for v in vendas_hist_sorted:
+                    if v['periodo']:
+                        data_obj = dt.strptime(v['periodo'], '%Y-%m-%d')
+                        dia_semana = data_obj.weekday()
+                        semana_ano = data_obj.isocalendar()[1]
+
+                        if dia_semana not in vendas_por_dia_item:
+                            vendas_por_dia_item[dia_semana] = []
+                        vendas_por_dia_item[dia_semana].append(v['qtd_venda'])
+
+                        # Armazenar por semana/dia para tendência
+                        if dia_semana not in vendas_por_semana_dia_item:
+                            vendas_por_semana_dia_item[dia_semana] = {}
+                        if semana_ano not in vendas_por_semana_dia_item[dia_semana]:
+                            vendas_por_semana_dia_item[dia_semana][semana_ano] = 0
+                        vendas_por_semana_dia_item[dia_semana][semana_ano] += v['qtd_venda']
+
+                media_geral_item = sum(serie_item) / len(serie_item) if serie_item else 1
+
+                # Calcular fatores sazonais por dia da semana
+                for dia in range(7):
+                    if dia in vendas_por_dia_item and len(vendas_por_dia_item[dia]) > 0:
+                        media_dia = sum(vendas_por_dia_item[dia]) / len(vendas_por_dia_item[dia])
+                        fatores_sazonais_item[dia] = media_dia / media_geral_item if media_geral_item > 0 else 1.0
+                    else:
+                        fatores_sazonais_item[dia] = 1.0
+
+                # Calcular tendência por dia da semana
+                tendencias_brutas_dia = []
+                for dia in range(7):
+                    if dia in vendas_por_semana_dia_item:
+                        semanas_ordenadas = sorted(vendas_por_semana_dia_item[dia].keys())
+                        if len(semanas_ordenadas) >= 4:  # Pelo menos 4 semanas de dados
+                            # Comparar primeira metade com segunda metade
+                            meio = len(semanas_ordenadas) // 2
+                            valores_primeira = [vendas_por_semana_dia_item[dia][s] for s in semanas_ordenadas[:meio]]
+                            valores_segunda = [vendas_por_semana_dia_item[dia][s] for s in semanas_ordenadas[meio:]]
+                            media_primeira = sum(valores_primeira) / len(valores_primeira) if valores_primeira else 0
+                            media_segunda = sum(valores_segunda) / len(valores_segunda) if valores_segunda else 0
+
+                            if media_primeira > 0:
+                                tendencia_bruta = (media_segunda - media_primeira) / media_primeira
+                                tendencias_brutas_dia.append(tendencia_bruta)
+                                tendencia_por_mes_item[dia] = tendencia_bruta
+                            else:
+                                tendencia_por_mes_item[dia] = 0
+                        else:
+                            tendencia_por_mes_item[dia] = 0
+                    else:
+                        tendencia_por_mes_item[dia] = 0
+
+                # Aplicar limitadores de tendência para diário
+                if tendencias_brutas_dia:
+                    media_tendencia = sum(tendencias_brutas_dia) / len(tendencias_brutas_dia)
+                    if media_tendencia < -0.40:
+                        tendencia_anomala = True
+                        for dia in tendencia_por_mes_item:
+                            tendencia_por_mes_item[dia] = 0
+                    elif media_tendencia > 0.50:
+                        tendencia_limitada = True
+                        for dia in tendencia_por_mes_item:
+                            if tendencia_por_mes_item[dia] > 0.50:
+                                tendencia_por_mes_item[dia] = 0.50
+
+                if fatores_sazonais_item:
+                    valores_fatores = list(fatores_sazonais_item.values())
+                    media_fatores = sum(valores_fatores) / len(valores_fatores)
+                    variancia = sum((f - media_fatores) ** 2 for f in valores_fatores) / len(valores_fatores)
+                    desvio = variancia ** 0.5
+                    forca_sazonalidade = desvio / media_fatores if media_fatores > 0 else 0
+                    tem_sazonalidade_item = forca_sazonalidade > 0.3
+
+            # =====================================================
+            # SELECIONAR ESTRATÉGIA DE PREVISÃO
+            # =====================================================
+            melhor_modelo_item = 'Média Móvel Simples'
+            previsao_item_periodos = []
+            usou_sazonalidade_individual = False
+
+            if len(serie_item) >= 6:
+                # ESTRATÉGIA 1: Sazonalidade forte → usar média histórica por período COM TENDÊNCIA
+                if tem_sazonalidade_item and fatores_sazonais_item:
+                    # Usar previsão baseada na média histórica do período (mais preciso para itens sazonais)
+                    media_geral_item = sum(serie_item) / len(serie_item) if serie_item else 0
+
+                    # Calcular ano de previsão para aplicar tendência
+                    ano_previsao = ultima_data_historico.year + 1  # Próximo ano
+
+                    previsao_item_periodos = []
+                    tendencias_aplicadas = []
+
+                    for i in range(periodos_previsao):
+                        # Usar a data de previsão já calculada (baseada no período selecionado pelo usuário)
+                        data_prev_str = datas_previsao[i] if i < len(datas_previsao) else None
+
+                        if granularidade == 'mensal':
+                            # Extrair mês da data de previsão real
+                            if data_prev_str:
+                                mes_prev = int(data_prev_str[5:7])  # Formato: YYYY-MM-DD
+                                ano_prev = int(data_prev_str[:4])
+                            else:
+                                mes_prev = ((ultima_data_historico.month + i) % 12) + 1
+                                ano_prev = ultima_data_historico.year + 1
+                            chave = mes_prev
+
+                            # Calcular quantos anos à frente estamos prevendo
+                            anos_a_frente = ano_prev - ultima_data_historico.year
+
+                            # Obter tendência do mês (se disponível)
+                            tendencia_mes = tendencia_por_mes_item.get(mes_prev, 0) if tendencia_por_mes_item else 0
+
+                            # Limitar tendência para evitar valores extremos (-50% a +100%)
+                            tendencia_mes = max(-0.5, min(1.0, tendencia_mes))
+
+                            # Aplicar tendência proporcional ao número de anos à frente
+                            fator_tendencia = 1 + (tendencia_mes * anos_a_frente)
+                            tendencias_aplicadas.append(tendencia_mes)
+
+                        elif granularidade == 'semanal':
+                            if data_prev_str:
+                                from datetime import datetime as dt_parse
+                                data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
+                                chave = data_prev_obj.isocalendar()[1]
+                                ano_prev = data_prev_obj.year
+                            else:
+                                data_prev_obj = ultima_data_historico + timedelta(weeks=i+1)
+                                chave = data_prev_obj.isocalendar()[1]
+                                ano_prev = data_prev_obj.year
+
+                            # Calcular anos à frente para semanal
+                            anos_a_frente = ano_prev - ultima_data_historico.year
+
+                            # Obter tendência da semana (se disponível)
+                            tendencia_semana = tendencia_por_mes_item.get(chave, 0) if tendencia_por_mes_item else 0
+                            tendencia_semana = max(-0.5, min(1.0, tendencia_semana))
+                            fator_tendencia = 1 + (tendencia_semana * max(1, anos_a_frente))
+                            tendencias_aplicadas.append(tendencia_semana)
+
+                        else:  # diario
+                            if data_prev_str:
+                                from datetime import datetime as dt_parse
+                                data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
+                                chave = data_prev_obj.weekday()
+                            else:
+                                data_prev_obj = ultima_data_historico + timedelta(days=i+1)
+                                chave = data_prev_obj.weekday()
+
+                            # Obter tendência do dia da semana (se disponível)
+                            tendencia_dia = tendencia_por_mes_item.get(chave, 0) if tendencia_por_mes_item else 0
+                            tendencia_dia = max(-0.5, min(1.0, tendencia_dia))
+                            fator_tendencia = 1 + tendencia_dia
+                            tendencias_aplicadas.append(tendencia_dia)
+
+                        # Usar fator sazonal individual para calcular previsão
+                        fator_sazonal = fatores_sazonais_item.get(chave, 1.0)
+                        previsao_periodo = media_geral_item * fator_sazonal * fator_tendencia
+                        previsao_item_periodos.append(previsao_periodo)
+
+                    # Montar descrição do modelo com info de tendência
+                    if tendencia_anomala:
+                        # Tendência foi ignorada por ser anomalia (queda < -40%)
+                        melhor_modelo_item = f"Sazonal (força={forca_sazonalidade:.2f}) [tend.ignorada: queda>40%]"
+                    elif tendencia_limitada and tendencias_aplicadas and any(t != 0 for t in tendencias_aplicadas):
+                        # Tendência foi limitada (alta > +50%)
+                        tendencia_media = sum(tendencias_aplicadas) / len(tendencias_aplicadas)
+                        melhor_modelo_item = f"Sazonal+Tendência (força={forca_sazonalidade:.2f}, tend={tendencia_media:+.1%}) [limitada:+50%]"
+                    elif tendencias_aplicadas and any(t != 0 for t in tendencias_aplicadas):
+                        tendencia_media = sum(tendencias_aplicadas) / len(tendencias_aplicadas)
+                        melhor_modelo_item = f"Sazonal+Tendência (força={forca_sazonalidade:.2f}, tend={tendencia_media:+.1%})"
+                    else:
+                        melhor_modelo_item = f"Sazonal Individual (força={forca_sazonalidade:.2f})"
+                    usou_sazonalidade_individual = True
+
+                # ESTRATÉGIA 2: Sem sazonalidade forte → testar modelos e aplicar fator sazonal individual
+                else:
+                    # Dividir série: 70% treino, 30% teste
+                    tamanho_treino = max(3, int(len(serie_item) * 0.7))
+                    tamanho_teste = len(serie_item) - tamanho_treino
+
+                    if tamanho_teste >= 2:
+                        serie_treino = serie_item[:tamanho_treino]
+                        serie_teste = serie_item[tamanho_treino:]
+
+                        melhor_wmape = float('inf')
+
+                        for nome_modelo in modelos_disponiveis:
+                            try:
+                                modelo = get_modelo(nome_modelo)
+                                modelo.fit(serie_treino)
+                                previsoes_teste = modelo.predict(tamanho_teste)
+
+                                if len(previsoes_teste) == len(serie_teste):
+                                    erros = []
+                                    for i in range(len(serie_teste)):
+                                        if serie_teste[i] > 0:
+                                            erro = abs(previsoes_teste[i] - serie_teste[i]) / serie_teste[i] * 100
+                                            erros.append(erro)
+
+                                    if erros:
+                                        wmape = sum(erros) / len(erros)
+                                        if wmape < melhor_wmape:
+                                            melhor_wmape = wmape
+                                            melhor_modelo_item = nome_modelo
+                            except:
+                                pass
+
+                    # Gerar previsão com o melhor modelo
+                    try:
+                        modelo_final = get_modelo(melhor_modelo_item)
+                        modelo_final.fit(serie_item)
+                        previsao_base = modelo_final.predict(periodos_previsao)
+
+                        # Aplicar sazonalidade INDIVIDUAL do item (se disponível) ou do agregado
+                        fatores_usar = fatores_sazonais_item if fatores_sazonais_item else fatores_sazonais
+                        if fatores_usar:
+                            previsao_item_periodos = []
+                            for i in range(len(previsao_base)):
+                                # Usar a data de previsão já calculada (baseada no período selecionado)
+                                data_prev_str = datas_previsao[i] if i < len(datas_previsao) else None
+
+                                if granularidade == 'mensal':
+                                    if data_prev_str:
+                                        mes_prev = int(data_prev_str[5:7])
+                                    else:
+                                        mes_prev = ((ultima_data_historico.month + i) % 12) + 1
+                                    chave = mes_prev
+                                elif granularidade == 'semanal':
+                                    if data_prev_str:
+                                        from datetime import datetime as dt_parse
+                                        data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
+                                        chave = data_prev_obj.isocalendar()[1]
+                                    else:
+                                        data_prev_obj = ultima_data_historico + timedelta(weeks=i+1)
+                                        chave = data_prev_obj.isocalendar()[1]
+                                else:
+                                    if data_prev_str:
+                                        from datetime import datetime as dt_parse
+                                        data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
+                                        chave = data_prev_obj.weekday()
+                                    else:
+                                        data_prev_obj = ultima_data_historico + timedelta(days=i+1)
+                                        chave = data_prev_obj.weekday()
+
+                                fator = fatores_usar.get(chave, 1.0)
+                                previsao_item_periodos.append(previsao_base[i] * fator)
+                        else:
+                            previsao_item_periodos = list(previsao_base)
+                    except:
+                        previsao_item_periodos = []
+
+            # Fallback: média simples se não conseguiu prever
+            if not previsao_item_periodos or len(previsao_item_periodos) < periodos_previsao:
+                if len(serie_item) > 0:
+                    media = sum(serie_item) / len(serie_item)
+                    previsao_item_periodos = [media] * periodos_previsao
+                    melhor_modelo_item = "Média Simples (fallback)"
+                else:
+                    previsao_item_periodos = [0] * periodos_previsao
+                    melhor_modelo_item = "Sem histórico"
+
+            # Contar modelos utilizados
+            if melhor_modelo_item not in contagem_modelos:
+                contagem_modelos[melhor_modelo_item] = 0
+            contagem_modelos[melhor_modelo_item] += 1
+
+            # Montar previsão por período e AGREGAR
+            previsao_por_periodo = []
+            total_previsao_item = 0
+
+            for i, data_prev in enumerate(datas_previsao):
+                if i < len(previsao_item_periodos):
+                    valor = round(previsao_item_periodos[i], 1)
+                    previsao_por_periodo.append({
+                        'periodo': data_prev,
+                        'previsao': valor
+                    })
+                    total_previsao_item += valor
+                    # AGREGAR para o total
+                    previsoes_agregadas_por_periodo[data_prev] += valor
+
+            # Buscar demanda real do ano anterior para este item
+            demanda_ano_anterior_item = 0
+            if data_inicio_aa and data_fim_aa:
+                for venda in vendas_hist_sorted:
+                    data_venda = venda['periodo']
+                    if data_venda and data_inicio_aa <= data_venda <= data_fim_aa:
+                        demanda_ano_anterior_item += venda['qtd_venda']
+            demanda_ano_anterior_item = round(demanda_ano_anterior_item, 1)
+
+            # Calcular variação
+            if demanda_ano_anterior_item > 0:
+                variacao_pct = round(((total_previsao_item - demanda_ano_anterior_item) / demanda_ano_anterior_item) * 100, 1)
+            else:
+                variacao_pct = None
+
+            # Determinar sinal de alerta
+            if variacao_pct is None:
+                sinal_alerta = 'cinza'
+                sinal_emoji = '⚪'
+            elif abs(variacao_pct) > 50:
+                sinal_alerta = 'vermelho' if variacao_pct < -50 else 'amarelo'
+                sinal_emoji = '🔴' if variacao_pct < -50 else '🟡'
+            elif abs(variacao_pct) > 20:
+                sinal_alerta = 'azul'
+                sinal_emoji = '🔵'
+            else:
+                sinal_alerta = 'verde'
+                sinal_emoji = '🟢'
+
+            relatorio_itens.append({
+                'cod_produto': cod_produto,
+                'descricao': item['descricao'],
+                'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
+                'cnpj_fornecedor': item['cnpj_fornecedor'],
+                'categoria': item['categoria'],
+                'linha': item['descricao_linha'],
+                'demanda_prevista_total': round(total_previsao_item, 1),
+                'demanda_ano_anterior': demanda_ano_anterior_item,
+                'variacao_percentual': variacao_pct,
+                'sinal_alerta': sinal_alerta,
+                'sinal_emoji': sinal_emoji,
+                'metodo_estatistico': melhor_modelo_item,
+                'previsao_por_periodo': previsao_por_periodo,
+                'historico_total': round(total_item_hist, 1)
+            })
+
+            # Log de progresso
+            if (idx + 1) % 50 == 0:
+                print(f"    Processados {idx + 1}/{len(lista_itens)} itens...", flush=True)
+
+        print(f"  Todos os {len(lista_itens)} itens processados!", flush=True)
+        print(f"  Modelos utilizados: {contagem_modelos}", flush=True)
+
+        # =====================================================
+        # PASSO 5: CONSTRUIR SÉRIE AGREGADA (soma dos itens)
+        # =====================================================
+        print(f"\n[PASSO 5] Construindo série agregada (Bottom-Up)...", flush=True)
+
+        # Série histórica agregada
+        serie_historica_agregada = serie_agregada
+        datas_historicas = datas_ordenadas
+
+        # Série de previsão agregada (soma dos itens)
+        previsao_agregada = [previsoes_agregadas_por_periodo[d] for d in datas_previsao]
+
+        total_previsao = sum(previsao_agregada)
+        total_historico = sum(serie_historica_agregada)
+
+        print(f"  Total histórico (2 anos): {total_historico:,.2f}", flush=True)
+        print(f"  Total previsão (soma dos itens): {total_previsao:,.2f}", flush=True)
+
+        # =====================================================
+        # PASSO 6: BUSCAR ANO ANTERIOR AGREGADO
+        # =====================================================
+        print(f"\n[PASSO 6] Buscando ano anterior agregado...", flush=True)
+
+        ano_anterior_valores = []
+        ano_anterior_datas = []
+
+        if granularidade == 'diario':
+            # Para diário: buscar o MESMO DIA DA SEMANA do ano anterior
+            # Criar índice de vendas por dia da semana e semana ISO
+            vendas_por_dia_semana = {}  # {(ano, semana_iso, dia_semana): valor}
+            for data_str in datas_ordenadas:
+                data_obj = dt.strptime(data_str, '%Y-%m-%d')
+                ano_iso, semana_iso, dia_iso = data_obj.isocalendar()
+                dia_semana = data_obj.weekday()
+                chave = (ano_iso, semana_iso, dia_semana)
+                vendas_por_dia_semana[chave] = vendas_agregadas.get(data_str, 0)
+
+            # DEBUG: Mostrar anos disponíveis nos dados históricos
+            anos_disponiveis = set()
+            for chave in vendas_por_dia_semana.keys():
+                anos_disponiveis.add(chave[0])
+            print(f"  DEBUG: Anos ISO disponíveis no histórico: {sorted(anos_disponiveis)}", flush=True)
+
+            # Para cada data de previsão, buscar o mesmo dia da semana na mesma semana ISO do ano anterior
+            dias_semana_nomes = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+            debug_count = 0
+            for data_prev_str in datas_previsao:
+                data_prev = dt.strptime(data_prev_str, '%Y-%m-%d')
+                ano_iso_prev, semana_iso_prev, _ = data_prev.isocalendar()
+                dia_semana_prev = data_prev.weekday()
+
+                # Buscar ano anterior: mesma semana ISO, mesmo dia da semana
+                ano_anterior_iso = ano_iso_prev - 1
+                chave_aa = (ano_anterior_iso, semana_iso_prev, dia_semana_prev)
+
+                if chave_aa in vendas_por_dia_semana:
+                    valor_aa = vendas_por_dia_semana[chave_aa]
+                    ano_anterior_valores.append(valor_aa)
+                    # Reconstruir a data do ano anterior
+                    data_aa = dt.strptime(f'{ano_anterior_iso}-W{semana_iso_prev:02d}-{dia_semana_prev + 1}', '%G-W%V-%u')
+                    ano_anterior_datas.append(data_aa.strftime('%Y-%m-%d'))
+                    if debug_count < 5:
+                        print(f"    DEBUG: Previsão {data_prev_str} ({dias_semana_nomes[dia_semana_prev]}) -> Ano anterior {data_aa.strftime('%Y-%m-%d')} ({dias_semana_nomes[dia_semana_prev]}) = {valor_aa:,.0f}", flush=True)
+                        debug_count += 1
+                else:
+                    # Se não encontrar, tentar semana anterior ou posterior
+                    encontrado = False
+                    for offset in [1, -1, 2, -2]:
+                        chave_alt = (ano_anterior_iso, semana_iso_prev + offset, dia_semana_prev)
+                        if chave_alt in vendas_por_dia_semana:
+                            valor_aa = vendas_por_dia_semana[chave_alt]
+                            ano_anterior_valores.append(valor_aa)
+                            data_aa = dt.strptime(f'{ano_anterior_iso}-W{(semana_iso_prev + offset):02d}-{dia_semana_prev + 1}', '%G-W%V-%u')
+                            ano_anterior_datas.append(data_aa.strftime('%Y-%m-%d'))
+                            if debug_count < 5:
+                                print(f"    DEBUG: Previsão {data_prev_str} ({dias_semana_nomes[dia_semana_prev]}) -> Ano anterior (offset {offset}) {data_aa.strftime('%Y-%m-%d')} = {valor_aa:,.0f}", flush=True)
+                                debug_count += 1
+                            encontrado = True
+                            break
+                    if not encontrado:
+                        ano_anterior_valores.append(0)
+                        ano_anterior_datas.append('')
+                        if debug_count < 5:
+                            print(f"    DEBUG: Previsão {data_prev_str} ({dias_semana_nomes[dia_semana_prev]}) -> NÃO ENCONTRADO (procurou ano {ano_anterior_iso})", flush=True)
+                            debug_count += 1
+
+            print(f"  Ano anterior (mesmo dia da semana): {len(ano_anterior_valores)} períodos", flush=True)
+            if ano_anterior_valores:
+                print(f"  DEBUG: Primeiros 5 valores do ano anterior: {ano_anterior_valores[:5]}", flush=True)
+                print(f"  DEBUG: Primeiras 5 datas do ano anterior: {ano_anterior_datas[:5]}", flush=True)
+
+        elif data_inicio_aa and data_fim_aa:
+            # Para mensal e semanal: buscar pelo período de datas
+            for data_str in datas_ordenadas:
+                if data_inicio_aa <= data_str <= data_fim_aa:
+                    ano_anterior_datas.append(data_str)
+                    ano_anterior_valores.append(vendas_agregadas.get(data_str, 0))
+
+        ano_anterior_total = sum(ano_anterior_valores)
+        print(f"  Ano anterior: {len(ano_anterior_valores)} períodos, total: {ano_anterior_total:,.2f}", flush=True)
+
+        # =====================================================
+        # PASSO 7: MONTAR RESPOSTA
+        # =====================================================
+        print(f"\n[PASSO 7] Montando resposta...", flush=True)
+
+        # Formatar períodos para frontend
+        periodos_formatados = []
+        for data_str in datas_previsao:
+            try:
+                data_obj = dt.strptime(data_str, '%Y-%m-%d')
+                if granularidade == 'mensal':
+                    periodos_formatados.append({
+                        'mes': data_obj.month,
+                        'ano': data_obj.year
+                    })
+                elif granularidade == 'semanal':
+                    periodos_formatados.append({
+                        'semana': data_obj.isocalendar()[1],
+                        'ano': data_obj.isocalendar()[0]
+                    })
+                else:
+                    periodos_formatados.append(data_str)
+            except:
+                periodos_formatados.append(data_str)
+
+        # Calcular métricas (comparando previsão com ano anterior)
+        wmape_geral = 0
+        bias_geral = 0
+        if ano_anterior_valores and len(ano_anterior_valores) > 0:
+            erros_pct = []
+            erros_reais = []
+            tamanho_comp = min(len(previsao_agregada), len(ano_anterior_valores))
+            for i in range(tamanho_comp):
+                if ano_anterior_valores[i] > 0:
+                    erro_pct = abs(previsao_agregada[i] - ano_anterior_valores[i]) / ano_anterior_valores[i] * 100
+                    erro_real = previsao_agregada[i] - ano_anterior_valores[i]
+                    erros_pct.append(erro_pct)
+                    erros_reais.append(erro_real)
+
+            if erros_pct:
+                wmape_geral = sum(erros_pct) / len(erros_pct)
+                soma_aa = sum(ano_anterior_valores[:tamanho_comp])
+                bias_geral = (sum(erros_reais) / soma_aa) * 100 if soma_aa > 0 else 0
+
+        # Montar resposta no mesmo formato da v1
+        resposta = {
+            'sucesso': True,
+            'versao': 'v2_bottom_up',
+            'granularidade': granularidade,
+            'filtros': {
+                'loja': loja,
+                'fornecedor': fornecedor,
+                'linha': linha,
+                'sublinha': sublinha,
+                'produto': produto
+            },
+            'serie_temporal': {
+                'datas': datas_historicas,
+                'valores': serie_historica_agregada
+            },
+            'melhor_modelo': 'Bottom-Up (Individual por Item)',
+            'modelos': {
+                'Bottom-Up (Individual por Item)': {
+                    'metricas': {
+                        'wmape': round(wmape_geral, 2),
+                        'bias': round(bias_geral, 2)
+                    },
+                    'futuro': {
+                        'datas': datas_previsao,
+                        'valores': [round(v, 2) for v in previsao_agregada]
+                    }
+                }
+            },
+            'ano_anterior': {
+                'datas': ano_anterior_datas,
+                'valores': ano_anterior_valores,
+                'total': ano_anterior_total
+            },
+            'relatorio_detalhado': {
+                'itens': relatorio_itens,
+                'periodos_previsao': periodos_formatados,
+                'total_itens': len(relatorio_itens),
+                'granularidade': granularidade
+            },
+            'estatisticas_modelos': contagem_modelos
+        }
+
+        cursor.close()
+        conn.close()
+
+        print(f"\n{'='*60}", flush=True)
+        print(f"PREVISÃO V2 CONCLUÍDA COM SUCESSO!", flush=True)
+        print(f"  Total itens: {len(lista_itens)}", flush=True)
+        print(f"  Total previsão: {total_previsao:,.2f}", flush=True)
+        print(f"{'='*60}", flush=True)
+
+        return jsonify(resposta)
+
+    except Exception as e:
+        import traceback
+        erro_msg = traceback.format_exc()
+        print(f"ERRO na previsão V2: {erro_msg}", flush=True)
+        with open('erro_previsao_v2.log', 'w', encoding='utf-8') as f:
+            f.write(erro_msg)
         return jsonify({'erro': str(e)}), 500
 
 

@@ -1215,58 +1215,178 @@ function ajustarLimitesPrevisao() {
 // Carregar lojas do banco de dados
 async function carregarLojas() {
     try {
+        const select = document.getElementById('loja_banco');
+        if (!select) {
+            console.warn('Elemento loja_banco nao encontrado');
+            return;
+        }
+
         const response = await fetch('/api/lojas');
         const lojas = await response.json();
-        const select = document.getElementById('loja_banco');
 
         select.innerHTML = '';
         lojas.forEach(loja => {
             const option = document.createElement('option');
-            option.value = loja.nome_loja;  // Usar nome_loja como value
+            option.value = loja.cod_empresa;  // Usar cod_empresa como value
             option.textContent = loja.nome_loja;
             select.appendChild(option);
         });
+
+        // Ao mudar loja, recarregar produtos
+        select.addEventListener('change', () => carregarProdutosFiltrados());
     } catch (error) {
         console.error('Erro ao carregar lojas:', error);
     }
 }
 
-// Carregar categorias do banco de dados
-async function carregarCategorias() {
+// Carregar fornecedores do banco de dados
+async function carregarFornecedores() {
     try {
-        const response = await fetch('/api/categorias');
-        const categorias = await response.json();
-        const select = document.getElementById('categoria_banco');
+        const select = document.getElementById('fornecedor_banco');
+        if (!select) {
+            console.warn('Elemento fornecedor_banco nao encontrado');
+            return;
+        }
+
+        const response = await fetch('/api/fornecedores');
+        const fornecedores = await response.json();
 
         select.innerHTML = '';
-        categorias.forEach(cat => {
+        fornecedores.forEach(forn => {
             const option = document.createElement('option');
-            option.value = cat;  // cat já é uma string
-            option.textContent = cat;
+            option.value = forn.nome_fornecedor;
+            option.textContent = forn.nome_fornecedor;
             select.appendChild(option);
         });
+
+        // Ao mudar fornecedor, recarregar produtos
+        select.addEventListener('change', () => carregarProdutosFiltrados());
     } catch (error) {
-        console.error('Erro ao carregar categorias:', error);
+        console.error('Erro ao carregar fornecedores:', error);
     }
 }
 
-// Carregar produtos do banco de dados
-async function carregarProdutos() {
+// Carregar linhas (categorias nivel 1) do banco de dados
+async function carregarLinhas() {
     try {
-        const response = await fetch('/api/produtos');
-        const produtos = await response.json();
+        const select = document.getElementById('linha_banco');
+        if (!select) {
+            console.warn('Elemento linha_banco nao encontrado');
+            return;
+        }
+
+        const response = await fetch('/api/linhas');
+        const linhas = await response.json();
+
+        select.innerHTML = '';
+        linhas.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.linha;
+            option.textContent = item.linha;
+            select.appendChild(option);
+        });
+
+        // Ao mudar linha, recarregar sublinhas e produtos
+        select.addEventListener('change', () => {
+            carregarSublinhas();
+            carregarProdutosFiltrados();
+        });
+    } catch (error) {
+        console.error('Erro ao carregar linhas:', error);
+    }
+}
+
+// Carregar sublinhas (categorias nivel 3) do banco de dados
+async function carregarSublinhas() {
+    try {
+        const linhaSelect = document.getElementById('linha_banco');
+        const select = document.getElementById('sublinha_banco');
+        if (!select) {
+            console.warn('Elemento sublinha_banco nao encontrado');
+            return;
+        }
+
+        const linha = linhaSelect ? linhaSelect.value : '';
+        const url = linha && linha !== 'TODAS'
+            ? `/api/sublinhas?linha=${encodeURIComponent(linha)}`
+            : '/api/sublinhas';
+
+        const response = await fetch(url);
+        const sublinhas = await response.json();
+
+        select.innerHTML = '';
+        sublinhas.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.codigo_linha;
+            option.textContent = item.descricao_linha;
+            select.appendChild(option);
+        });
+
+        // Ao mudar sublinha, recarregar produtos
+        select.addEventListener('change', () => carregarProdutosFiltrados());
+    } catch (error) {
+        console.error('Erro ao carregar sublinhas:', error);
+    }
+}
+
+// Carregar produtos filtrados do banco de dados
+async function carregarProdutosFiltrados() {
+    try {
         const select = document.getElementById('produto_banco');
+        if (!select) {
+            console.warn('Elemento produto_banco nao encontrado');
+            return;
+        }
+
+        const lojaEl = document.getElementById('loja_banco');
+        const fornecedorEl = document.getElementById('fornecedor_banco');
+        const linhaEl = document.getElementById('linha_banco');
+        const sublinhaEl = document.getElementById('sublinha_banco');
+
+        const loja = lojaEl ? lojaEl.value : '';
+        const fornecedor = fornecedorEl ? fornecedorEl.value : '';
+        const linha = linhaEl ? linhaEl.value : '';
+        const sublinha = sublinhaEl ? sublinhaEl.value : '';
+
+        // Construir URL com filtros
+        const params = new URLSearchParams();
+        if (loja && loja !== 'TODAS') params.append('loja', loja);
+        if (fornecedor && fornecedor !== 'TODOS') params.append('fornecedor', fornecedor);
+        if (linha && linha !== 'TODAS') params.append('linha', linha);
+        if (sublinha && sublinha !== 'TODAS') params.append('sublinha', sublinha);
+
+        const url = '/api/produtos_completo' + (params.toString() ? '?' + params.toString() : '');
+
+        const response = await fetch(url);
+        const produtos = await response.json();
 
         select.innerHTML = '';
         produtos.forEach(prod => {
             const option = document.createElement('option');
-            option.value = prod.descricao;  // Usar descrição como value
-            option.textContent = prod.descricao;
+            option.value = prod.codigo;
+            // Mostrar codigo + descricao para facilitar identificacao
+            option.textContent = prod.codigo === 'TODOS'
+                ? prod.descricao
+                : `${prod.codigo} - ${prod.descricao}`;
             select.appendChild(option);
         });
     } catch (error) {
         console.error('Erro ao carregar produtos:', error);
     }
+}
+
+// Carregar categorias do banco de dados (mantido para compatibilidade)
+async function carregarCategorias() {
+    // Esta funcao foi substituida por carregarLinhas
+    // Mantida para compatibilidade com codigo antigo
+    carregarLinhas();
+}
+
+// Carregar produtos do banco de dados (mantido para compatibilidade)
+async function carregarProdutos() {
+    // Esta funcao foi substituida por carregarProdutosFiltrados
+    // Mantida para compatibilidade com codigo antigo
+    carregarProdutosFiltrados();
 }
 
 // Formatar número com separadores de milhares
@@ -1327,7 +1447,7 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     // Função auxiliar para formatar período
     const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-    function formatarPeriodo(dataStr, gran) {
+    function formatarPeriodo(dataStr, gran, incluirAno = false) {
         if (!dataStr) return '';
         const data = parseLocalDate(dataStr);
         if (gran === 'semanal') {
@@ -1335,9 +1455,13 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
             const anoISO = getISOWeekYear(data);
             return `S${semanaAno}/${anoISO}`;
         } else if (gran === 'diario' || gran === 'diaria') {
-            // Formato: DD/MM
+            // Formato: DD/MM ou DD/MM/AA se incluirAno=true
             const dia = data.getDate().toString().padStart(2, '0');
             const mes = (data.getMonth() + 1).toString().padStart(2, '0');
+            if (incluirAno) {
+                const ano = data.getFullYear().toString().slice(-2);
+                return `${dia}/${mes}/${ano}`;
+            }
             return `${dia}/${mes}`;
         } else {
             return `${meses[data.getMonth()]}/${data.getFullYear()}`;
@@ -1360,10 +1484,12 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     headerHtml += `<th rowspan="2" style="padding: ${padding}; text-align: center; border: 1px solid #ddd; background: #5a67d8; font-weight: bold; vertical-align: middle;">TOTAL</th>`;
     headerHtml += '</tr>';
 
-    // Linha 2: Períodos do REAL (período de teste - mesmos dados da linha verde sólida)
+    // Linha 2: Períodos do REAL (ano anterior - para comparação)
+    // Para diário, incluir o ano para deixar claro que é ano anterior com mesmo dia da semana
+    const isDiario = granularidade === 'diario' || granularidade === 'diaria';
     headerHtml += `<tr style="background: #8b9dc3; color: white; font-size: ${fontSize};">`;
     previsoes.forEach((_, index) => {
-        const nomePeriodoReal = formatarPeriodo(datasReal[index], granularidade);
+        const nomePeriodoReal = formatarPeriodo(datasReal[index], granularidade, isDiario);
         headerHtml += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-size: 0.8em; font-weight: normal;">${nomePeriodoReal || '-'}</th>`;
     });
     headerHtml += '</tr>';
@@ -1384,9 +1510,11 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     rowPrevisao += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #e0e7ff;">${formatNumber(totalPrevisao)}</td>`;
     rowPrevisao += '</tr>';
 
-    // Linha Real (Período de Teste - mesmos dados da linha verde sólida do gráfico)
+    // Linha Real (Ano Anterior - para comparação com previsão)
+    // Para diário, usar "Ano Ant." para deixar claro que é o mesmo dia da semana do ano anterior
+    const labelReal = isDiario ? 'Ano Ant.' : 'Real';
     let rowReal = `<tr style="background: white; font-size: ${fontSize};">`;
-    rowReal += `<td style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; width: ${labelWidth};">Real</td>`;
+    rowReal += `<td style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; width: ${labelWidth};">${labelReal}</td>`;
 
     // Exibir valores nas colunas (limitado ao número de períodos de previsão)
     for (let i = 0; i < numPeriodos; i++) {
@@ -1839,7 +1967,9 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
         const dadosPeriodo = coletarDadosPeriodo();
         const dados = {
             loja: document.getElementById('loja_banco').value,
-            categoria: document.getElementById('categoria_banco').value,
+            fornecedor: document.getElementById('fornecedor_banco').value,
+            linha: document.getElementById('linha_banco').value,
+            sublinha: document.getElementById('sublinha_banco').value,
             produto: document.getElementById('produto_banco').value,
             granularidade: document.getElementById('granularidade_banco').value,
             ...dadosPeriodo  // Inclui os dados de período específicos
@@ -1913,6 +2043,11 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
             // Preencher tabela comparativa
             preencherTabelaComparativa(resultado, melhorModelo, resultado.granularidade || 'mensal');
 
+            // Exibir relatório detalhado por fornecedor/item (se houver dados)
+            if (resultado.relatorio_detalhado) {
+                exibirRelatorioDetalhado(resultado.relatorio_detalhado);
+            }
+
         } else {
             // Mostrar erro
             let detalhesHtml = '';
@@ -1946,8 +2081,10 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
 document.addEventListener('DOMContentLoaded', function() {
     // Carregar dados dos dropdowns
     carregarLojas();
-    carregarCategorias();
-    carregarProdutos();
+    carregarFornecedores();
+    carregarLinhas();
+    carregarSublinhas();
+    carregarProdutosFiltrados();
 
     // Configurar listener para ajuste de limites
     const granularidadeSelect = document.getElementById('granularidade_banco');
@@ -1956,3 +2093,469 @@ document.addEventListener('DOMContentLoaded', function() {
         ajustarLimitesPrevisao(); // Chamar uma vez para configurar valores iniciais
     }
 });
+
+// =====================================================
+// RELATÓRIO DETALHADO POR FORNECEDOR/ITEM
+// =====================================================
+
+// Variável global para armazenar dados do relatório detalhado
+let dadosRelatorioDetalhado = null;
+
+// Função principal para exibir o relatório detalhado
+function exibirRelatorioDetalhado(dados) {
+    if (!dados || !dados.itens || dados.itens.length === 0) {
+        document.getElementById('relatorioDetalhadoSection').style.display = 'none';
+        return;
+    }
+
+    // Armazenar dados globalmente para filtros
+    dadosRelatorioDetalhado = dados;
+
+    // Mostrar seção
+    document.getElementById('relatorioDetalhadoSection').style.display = 'block';
+
+    // Popular filtro de fornecedores
+    popularFiltroFornecedores(dados.itens);
+
+    // Renderizar tabela
+    renderizarTabelaRelatorioDetalhado(dados.itens, dados.periodos_previsao, dados.granularidade);
+
+    // Exibir resumo
+    exibirResumoRelatorio(dados.itens);
+}
+
+// Popular dropdown de filtro de fornecedores
+function popularFiltroFornecedores(itens) {
+    const select = document.getElementById('filtroFornecedorRelatorio');
+    const fornecedoresUnicos = [...new Set(itens.map(i => i.nome_fornecedor))].sort();
+
+    // Manter opção "Todos"
+    select.innerHTML = '<option value="">Todos os Fornecedores</option>';
+
+    fornecedoresUnicos.forEach(fornecedor => {
+        const option = document.createElement('option');
+        option.value = fornecedor;
+        option.textContent = fornecedor;
+        select.appendChild(option);
+    });
+}
+
+// Renderizar tabela do relatório detalhado
+function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
+    const thead = document.getElementById('relatorioDetalhadoHeader');
+    const tbody = document.getElementById('relatorioDetalhadoBody');
+
+    // Formatar nome do período
+    const mesesNomes = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+    function formatarPeriodoHeader(periodo) {
+        if (!periodo) return '-';
+        if (granularidade === 'semanal') {
+            return `S${periodo.semana}/${periodo.ano}`;
+        } else if (granularidade === 'diario' || granularidade === 'diaria') {
+            const partes = periodo.split('-');
+            if (partes.length === 3) {
+                return `${partes[2]}/${partes[1]}`;
+            }
+            return periodo;
+        } else {
+            // Mensal
+            const mesIdx = periodo.mes - 1;
+            return `${mesesNomes[mesIdx]}/${periodo.ano}`;
+        }
+    }
+
+    // Criar cabeçalho
+    let headerHtml = '<tr style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; font-size: 0.8em;">';
+    headerHtml += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd; position: sticky; left: 0; background: linear-gradient(135deg, #10b981 0%, #059669 100%); z-index: 11; min-width: 50px;">Código</th>';
+    headerHtml += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd; min-width: 200px;">Descrição</th>';
+
+    // Colunas de períodos
+    periodos.forEach(periodo => {
+        const nomePeriodo = formatarPeriodoHeader(periodo);
+        headerHtml += `<th style="padding: 6px; text-align: center; border: 1px solid #ddd; min-width: 60px;">${nomePeriodo}</th>`;
+    });
+
+    headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #047857; min-width: 70px;">Total Prev.</th>';
+    headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 70px;">Ano Ant.</th>';
+    headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 60px;">Var. %</th>';
+    headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 50px;">Alerta</th>';
+    headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 80px;">Método</th>';
+    headerHtml += '</tr>';
+
+    thead.innerHTML = headerHtml;
+
+    // Agrupar itens por fornecedor
+    const itensPorFornecedor = {};
+    itens.forEach(item => {
+        const fornecedor = item.nome_fornecedor || 'SEM FORNECEDOR';
+        if (!itensPorFornecedor[fornecedor]) {
+            itensPorFornecedor[fornecedor] = [];
+        }
+        itensPorFornecedor[fornecedor].push(item);
+    });
+
+    // Ordenar fornecedores alfabeticamente
+    const fornecedoresOrdenados = Object.keys(itensPorFornecedor).sort();
+
+    // Renderizar linhas
+    let bodyHtml = '';
+    const numColunasPeriodos = periodos.length;
+
+    fornecedoresOrdenados.forEach(fornecedor => {
+        const itensFornecedor = itensPorFornecedor[fornecedor];
+
+        // Calcular totais do fornecedor
+        let totalPrevFornecedor = 0;
+        let totalAnoAntFornecedor = 0;
+        let totaisPorPeriodo = new Array(numColunasPeriodos).fill(0);
+
+        itensFornecedor.forEach(item => {
+            totalPrevFornecedor += item.demanda_prevista_total || 0;
+            totalAnoAntFornecedor += item.demanda_ano_anterior || 0;
+
+            // Somar previsões por período
+            if (item.previsao_por_periodo) {
+                item.previsao_por_periodo.forEach((p, idx) => {
+                    if (idx < numColunasPeriodos) {
+                        totaisPorPeriodo[idx] += p.previsao || 0;
+                    }
+                });
+            }
+        });
+
+        const variacaoFornecedor = totalAnoAntFornecedor > 0
+            ? ((totalPrevFornecedor - totalAnoAntFornecedor) / totalAnoAntFornecedor * 100)
+            : 0;
+
+        // Criar ID seguro para o fornecedor (remover caracteres especiais)
+        const fornecedorId = fornecedor.replace(/[^a-zA-Z0-9]/g, '_');
+
+        // Linha do fornecedor (cabeçalho do grupo - colapsável)
+        bodyHtml += `<tr class="linha-fornecedor" data-fornecedor="${fornecedorId}" onclick="toggleFornecedor('${fornecedorId}')" style="background: #e0f2f1; cursor: pointer; font-weight: bold;">`;
+        bodyHtml += `<td colspan="2" style="padding: 10px; border: 1px solid #ddd; position: sticky; left: 0; background: #e0f2f1; z-index: 5;">`;
+        bodyHtml += `<span class="toggle-icon" id="toggle-${fornecedorId}">▼</span> ${fornecedor} (${itensFornecedor.length} itens)`;
+        bodyHtml += `</td>`;
+
+        // Totais por período do fornecedor
+        totaisPorPeriodo.forEach(total => {
+            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; background: #e0f2f1; font-weight: bold;">${formatNumber(total)}</td>`;
+        });
+
+        bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #b2dfdb; font-weight: bold;">${formatNumber(totalPrevFornecedor)}</td>`;
+        bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1;">${formatNumber(totalAnoAntFornecedor)}</td>`;
+
+        const corVariacao = variacaoFornecedor > 0 ? '#059669' : (variacaoFornecedor < 0 ? '#dc2626' : '#666');
+        const sinalVariacao = variacaoFornecedor > 0 ? '+' : '';
+        bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1; color: ${corVariacao}; font-weight: bold;">${sinalVariacao}${variacaoFornecedor.toFixed(1)}%</td>`;
+
+        bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1;">-</td>`;
+        bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1;">-</td>`;
+        bodyHtml += `</tr>`;
+
+        // Linhas dos itens (inicialmente visíveis)
+        itensFornecedor.forEach(item => {
+            bodyHtml += `<tr class="linha-item" data-fornecedor="${fornecedorId}" style="background: white;">`;
+            bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; font-size: 0.85em;">${item.cod_produto}</td>`;
+            bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; font-size: 0.85em; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${item.descricao}">${item.descricao}</td>`;
+
+            // Valores por período
+            if (item.previsao_por_periodo && item.previsao_por_periodo.length > 0) {
+                item.previsao_por_periodo.forEach((p, idx) => {
+                    if (idx < numColunasPeriodos) {
+                        bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.85em;">${formatNumber(p.previsao || 0)}</td>`;
+                    }
+                });
+                // Preencher colunas faltantes
+                for (let i = item.previsao_por_periodo.length; i < numColunasPeriodos; i++) {
+                    bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; color: #999;">0</td>`;
+                }
+            } else {
+                // Item sem previsão - mostrar zeros
+                for (let i = 0; i < numColunasPeriodos; i++) {
+                    bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; color: #999;">0</td>`;
+                }
+            }
+
+            // Total previsto
+            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-weight: 500; background: #f0fdf4;">${formatNumber(item.demanda_prevista_total || 0)}</td>`;
+
+            // Ano anterior
+            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd;">${formatNumber(item.demanda_ano_anterior || 0)}</td>`;
+
+            // Variação
+            const varItem = item.variacao_percentual || 0;
+            const corVarItem = varItem > 0 ? '#059669' : (varItem < 0 ? '#dc2626' : '#666');
+            const sinalVarItem = varItem > 0 ? '+' : '';
+            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; color: ${corVarItem}; font-weight: 500;">${sinalVarItem}${varItem.toFixed(1)}%</td>`;
+
+            // Alerta
+            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 1.2em;">${item.sinal_emoji || '⚪'}</td>`;
+
+            // Método
+            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.8em;">${item.metodo_estatistico || '-'}</td>`;
+
+            bodyHtml += `</tr>`;
+        });
+    });
+
+    tbody.innerHTML = bodyHtml;
+}
+
+// Toggle para expandir/recolher itens de um fornecedor
+function toggleFornecedor(fornecedorId) {
+    const linhasItem = document.querySelectorAll(`.linha-item[data-fornecedor="${fornecedorId}"]`);
+    const toggleIcon = document.getElementById(`toggle-${fornecedorId}`);
+
+    const estaVisivel = linhasItem[0]?.style.display !== 'none';
+
+    linhasItem.forEach(linha => {
+        linha.style.display = estaVisivel ? 'none' : '';
+    });
+
+    if (toggleIcon) {
+        toggleIcon.textContent = estaVisivel ? '▶' : '▼';
+    }
+}
+
+// Expandir todos os fornecedores
+function expandirTodosFornecedores() {
+    document.querySelectorAll('.linha-item').forEach(linha => {
+        linha.style.display = '';
+    });
+    document.querySelectorAll('.toggle-icon').forEach(icon => {
+        icon.textContent = '▼';
+    });
+}
+
+// Recolher todos os fornecedores
+function recolherTodosFornecedores() {
+    document.querySelectorAll('.linha-item').forEach(linha => {
+        linha.style.display = 'none';
+    });
+    document.querySelectorAll('.toggle-icon').forEach(icon => {
+        icon.textContent = '▶';
+    });
+}
+
+// Filtrar relatório detalhado
+function filtrarRelatorioDetalhado() {
+    if (!dadosRelatorioDetalhado) return;
+
+    const filtroFornecedor = document.getElementById('filtroFornecedorRelatorio').value;
+    const filtroAlerta = document.getElementById('filtroAlertaRelatorio').value;
+
+    let itensFiltrados = dadosRelatorioDetalhado.itens;
+
+    // Filtrar por fornecedor
+    if (filtroFornecedor) {
+        itensFiltrados = itensFiltrados.filter(item => item.nome_fornecedor === filtroFornecedor);
+    }
+
+    // Filtrar por alerta
+    if (filtroAlerta) {
+        itensFiltrados = itensFiltrados.filter(item => item.sinal_alerta === filtroAlerta);
+    }
+
+    // Re-renderizar tabela com itens filtrados
+    renderizarTabelaRelatorioDetalhado(
+        itensFiltrados,
+        dadosRelatorioDetalhado.periodos_previsao,
+        dadosRelatorioDetalhado.granularidade
+    );
+
+    // Atualizar resumo
+    exibirResumoRelatorio(itensFiltrados);
+}
+
+// Exibir resumo do relatório
+function exibirResumoRelatorio(itens) {
+    const resumoSection = document.getElementById('resumoRelatorioDetalhado');
+
+    if (!itens || itens.length === 0) {
+        resumoSection.style.display = 'none';
+        return;
+    }
+
+    // Calcular estatísticas
+    const fornecedoresUnicos = new Set(itens.map(i => i.nome_fornecedor));
+    const totalItens = itens.length;
+    const criticos = itens.filter(i => i.sinal_alerta === 'vermelho').length;
+    const alertas = itens.filter(i => i.sinal_alerta === 'amarelo').length;
+    const atencao = itens.filter(i => i.sinal_alerta === 'azul').length;
+    const normais = itens.filter(i => i.sinal_alerta === 'verde').length;
+
+    // Preencher valores
+    document.getElementById('resumoTotalFornecedores').textContent = fornecedoresUnicos.size;
+    document.getElementById('resumoTotalItens').textContent = totalItens;
+    document.getElementById('resumoCriticos').textContent = criticos;
+    document.getElementById('resumoAlertas').textContent = alertas;
+    document.getElementById('resumoAtencao').textContent = atencao;
+    document.getElementById('resumoNormais').textContent = normais;
+
+    resumoSection.style.display = 'block';
+}
+
+// =====================================================
+// FUNÇÃO PARA GERAR PREVISÃO V2 (BOTTOM-UP)
+// =====================================================
+
+async function gerarPrevisaoV2() {
+    // Esconder resultados e erros anteriores
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    // Mostrar progresso
+    document.getElementById('progress').style.display = 'block';
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+
+    // Simular progresso (V2 pode ser mais lento)
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        progress += 3;
+        if (progress <= 90) {
+            progressFill.style.width = progress + '%';
+            if (progress < 20) {
+                progressText.textContent = 'Buscando lista de itens...';
+            } else if (progress < 40) {
+                progressText.textContent = 'Calculando previsão para cada item...';
+            } else if (progress < 60) {
+                progressText.textContent = 'Aplicando sazonalidade...';
+            } else if (progress < 80) {
+                progressText.textContent = 'Agregando resultados...';
+            } else {
+                progressText.textContent = 'Finalizando...';
+            }
+        }
+    }, 500);
+
+    try {
+        // Coletar dados do formulário
+        const dadosPeriodo = coletarDadosPeriodo();
+        const dados = {
+            loja: document.getElementById('loja_banco').value,
+            fornecedor: document.getElementById('fornecedor_banco').value,
+            linha: document.getElementById('linha_banco').value,
+            sublinha: document.getElementById('sublinha_banco').value,
+            produto: document.getElementById('produto_banco').value,
+            granularidade: document.getElementById('granularidade_banco').value,
+            ...dadosPeriodo
+        };
+
+        console.log('=== DADOS ENVIADOS (V2 Bottom-Up) ===');
+        console.log('Granularidade:', dados.granularidade);
+        console.log('Dados completos:', JSON.stringify(dados, null, 2));
+
+        // Enviar requisição para API V2
+        const response = await fetch('/api/gerar_previsao_banco_v2', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(dados)
+        });
+
+        const resultado = await response.json();
+
+        clearInterval(progressInterval);
+        progressFill.style.width = '100%';
+        progressText.textContent = 'Concluído! (V2 Bottom-Up)';
+
+        setTimeout(() => {
+            document.getElementById('progress').style.display = 'none';
+        }, 500);
+
+        if (response.status === 200) {
+            console.log('Resultado V2 recebido:', resultado);
+            console.log('Estatísticas de modelos:', resultado.estatisticas_modelos);
+
+            // Mostrar resultados
+            document.getElementById('results').style.display = 'block';
+
+            // Obter métricas do modelo Bottom-Up
+            const melhorModelo = resultado.melhor_modelo;
+            const dadosModelo = resultado.modelos[melhorModelo] || {};
+            const metricasMelhor = dadosModelo.metricas || {};
+
+            // Calcular totais
+            const previsaoFuturo = dadosModelo.futuro?.valores || [];
+            const totalPrevisao = previsaoFuturo.reduce((sum, val) => sum + val, 0);
+
+            const valoresAnoAnterior = resultado.ano_anterior?.valores || [];
+            const numPeriodos = previsaoFuturo.length;
+            const totalAnoAnterior = valoresAnoAnterior.slice(0, numPeriodos).reduce((sum, val) => sum + val, 0);
+
+            const variacaoDemanda = totalAnoAnterior > 0
+                ? ((totalPrevisao - totalAnoAnterior) / totalAnoAnterior * 100)
+                : 0;
+
+            // Preencher KPIs
+            document.getElementById('kpi_wmape').textContent = `${(metricasMelhor.wmape || 0).toFixed(1)}%`;
+            document.getElementById('kpi_bias').textContent = `${(metricasMelhor.bias || 0).toFixed(1)}%`;
+
+            const variacaoSinal = variacaoDemanda >= 0 ? '+' : '';
+            document.getElementById('kpi_variacao').textContent = `${variacaoSinal}${variacaoDemanda.toFixed(1)}%`;
+
+            // Criar estrutura compatível com função existente
+            const resultadoCompativel = {
+                ...resultado,
+                historico_base: {
+                    datas: resultado.serie_temporal.datas,
+                    valores: resultado.serie_temporal.valores
+                },
+                historico_teste: {
+                    datas: [],
+                    valores: []
+                },
+                metricas: {
+                    [melhorModelo]: metricasMelhor
+                }
+            };
+
+            // Criar gráfico
+            criarGraficoPrevisao(
+                resultadoCompativel.historico_base,
+                resultadoCompativel.historico_teste,
+                resultado.modelos,
+                melhorModelo,
+                resultado.granularidade || 'mensal',
+                resultado.ano_anterior
+            );
+
+            // Preencher tabela comparativa
+            console.log('=== DEBUG ANO ANTERIOR (V2) ===');
+            console.log('Granularidade:', resultado.granularidade);
+            console.log('Datas ano anterior:', resultado.ano_anterior?.datas?.slice(0, 5));
+            console.log('Valores ano anterior:', resultado.ano_anterior?.valores?.slice(0, 5));
+            console.log('Total ano anterior:', resultado.ano_anterior?.total);
+            preencherTabelaComparativa(resultadoCompativel, melhorModelo, resultado.granularidade || 'mensal');
+
+            // Exibir relatório detalhado
+            if (resultado.relatorio_detalhado) {
+                exibirRelatorioDetalhado(resultado.relatorio_detalhado);
+            }
+
+            // Mostrar estatísticas de modelos utilizados
+            if (resultado.estatisticas_modelos) {
+                console.log('=== ESTATÍSTICAS DE MODELOS (V2) ===');
+                for (const [modelo, qtd] of Object.entries(resultado.estatisticas_modelos)) {
+                    console.log(`  ${modelo}: ${qtd} itens`);
+                }
+            }
+
+        } else {
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('errorMessage').innerHTML = `
+                <strong>Erro na V2:</strong> ${resultado.erro || 'Erro desconhecido'}
+            `;
+        }
+
+    } catch (error) {
+        clearInterval(progressInterval);
+        document.getElementById('progress').style.display = 'none';
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('errorMessage').textContent = 'Erro de conexão: ' + error.message;
+        console.error('Erro V2:', error);
+    }
+}
