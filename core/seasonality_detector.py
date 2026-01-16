@@ -106,7 +106,8 @@ class SeasonalityDetector:
         # preferir o período menor (mais fundamental)
         for result in results[1:]:
             # Se força é similar (diferença < 10%) e período atual é divisor do melhor
-            if (best['score'] - result['score']) / best['score'] < 0.10:
+            # Evitar divisão por zero quando best['score'] é 0
+            if best['score'] > 0 and (best['score'] - result['score']) / best['score'] < 0.10:
                 if best['period'] % result['period'] == 0:
                     # Período menor com força similar - trocar
                     best = result
@@ -269,10 +270,19 @@ class SeasonalityDetector:
             if len(group) > 0:
                 seasonal_groups.append(group)
 
-        # ANOVA one-way
-        if len(seasonal_groups) >= 2:
-            f_stat, pvalue = stats.f_oneway(*seasonal_groups)
-        else:
+        # ANOVA one-way - com proteção contra erros
+        try:
+            if len(seasonal_groups) < 2:
+                pvalue = 1.0
+            elif any(len(group) < 2 for group in seasonal_groups):
+                # Grupos com observações insuficientes para ANOVA
+                pvalue = 1.0
+            else:
+                f_stat, pvalue = stats.f_oneway(*seasonal_groups)
+                # Proteger contra NaN (pode ocorrer se todos os valores são iguais)
+                if np.isnan(pvalue):
+                    pvalue = 1.0
+        except (ValueError, RuntimeError, ZeroDivisionError):
             pvalue = 1.0
 
         # Calcular índices sazonais médios

@@ -1,6 +1,12 @@
-# Sistema de Demanda e Reabastecimento v4.0
+# Sistema de Demanda e Reabastecimento v5.0
 
 Sistema completo para gestão de estoque multi-loja com Centro de Distribuição (CD), combinando previsão de demanda Bottom-Up com política de estoque baseada em curva ABC.
+
+**Novidades v5.0:**
+- Pedido Multi-Loja com layout hierarquico (Fornecedor > Loja > Itens)
+- Transferencias inteligentes entre lojas do mesmo grupo regional
+- Parametros de fornecedor (Lead Time, Ciclo, Faturamento Minimo)
+- Graceful degradation para novas tabelas
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/flask-3.0.0-green.svg)](https://flask.palletsprojects.com/)
@@ -64,8 +70,9 @@ Novo modulo que integra previsao de demanda com calculo de pedidos:
 | Simulador | Cenarios what-if | Ativo |
 | Eventos | Calendario promocional | Ativo |
 | KPIs e Metricas | Dashboard de performance | Ativo |
-| **Pedido ao Fornecedor** | Calculo integrado com previsao | **Novo v4.0** |
-| Transferencias | Redistribuicao entre lojas | Ativo |
+| **Pedido ao Fornecedor** | Calculo integrado multi-loja | **Atualizado v5.0** |
+| **Transferencias entre Lojas** | Balanceamento automatico de estoque | **Novo v5.0** |
+| **Parametros Fornecedor** | Lead Time, Ciclo, Faturamento Minimo | **Novo v5.0** |
 | Pedido Manual | Entrada manual de pedidos | Ativo |
 
 ---
@@ -444,7 +451,29 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v4.0 (Janeiro 2026) - ATUAL
+### v5.0 (Janeiro 2026) - ATUAL
+
+**Novas Funcionalidades:**
+- **Pedido Multi-Loja**: Layout hierarquico Fornecedor > Loja > Itens com multi-selecao
+- **Transferencias entre Lojas**: Identificacao automatica de oportunidades de balanceamento
+- **Parametros de Fornecedor**: Importacao de Lead Time, Ciclo de Pedido e Faturamento Minimo
+- **Graceful Degradation**: Sistema funciona mesmo sem tabelas novas (migration_v5.sql)
+
+**Melhorias de Interface:**
+- Multi-selecao em filtros (Lojas, Fornecedores, Categorias)
+- Badges visuais para transferencias (Enviar/Receber)
+- Ordenacao do Excel por Codigo Filial e CNPJ Fornecedor
+- Botao "Limpar Historico" na tela de transferencias
+
+**Seguranca:**
+- Credenciais do banco via variaveis de ambiente
+- Arquivo .env.example para configuracao
+
+**Documentacao:**
+- docs/PEDIDO_FORNECEDOR_INTEGRADO.md
+- docs/TRANSFERENCIAS_ENTRE_LOJAS.md
+
+### v4.0 (Janeiro 2026)
 
 **Novas Funcionalidades:**
 - Modulo de Pedido ao Fornecedor Integrado com previsao V2
@@ -537,6 +566,8 @@ R: Sim. No arquivo `core/pedido_fornecedor_integrado.py`, edite as constantes `N
 
 ## Documentacao Completa
 
+- **[docs/PEDIDO_FORNECEDOR_INTEGRADO.md](docs/PEDIDO_FORNECEDOR_INTEGRADO.md)** - Guia completo do pedido multi-loja
+- **[docs/TRANSFERENCIAS_ENTRE_LOJAS.md](docs/TRANSFERENCIAS_ENTRE_LOJAS.md)** - Sistema de transferencias regionais
 - **[GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md)** - Guia sobre diferencas entre granularidades
 - **[CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md](CORRECAO_SAZONALIDADE_ANUAL_SEMANAL.md)** - Correcao critica v3.1.2
 - **[README_ABORDAGEM_HIBRIDA.md](README_ABORDAGEM_HIBRIDA.md)** - Documentacao tecnica da abordagem
@@ -605,7 +636,7 @@ Para duvidas ou problemas:
 
 ---
 
-**Versao:** 4.0
+**Versao:** 5.0
 **Status:** Em Producao
 **Ultima Atualizacao:** Janeiro 2026
 

@@ -3,133 +3,510 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transferências entre Lojas</title>
+    <title>Transferencias entre Lojas</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .transferencias-body {
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .page-header {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 10px;
+            padding: 20px 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .page-header h1 {
+            font-size: 1.5em;
+            color: #333;
+            margin: 0;
+        }
+
+        .page-header p {
+            color: #666;
+            margin: 5px 0 0 0;
+            font-size: 0.9em;
+        }
+
+        .btn-menu {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.9em;
+            transition: opacity 0.2s;
+        }
+
+        .btn-menu:hover {
+            opacity: 0.9;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 18px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .stat-card .valor {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .stat-card .label {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .stat-card.destaque {
+            background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+        }
+
+        .stat-card.destaque .valor,
+        .stat-card.destaque .label {
+            color: white;
+        }
+
+        .stat-card.critica {
+            background: #ffebee;
+            border-left: 4px solid #c62828;
+        }
+
+        .stat-card.critica .valor {
+            color: #c62828;
+        }
+
+        .stat-card.alta {
+            background: #fff3e0;
+            border-left: 4px solid #e65100;
+        }
+
+        .stat-card.alta .valor {
+            color: #e65100;
+        }
+
+        .content-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 20px;
+        }
+
+        .content-card h3 {
+            margin: 0 0 15px 0;
+            color: #333;
+            font-size: 1.1em;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .btn-exportar {
+            padding: 8px 16px;
+            background: #10b981;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-exportar:hover {
+            background: #059669;
+        }
+
+        .btn-exportar:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .btn-limpar {
+            padding: 8px 16px;
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-limpar:hover {
+            background: #dc2626;
+        }
+
+        .btn-limpar:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .tabela-transferencias {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+        }
+
+        .tabela-transferencias th {
+            background: #f8f9fa;
+            padding: 12px 8px;
+            text-align: left;
+            border-bottom: 2px solid #dee2e6;
+            font-weight: 600;
+            color: #495057;
+            position: sticky;
+            top: 0;
+        }
+
+        .tabela-transferencias td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .tabela-transferencias tr:hover {
+            background: #f8f9fa;
+        }
+
+        .badge-urgencia {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+            color: white;
+        }
+
+        .badge-urgencia.CRITICA {
+            background: #c62828;
+        }
+
+        .badge-urgencia.ALTA {
+            background: #e65100;
+        }
+
+        .badge-urgencia.MEDIA {
+            background: #f9a825;
+            color: #333;
+        }
+
+        .badge-urgencia.BAIXA {
+            background: #2e7d32;
+        }
+
+        .badge-abc {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.8em;
+        }
+
+        .badge-abc.A { background: #4caf50; color: white; }
+        .badge-abc.B { background: #ff9800; color: white; }
+        .badge-abc.C { background: #f44336; color: white; }
+
+        .transferencia-fluxo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .transferencia-fluxo .loja {
+            font-weight: 500;
+        }
+
+        .transferencia-fluxo .seta {
+            color: #14b8a6;
+            font-weight: bold;
+        }
+
+        .info-vazia {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .info-vazia h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+
+        .info-vazia p {
+            margin: 5px 0;
+            font-size: 0.9em;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .loading .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #14b8a6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .valor-positivo {
+            color: #2e7d32;
+            font-weight: 500;
+        }
+
+        .cobertura-cell {
+            font-size: 0.9em;
+        }
+
+        .cobertura-cell .valor {
+            font-weight: 500;
+        }
+
+        .cobertura-cell.critico .valor { color: #c62828; }
+        .cobertura-cell.baixo .valor { color: #e65100; }
+        .cobertura-cell.ok .valor { color: #2e7d32; }
+
+        /* Responsivo */
+        @media (max-width: 768px) {
+            .page-header {
+                flex-direction: column;
+                text-align: center;
+                gap: 15px;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
 </head>
-<body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header-compact">
-            <div class="logo-section">
-                <h1>🔄 Transferências entre Lojas</h1>
-                <p>Loja ↔ Loja - Otimização de Estoque</p>
-            </div>
+<body class="transferencias-body">
+    <!-- Header -->
+    <header class="page-header">
+        <div>
+            <h1>Transferencias entre Lojas</h1>
+            <p>Oportunidades de balanceamento de estoque entre lojas do mesmo grupo regional</p>
         </div>
+        <a href="/menu" class="btn-menu">Menu Principal</a>
+    </header>
 
-        <!-- Grid Layout -->
-        <div class="main-grid">
-            <!-- Sidebar: Upload -->
-            <div class="sidebar-left">
-                <div class="upload-section-compact card-compact">
-                    <h3>Upload & Config</h3>
-                    <form id="uploadForm" enctype="multipart/form-data">
-                        <div class="file-input-compact">
-                            <input type="file" id="file" name="file" accept=".xlsx,.xls" required>
-                        </div>
-
-                        <input type="hidden" id="nivel_servico" name="nivel_servico" value="0.95">
-                        <input type="hidden" id="revisao_dias" name="revisao_dias" value="1">
-
-                        <div style="padding: 10px; background: #fff3e0; border-left: 3px solid #f093fb; border-radius: 4px; margin-bottom: 12px; font-size: 0.8em;">
-                            <strong>🔄 Fluxo Transferência:</strong><br>
-                            - Ciclo: 1 dia (urgente)<br>
-                            - Identifica excesso em uma loja<br>
-                            - Identifica falta em outra loja<br>
-                            - Calcula viabilidade econômica
-                        </div>
-
-                        <button type="submit" class="btn-primary-compact">
-                            Processar Transferências
-                        </button>
-                    </form>
-
-                    <!-- Instruções -->
-                    <div style="margin-top: 20px; padding: 12px; background: #f0f9ff; border-radius: 8px; font-size: 0.85em;">
-                        <h4 style="margin-top: 0; color: #f093fb;">📋 Colunas necessárias:</h4>
-                        <ul style="margin: 8px 0; padding-left: 20px; font-size: 0.85em;">
-                            <li>Loja_Origem</li>
-                            <li>Loja_Destino</li>
-                            <li>SKU</li>
-                            <li>Lead_Time_Dias</li>
-                            <li>Estoque_Origem</li>
-                            <li>Estoque_Destino</li>
-                            <li>Custo_Transferencia</li>
-                            <li>Custo_Unitario_Produto</li>
-                            <li>+ aba HISTORICO_VENDAS</li>
-                        </ul>
-                        <a href="/download/exemplo_transferencias.xlsx" style="color: #f093fb; text-decoration: underline; font-size: 0.9em;">📥 Baixar arquivo exemplo</a>
-                    </div>
-
-                    <!-- Navegação -->
-                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
-                        <h4 style="font-size: 0.9em; margin-bottom: 8px; color: #666;">Outros Fluxos:</h4>
-                        <a href="/pedido_fornecedor" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 8px; background: linear-gradient(135deg, #0070f3 0%, #00d4ff 100%); color: white;">
-                            📦 Fornecedor
-                        </a>
-                        <a href="/pedido_cd" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
-                            🏢 CD → Lojas
-                        </a>
-                        <a href="/reabastecimento" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px;">
-                            ← Voltar
-                        </a>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Main Content -->
-            <div class="main-content">
-                <!-- Progress -->
-                <div id="progress" class="progress-section-compact card-compact" style="display:none;">
-                    <div class="progress-bar-compact">
-                        <div class="progress-fill" id="progressFill"></div>
-                    </div>
-                    <p id="progressText" class="progress-text-compact">Processando...</p>
-                </div>
-
-                <!-- Results -->
-                <div id="results" class="results-section-compact" style="display:none;">
-                    <div id="resumo" class="resumo-cards-compact"></div>
-                    <div id="alertas" class="alertas-compact"></div>
-
-                    <!-- Tabela de Resultados -->
-                    <div class="card-compact">
-                        <h3>📊 Oportunidades de Transferência</h3>
-                        <div style="overflow-x: auto;">
-                            <table id="resultadosTable" style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
-                                <thead style="background: #fff3e0; color: #f093fb;">
-                                    <tr>
-                                        <th style="padding: 8px; text-align: left;">De</th>
-                                        <th style="padding: 8px; text-align: left;">Para</th>
-                                        <th style="padding: 8px; text-align: left;">SKU</th>
-                                        <th style="padding: 8px; text-align: right;">Qtd. Transferir</th>
-                                        <th style="padding: 8px; text-align: right;">Valor Estoque</th>
-                                        <th style="padding: 8px; text-align: center;">Urgência</th>
-                                        <th style="padding: 8px; text-align: center;">Viável?</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="resultadosBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <!-- Download -->
-                    <div class="download-section-compact">
-                        <a id="downloadBtn" class="btn-download-compact" download>
-                            📥 Download Transferências
-                        </a>
-                    </div>
-                </div>
-
-                <!-- Error -->
-                <div id="error" class="error-section-compact card-compact" style="display:none;">
-                    <h3>Erro</h3>
-                    <p id="errorMessage"></p>
-                    <button onclick="location.reload()" class="btn-secondary-compact">Tentar Novamente</button>
-                </div>
-            </div>
+    <!-- Estatisticas -->
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-card destaque">
+            <div class="valor" id="totalOportunidades">-</div>
+            <div class="label">Oportunidades</div>
+        </div>
+        <div class="stat-card critica">
+            <div class="valor" id="totalCriticas">-</div>
+            <div class="label">Criticas</div>
+        </div>
+        <div class="stat-card alta">
+            <div class="valor" id="totalAltas">-</div>
+            <div class="label">Alta Prioridade</div>
+        </div>
+        <div class="stat-card">
+            <div class="valor" id="totalValor">-</div>
+            <div class="label">Valor Estimado</div>
+        </div>
+        <div class="stat-card">
+            <div class="valor" id="totalProdutos">-</div>
+            <div class="label">Produtos</div>
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/transferencias.js') }}"></script>
+    <!-- Tabela de Oportunidades -->
+    <div class="content-card">
+        <h3>
+            Oportunidades de Transferencia
+            <div style="display: flex; gap: 10px;">
+                <button id="btnLimpar" class="btn-limpar" onclick="limparHistorico()">
+                    <span>Limpar Historico</span>
+                </button>
+                <button id="btnExportar" class="btn-exportar" onclick="exportarExcel()" disabled>
+                    <span>Exportar Excel</span>
+                </button>
+            </div>
+        </h3>
+
+        <div id="loadingArea" class="loading">
+            <div class="spinner"></div>
+            <p>Carregando oportunidades...</p>
+        </div>
+
+        <div id="tabelaArea" style="display: none; max-height: 500px; overflow-y: auto;">
+            <table class="tabela-transferencias">
+                <thead>
+                    <tr>
+                        <th style="width: 70px;">Codigo</th>
+                        <th style="width: 180px;">Descricao</th>
+                        <th style="width: 40px;">ABC</th>
+                        <th style="width: 200px;">Transferencia</th>
+                        <th style="width: 70px; text-align: right;">Qtd</th>
+                        <th style="width: 90px; text-align: right;">Valor</th>
+                        <th style="width: 80px; text-align: center;">Urgencia</th>
+                    </tr>
+                </thead>
+                <tbody id="tabelaBody"></tbody>
+            </table>
+        </div>
+
+        <div id="vazioArea" class="info-vazia" style="display: none;">
+            <h4>Nenhuma oportunidade de transferencia encontrada</h4>
+            <p>As oportunidades sao geradas automaticamente ao processar um pedido centralizado (CD).</p>
+            <p>Acesse <a href="/pedido_fornecedor_integrado">Pedido ao Fornecedor</a> e selecione destino CD para gerar oportunidades.</p>
+        </div>
+    </div>
+
+    <script>
+        // Carregar oportunidades ao iniciar
+        document.addEventListener('DOMContentLoaded', () => {
+            carregarOportunidades();
+        });
+
+        async function carregarOportunidades() {
+            const loadingArea = document.getElementById('loadingArea');
+            const tabelaArea = document.getElementById('tabelaArea');
+            const vazioArea = document.getElementById('vazioArea');
+            const btnExportar = document.getElementById('btnExportar');
+
+            loadingArea.style.display = 'block';
+            tabelaArea.style.display = 'none';
+            vazioArea.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/transferencias/oportunidades?horas=48');
+                const data = await response.json();
+
+                loadingArea.style.display = 'none';
+
+                if (!data.success) {
+                    throw new Error(data.erro || 'Erro ao carregar oportunidades');
+                }
+
+                const oportunidades = data.oportunidades || [];
+                const resumo = data.resumo || {};
+
+                // Atualizar estatisticas
+                document.getElementById('totalOportunidades').textContent = resumo.total || 0;
+                document.getElementById('totalCriticas').textContent = resumo.criticas || 0;
+                document.getElementById('totalAltas').textContent = resumo.altas || 0;
+                document.getElementById('totalValor').textContent = 'R$ ' + (resumo.valor_total || 0).toLocaleString('pt-BR', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+                document.getElementById('totalProdutos').textContent = resumo.produtos_unicos || 0;
+
+                if (oportunidades.length === 0) {
+                    vazioArea.style.display = 'block';
+                    btnExportar.disabled = true;
+                    return;
+                }
+
+                // Preencher tabela
+                const tbody = document.getElementById('tabelaBody');
+                tbody.innerHTML = oportunidades.map(op => {
+                    const coberturaOrigemClass = op.cobertura_origem_dias < 7 ? 'baixo' : 'ok';
+                    const coberturaDestinoClass = op.cobertura_destino_dias <= 0 ? 'critico' :
+                                                  op.cobertura_destino_dias < 7 ? 'baixo' : 'ok';
+
+                    return `
+                        <tr>
+                            <td>${op.cod_produto}</td>
+                            <td title="${op.descricao_produto || ''}">${(op.descricao_produto || '').substring(0, 25)}</td>
+                            <td><span class="badge-abc ${op.curva_abc || 'B'}">${op.curva_abc || 'B'}</span></td>
+                            <td>
+                                <div class="transferencia-fluxo">
+                                    <span class="loja">${op.nome_loja_origem || 'Loja ' + op.loja_origem}</span>
+                                    <span class="seta">→</span>
+                                    <span class="loja">${op.nome_loja_destino || 'Loja ' + op.loja_destino}</span>
+                                </div>
+                            </td>
+                            <td style="text-align: right; font-weight: bold;">${op.qtd_sugerida}</td>
+                            <td style="text-align: right;" class="valor-positivo">R$ ${(op.valor_estimado || 0).toLocaleString('pt-BR', {minimumFractionDigits: 0})}</td>
+                            <td style="text-align: center;">
+                                <span class="badge-urgencia ${op.urgencia}">${op.urgencia}</span>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                tabelaArea.style.display = 'block';
+                btnExportar.disabled = false;
+
+            } catch (error) {
+                loadingArea.style.display = 'none';
+                vazioArea.style.display = 'block';
+                vazioArea.innerHTML = `
+                    <h4>Erro ao carregar oportunidades</h4>
+                    <p>${error.message}</p>
+                    <p><button onclick="carregarOportunidades()" style="padding: 8px 16px; cursor: pointer;">Tentar Novamente</button></p>
+                `;
+            }
+        }
+
+        function exportarExcel() {
+            window.location.href = '/api/transferencias/exportar?horas=48';
+        }
+
+        async function limparHistorico() {
+            if (!confirm('Tem certeza que deseja limpar todo o historico de transferencias?\n\nEsta acao nao pode ser desfeita.')) {
+                return;
+            }
+
+            const btn = document.getElementById('btnLimpar');
+            btn.disabled = true;
+            btn.textContent = 'Limpando...';
+
+            try {
+                const response = await fetch('/api/transferencias/limpar', {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`Historico limpo com sucesso!\n${data.registros_removidos} registros removidos.`);
+                    carregarOportunidades();
+                } else {
+                    throw new Error(data.erro || 'Erro ao limpar historico');
+                }
+            } catch (error) {
+                alert('Erro ao limpar historico: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Limpar Historico';
+            }
+        }
+    </script>
 </body>
 </html>

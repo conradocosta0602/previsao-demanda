@@ -595,6 +595,92 @@ CREATE INDEX idx_vw_vendas_combo ON vw_vendas_mensais(cod_empresa, codigo, mes);
 COMMENT ON MATERIALIZED VIEW vw_vendas_mensais IS 'Agregação mensal de vendas para consultas rápidas';
 
 -- ============================================================================
+-- CAMADA 5: REGRAS DE NEGÓCIO (Situação de Compra)
+-- ============================================================================
+
+-- Tabela: Regras de Situação de Compra
+-- Define as regras para cada código de situação de compra
+CREATE TABLE IF NOT EXISTS situacao_compra_regras (
+    codigo_situacao VARCHAR(5) PRIMARY KEY,
+    descricao VARCHAR(100) NOT NULL,
+    bloqueia_compra_automatica BOOLEAN DEFAULT TRUE,
+    permite_compra_manual BOOLEAN DEFAULT FALSE,
+    cor_alerta VARCHAR(20) DEFAULT '#FF6B6B', -- Cor para exibição na interface
+    icone VARCHAR(50) DEFAULT 'block', -- Ícone para interface
+    ordem_exibicao INTEGER DEFAULT 0,
+    ativo BOOLEAN DEFAULT TRUE,
+
+    -- Controle
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE situacao_compra_regras IS 'Regras de bloqueio por situação de compra (SIT_COMPRA)';
+
+-- Inserir regras padrão
+INSERT INTO situacao_compra_regras (codigo_situacao, descricao, bloqueia_compra_automatica, permite_compra_manual, cor_alerta, icone, ordem_exibicao) VALUES
+    ('FL', 'Fora de Linha', TRUE, FALSE, '#DC3545', 'ban', 1),
+    ('NC', 'Não Comprar', TRUE, FALSE, '#DC3545', 'times-circle', 2),
+    ('EN', 'Encomenda', TRUE, TRUE, '#FFC107', 'clock', 3),
+    ('CO', 'Compra Oportunidade', TRUE, TRUE, '#17A2B8', 'star', 4),
+    ('FF', 'Falta no Fornecedor', TRUE, FALSE, '#6C757D', 'truck', 5)
+ON CONFLICT (codigo_situacao) DO NOTHING;
+
+-- ============================================================================
+
+-- Tabela: Situação de Compra por Item/Loja
+-- Armazena a situação de compra atual de cada item por loja
+CREATE TABLE IF NOT EXISTS situacao_compra_itens (
+    id SERIAL PRIMARY KEY,
+    cod_empresa INTEGER REFERENCES cadastro_lojas(cod_empresa),
+    codigo INTEGER,  -- Não usa FK pois pode haver códigos não cadastrados
+
+    -- Situação
+    sit_compra VARCHAR(5) REFERENCES situacao_compra_regras(codigo_situacao),
+
+    -- Histórico
+    data_inicio DATE DEFAULT CURRENT_DATE,
+    data_fim DATE, -- NULL = vigente
+    motivo TEXT,
+    usuario_alteracao VARCHAR(100),
+
+    -- Controle
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(cod_empresa, codigo)
+);
+
+CREATE INDEX idx_sit_compra_loja ON situacao_compra_itens(cod_empresa);
+CREATE INDEX idx_sit_compra_codigo ON situacao_compra_itens(codigo);
+CREATE INDEX idx_sit_compra_situacao ON situacao_compra_itens(sit_compra);
+
+COMMENT ON TABLE situacao_compra_itens IS 'Situação de compra atual por item e loja';
+
+-- ============================================================================
+
+-- View: Itens Bloqueados para Compra Automática
+CREATE OR REPLACE VIEW vw_itens_bloqueados_compra AS
+SELECT
+    sci.cod_empresa,
+    sci.codigo,
+    sci.sit_compra,
+    scr.descricao as descricao_situacao,
+    scr.bloqueia_compra_automatica,
+    scr.permite_compra_manual,
+    scr.cor_alerta,
+    scr.icone,
+    sci.data_inicio,
+    sci.motivo
+FROM situacao_compra_itens sci
+JOIN situacao_compra_regras scr ON sci.sit_compra = scr.codigo_situacao
+WHERE scr.bloqueia_compra_automatica = TRUE
+  AND scr.ativo = TRUE
+  AND (sci.data_fim IS NULL OR sci.data_fim >= CURRENT_DATE);
+
+COMMENT ON VIEW vw_itens_bloqueados_compra IS 'Itens bloqueados para compra automática com detalhes da regra';
+
+-- ============================================================================
 -- GRANTS E PERMISSÕES
 -- ============================================================================
 

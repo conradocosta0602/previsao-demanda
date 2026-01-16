@@ -6,356 +6,896 @@
     <title>Pedido ao Fornecedor - Integrado</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
-        .filtros-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
+        * { box-sizing: border-box; }
+
+        body {
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+            min-height: 100vh;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
-        .filtro-item label {
-            display: block;
-            font-weight: bold;
-            margin-bottom: 5px;
-            color: #333;
+
+        .page-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
         }
-        .filtro-item select, .filtro-item input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .info-cobertura {
-            background: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            padding: 12px;
-            margin: 15px 0;
-            border-radius: 4px;
-        }
-        .info-cobertura h4 {
-            margin: 0 0 8px 0;
-            color: #1565c0;
-        }
-        .info-cobertura p {
-            margin: 4px 0;
-            font-size: 0.9em;
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        .stat-card {
+
+        /* Header */
+        .page-header {
             background: white;
-            border-radius: 8px;
-            padding: 15px;
-            text-align: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            padding: 16px 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .stat-card .valor {
-            font-size: 1.8em;
-            font-weight: bold;
-            color: #333;
+
+        .page-header h1 {
+            font-size: 1.4em;
+            color: #1a1a2e;
+            margin: 0;
+            font-weight: 600;
         }
-        .stat-card .label {
+
+        .page-header .subtitle {
+            color: #6b7280;
             font-size: 0.85em;
-            color: #666;
-            margin-top: 5px;
+            margin-top: 2px;
         }
-        .stat-card.destaque {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+        .btn-menu {
+            padding: 8px 16px;
+            background: #6366f1;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 0.85em;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .btn-menu:hover { background: #4f46e5; }
+
+        /* Layout Grid */
+        .main-layout {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 20px;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            height: fit-content;
+            position: sticky;
+            top: 20px;
+        }
+
+        .sidebar h3 {
+            font-size: 0.95em;
+            color: #374151;
+            margin: 0 0 16px 0;
+            font-weight: 600;
+        }
+
+        .filtro-grupo {
+            margin-bottom: 14px;
+        }
+
+        .filtro-grupo label {
+            display: block;
+            font-size: 0.8em;
+            color: #6b7280;
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+
+        .filtro-grupo select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            font-size: 0.85em;
+            color: #374151;
+            background: #f9fafb;
+            cursor: pointer;
+        }
+
+        .filtro-grupo select:focus {
+            outline: none;
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+        }
+
+        /* Multi-select styling */
+        .filtro-grupo select[multiple] {
+            min-height: 80px;
+            padding: 4px;
+        }
+
+        .filtro-grupo select[multiple] option {
+            padding: 6px 8px;
+            border-radius: 4px;
+            margin-bottom: 2px;
+            cursor: pointer;
+        }
+
+        .filtro-grupo select[multiple] option:checked {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
             color: white;
         }
-        .stat-card.destaque .valor, .stat-card.destaque .label {
+
+        .filtro-grupo select[multiple] option:hover {
+            background: #f3f4f6;
+        }
+
+        .filtro-hint {
+            font-size: 0.7em;
+            color: #9ca3af;
+            margin-top: 4px;
+        }
+
+        .info-box {
+            background: #f0f9ff;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 16px 0;
+            font-size: 0.78em;
+            color: #0369a1;
+            line-height: 1.5;
+        }
+
+        .info-box strong { color: #0c4a6e; }
+
+        .btn-gerar {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
             color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
-        .stat-card.alerta {
-            background: #fff3e0;
-            border-left: 4px solid #ff9800;
+
+        .btn-gerar:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99,102,241,0.3);
         }
+
+        .btn-gerar:disabled {
+            background: #d1d5db;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* Content Area */
+        .content-area {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* Cards */
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #f3f4f6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h3 {
+            font-size: 0.95em;
+            color: #374151;
+            margin: 0;
+            font-weight: 600;
+        }
+
+        .card-body { padding: 20px; }
+
+        /* Resumo Compacto */
+        .resumo-header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+            color: white;
+            padding: 20px 24px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+
+        .resumo-header .titulo {
+            font-size: 0.85em;
+            opacity: 0.8;
+            margin-bottom: 4px;
+        }
+
+        .resumo-header .fornecedor-nome {
+            font-size: 1.1em;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .resumo-metricas {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+        }
+
+        .metrica {
+            text-align: center;
+        }
+
+        .metrica .valor {
+            font-size: 1.4em;
+            font-weight: 700;
+        }
+
+        .metrica .label {
+            font-size: 0.7em;
+            opacity: 0.8;
+            margin-top: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        /* Fornecedor Card Redesign */
         .fornecedor-card {
             background: white;
-            border-radius: 8px;
-            margin-bottom: 15px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            margin-bottom: 12px;
             overflow: hidden;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: box-shadow 0.2s;
         }
-        .fornecedor-header {
-            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+
+        .fornecedor-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+
+        .fornecedor-card-header {
+            background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
             color: white;
-            padding: 15px;
+            padding: 14px 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .fornecedor-header h3 {
+
+        .fornecedor-info h4 {
             margin: 0;
-            font-size: 1.1em;
+            font-size: 0.95em;
+            font-weight: 600;
         }
+
+        .fornecedor-info .cnpj {
+            font-size: 0.75em;
+            opacity: 0.7;
+            margin-top: 2px;
+        }
+
+        .fornecedor-valor {
+            text-align: right;
+        }
+
+        .fornecedor-valor .total {
+            font-size: 1.2em;
+            font-weight: 700;
+        }
+
+        .fornecedor-valor .itens {
+            font-size: 0.75em;
+            opacity: 0.8;
+        }
+
+        .fornecedor-card-body {
+            padding: 14px 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f9fafb;
+        }
+
         .fornecedor-stats {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-            margin-top: 10px;
+            display: flex;
+            gap: 24px;
         }
-        .fornecedor-stats div {
+
+        .fornecedor-stat {
             text-align: center;
         }
-        .fornecedor-stats .stat-valor {
-            font-weight: bold;
+
+        .fornecedor-stat .num {
             font-size: 1.1em;
+            font-weight: 600;
+            color: #374151;
         }
-        .fornecedor-stats .stat-label {
+
+        .fornecedor-stat .lbl {
+            font-size: 0.7em;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .fornecedor-acoes {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
             font-size: 0.75em;
-            opacity: 0.9;
+            border-radius: 5px;
+            cursor: pointer;
+            border: none;
+            font-weight: 500;
+            transition: all 0.2s;
         }
-        .itens-table {
+
+        .btn-exportar-forn {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-exportar-forn:hover { background: #059669; }
+
+        .btn-transf-forn {
+            background: #0891b2;
+            color: white;
+        }
+
+        .btn-transf-forn:hover { background: #0e7490; }
+
+        .btn-ver-itens {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .btn-ver-itens:hover { background: #d1d5db; }
+
+        /* Tabela Moderna */
+        .tabela-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+        }
+
+        .tabela-itens {
             width: 100%;
             border-collapse: collapse;
-            font-size: 0.85em;
+            font-size: 0.8em;
         }
-        .itens-table th {
-            background: #f8f9fa;
+
+        .tabela-itens th {
+            background: #f9fafb;
             padding: 10px 8px;
             text-align: left;
-            border-bottom: 2px solid #dee2e6;
+            font-weight: 600;
+            color: #6b7280;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
             position: sticky;
             top: 0;
+            border-bottom: 1px solid #e5e7eb;
         }
-        .itens-table td {
-            padding: 8px;
-            border-bottom: 1px solid #eee;
+
+        .tabela-itens td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #f3f4f6;
+            color: #374151;
         }
-        .itens-table tr:hover {
-            background: #f8f9fa;
-        }
-        .badge-abc {
+
+        .tabela-itens tr:hover { background: #f9fafb; }
+
+        .tabela-itens .col-codigo { width: 70px; }
+        .tabela-itens .col-descricao { width: auto; }
+        .tabela-itens .col-num { width: 70px; text-align: right; }
+        .tabela-itens .col-valor { width: 90px; text-align: right; }
+
+        .badge {
             display: inline-block;
             padding: 2px 8px;
             border-radius: 4px;
-            font-weight: bold;
-            font-size: 0.8em;
+            font-size: 0.75em;
+            font-weight: 600;
         }
-        .badge-abc.A { background: #4caf50; color: white; }
-        .badge-abc.B { background: #ff9800; color: white; }
-        .badge-abc.C { background: #f44336; color: white; }
-        .cobertura-valor {
-            font-weight: bold;
+
+        .badge-a { background: #dcfce7; color: #166534; }
+        .badge-b { background: #fef3c7; color: #92400e; }
+        .badge-c { background: #fee2e2; color: #991b1b; }
+
+        .badge-status {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.7em;
+            font-weight: 600;
+            text-transform: uppercase;
         }
-        .cobertura-valor.critico { color: #c62828; }
-        .cobertura-valor.baixo { color: #e65100; }
-        .cobertura-valor.ok { color: #2e7d32; }
-        .btn-gerar {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 12px 30px;
+
+        .badge-pedir { background: #dbeafe; color: #1e40af; }
+        .badge-bloqueado { background: #fef3c7; color: #92400e; }
+        .badge-ruptura { background: #fee2e2; color: #dc2626; }
+        .badge-ok { background: #d1fae5; color: #065f46; }
+
+        .linha-ok {
+            background: #f0fdf4 !important;
+            opacity: 0.85;
+        }
+
+        .linha-bloqueada {
+            background: #fffbeb !important;
+        }
+
+        .linha-bloqueada:hover {
+            background: #fef3c7 !important;
+        }
+
+        .estoque-zero {
+            background: #fef2f2;
+            color: #dc2626;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .badge-transf {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            color: #1e40af;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.7em;
+            font-weight: 600;
+            margin-left: 8px;
+            cursor: help;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            border: 1px solid #93c5fd;
+            white-space: nowrap;
+        }
+
+        .badge-transf .icon {
+            font-size: 0.9em;
+        }
+
+        /* Badge de transferencia - ENVIAR (loja origem) */
+        .badge-transf-enviar {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            color: #92400e;
+            border-color: #fbbf24;
+        }
+
+        /* Badge de transferencia - RECEBER (loja destino) */
+        .badge-transf-receber {
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            color: #065f46;
+            border-color: #34d399;
+        }
+
+        /* Linha com transferencia (origem - vai enviar) */
+        .linha-transf-origem {
+            background: #fffbeb !important;
+        }
+        .linha-transf-origem:hover {
+            background: #fef3c7 !important;
+        }
+
+        /* Linha com transferencia (destino - vai receber) */
+        .linha-transf-destino {
+            background: #ecfdf5 !important;
+        }
+        .linha-transf-destino:hover {
+            background: #d1fae5 !important;
+        }
+
+        .cobertura-info {
+            font-size: 0.85em;
+        }
+
+        .cobertura-info .atual { color: #6b7280; }
+        .cobertura-info .seta { color: #9ca3af; margin: 0 3px; }
+        .cobertura-info .pos { color: #059669; font-weight: 600; }
+
+        /* Secao por fornecedor na tabela */
+        .fornecedor-section {
+            margin-bottom: 20px;
+            border: 1px solid #e5e7eb;
             border-radius: 8px;
-            font-size: 1em;
-            cursor: pointer;
-            width: 100%;
-            margin-top: 10px;
+            overflow: hidden;
         }
-        .btn-gerar:hover {
-            opacity: 0.9;
+
+        .fornecedor-section-header {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            padding: 12px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .btn-gerar:disabled {
-            background: #ccc;
-            cursor: not-allowed;
+
+        .fornecedor-section-header h4 {
+            margin: 0;
+            font-size: 0.95em;
+            color: #374151;
+            font-weight: 600;
+        }
+
+        .fornecedor-section-header .stats {
+            font-size: 0.8em;
+            color: #6b7280;
+        }
+
+        .fornecedor-section-header .stats span {
+            margin-left: 12px;
+        }
+
+        .fornecedor-section-header .valor-total {
+            color: #059669;
+            font-weight: 600;
+        }
+
+        .fornecedor-section .tabela-container {
+            max-height: 300px;
+            border: none;
+            border-radius: 0;
+        }
+
+        /* Layout Multi-Loja: Sub-secoes por loja dentro do fornecedor */
+        .loja-section {
+            margin: 0;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .loja-section:first-child {
+            border-top: none;
+        }
+
+        .loja-section-header {
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+            padding: 10px 16px 10px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #d1fae5;
+        }
+
+        .loja-section-header h5 {
+            margin: 0;
+            font-size: 0.85em;
+            color: #065f46;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .loja-section-header h5::before {
+            content: '📍';
+            font-size: 0.9em;
+        }
+
+        .loja-section-header .stats {
+            font-size: 0.75em;
+            color: #047857;
+        }
+
+        .loja-section-header .stats span {
+            margin-left: 10px;
+        }
+
+        .loja-section-header .valor-total {
+            color: #047857;
+            font-weight: 600;
+        }
+
+        .loja-section-header .stat-pedir {
+            color: #1e40af;
+            font-weight: 500;
+        }
+
+        .loja-section-header .stat-bloq {
+            color: #92400e;
+            font-weight: 500;
+        }
+
+        .loja-section-header .stat-ok {
+            color: #065f46;
+            font-weight: 500;
+        }
+
+        .loja-section-header .stat-transf-enviar {
+            color: #92400e;
+            font-weight: 600;
+            background: #fef3c7;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .loja-section-header .stat-transf-receber {
+            color: #065f46;
+            font-weight: 600;
+            background: #d1fae5;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        /* Badge de transferencia no header do fornecedor */
+        .fornecedor-section-header .stat-transf {
+            color: #1e40af;
+            font-weight: 600;
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            padding: 2px 8px;
+            border-radius: 8px;
+            border: 1px solid #93c5fd;
+        }
+
+        .loja-section .tabela-container {
+            max-height: 250px;
+            border: none;
+            border-radius: 0;
+            margin-left: 8px;
+            background: #fafffe;
+        }
+
+        /* Estilo do header do fornecedor quando tem sub-lojas */
+        .fornecedor-section.multiloja .fornecedor-section-header {
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            border-bottom: 2px solid #3b82f6;
+        }
+
+        .fornecedor-section.multiloja .fornecedor-section-header h4 {
+            color: #1e40af;
+        }
+
+        .fornecedor-section.multiloja .fornecedor-section-header h4::before {
+            content: '📦 ';
+        }
+
+        /* Progress */
+        .progress-container {
+            padding: 40px;
+            text-align: center;
+        }
+
+        .progress-bar {
+            height: 6px;
+            background: #e5e7eb;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6);
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        .progress-text {
+            color: #6b7280;
+            font-size: 0.9em;
+        }
+
+        /* Estados */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #6b7280;
+        }
+
+        .empty-state h4 {
+            color: #374151;
+            margin-bottom: 8px;
+        }
+
+        .error-state {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 8px;
+            padding: 20px;
+            color: #dc2626;
+        }
+
+        /* Responsivo */
+        @media (max-width: 900px) {
+            .main-layout {
+                grid-template-columns: 1fr;
+            }
+            .sidebar {
+                position: static;
+            }
+            .resumo-metricas {
+                grid-template-columns: repeat(2, 1fr);
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="page-container">
         <!-- Header -->
-        <div class="header-compact" style="display: flex; justify-content: space-between; align-items: center;">
-            <div class="logo-section">
-                <h1>Pedido ao Fornecedor - Integrado</h1>
-                <p>Cobertura baseada em ABC com Previsao de Demanda</p>
+        <header class="page-header">
+            <div>
+                <h1>Pedido ao Fornecedor</h1>
+                <div class="subtitle">Calculo integrado com previsao de demanda e cobertura ABC</div>
             </div>
-            <a href="/menu" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; font-size: 0.9em;">
-                Menu Principal
-            </a>
-        </div>
+            <a href="/menu" class="btn-menu">Menu Principal</a>
+        </header>
 
-        <div class="main-grid">
-            <!-- Sidebar: Filtros -->
-            <div class="sidebar-left">
-                <div class="card-compact">
-                    <h3>Filtros</h3>
+        <div class="main-layout">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <h3>Parametros</h3>
 
-                    <div class="filtros-grid" style="grid-template-columns: 1fr;">
-                        <div class="filtro-item">
-                            <label>Destino</label>
-                            <select id="destino_tipo">
-                                <option value="Loja">Lojas (Direto)</option>
-                                <option value="CD">CD (Centralizado)</option>
-                            </select>
-                        </div>
-
-                        <div class="filtro-item">
-                            <label>Loja/CD</label>
-                            <select id="cod_empresa">
-                                <option value="TODAS">Todas</option>
-                            </select>
-                        </div>
-
-                        <div class="filtro-item">
-                            <label>Fornecedor</label>
-                            <select id="fornecedor">
-                                <option value="TODOS">Todos</option>
-                            </select>
-                        </div>
-
-                        <div class="filtro-item">
-                            <label>Categoria</label>
-                            <select id="categoria">
-                                <option value="TODAS">Todas</option>
-                            </select>
-                        </div>
-
-                        <div class="filtro-item">
-                            <label>Cobertura (dias)</label>
-                            <select id="cobertura_dias">
-                                <option value="">Automatica (ABC)</option>
-                                <option value="15">15 dias</option>
-                                <option value="21">21 dias</option>
-                                <option value="30">30 dias</option>
-                                <option value="45">45 dias</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="info-cobertura">
-                        <h4>Formula de Cobertura (ABC)</h4>
-                        <p><strong>Cobertura = Lead Time + Ciclo (7d) + Seguranca ABC</strong></p>
-                        <p>Seguranca ABC: A=+2d, B=+4d, C=+6d</p>
-                        <p>Nivel Servico: A=98%, B=95%, C=90%</p>
-                    </div>
-
-                    <button id="btnGerar" class="btn-gerar" onclick="gerarPedido()">
-                        Gerar Pedido Integrado
-                    </button>
-
-                    <!-- Navegacao -->
-                    <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd;">
-                        <a href="/menu" style="display: block; text-align: center; padding: 8px; color: #666; text-decoration: none;">
-                            Voltar ao Menu
-                        </a>
-                    </div>
+                <div class="filtro-grupo">
+                    <label>Destino</label>
+                    <select id="destino_tipo">
+                        <option value="Loja">Lojas (Direto)</option>
+                        <option value="CD">CD (Centralizado)</option>
+                    </select>
                 </div>
-            </div>
 
-            <!-- Main Content -->
-            <div class="main-content">
+                <div class="filtro-grupo">
+                    <label>Loja/CD</label>
+                    <select id="cod_empresa" multiple>
+                    </select>
+                    <div class="filtro-hint">Ctrl+Click para selecionar varias</div>
+                </div>
+
+                <div class="filtro-grupo">
+                    <label>Fornecedor</label>
+                    <select id="fornecedor" multiple>
+                    </select>
+                    <div class="filtro-hint">Ctrl+Click para selecionar varios</div>
+                </div>
+
+                <div class="filtro-grupo">
+                    <label>Categoria</label>
+                    <select id="categoria" multiple>
+                    </select>
+                    <div class="filtro-hint">Ctrl+Click para selecionar varias</div>
+                </div>
+
+                <div class="filtro-grupo">
+                    <label>Cobertura</label>
+                    <select id="cobertura_dias">
+                        <option value="">Automatica (ABC)</option>
+                        <option value="15">15 dias</option>
+                        <option value="21">21 dias</option>
+                        <option value="30">30 dias</option>
+                        <option value="45">45 dias</option>
+                    </select>
+                </div>
+
+                <div class="info-box">
+                    <strong>Cobertura ABC:</strong><br>
+                    Lead Time + Ciclo + Seguranca<br>
+                    A: +2d | B: +4d | C: +6d
+                </div>
+
+                <button id="btnGerar" class="btn-gerar" onclick="gerarPedido()">
+                    Gerar Pedido
+                </button>
+            </aside>
+
+            <!-- Content -->
+            <main class="content-area">
                 <!-- Progress -->
-                <div id="progress" class="card-compact" style="display: none;">
-                    <div class="progress-bar-compact">
-                        <div class="progress-fill" id="progressFill"></div>
+                <div id="progressCard" class="card" style="display: none;">
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                        </div>
+                        <div class="progress-text" id="progressText">Processando...</div>
                     </div>
-                    <p id="progressText" style="text-align: center; margin-top: 10px;">Processando...</p>
                 </div>
 
-                <!-- Resultados -->
-                <div id="results" style="display: none;">
-                    <!-- Estatisticas -->
-                    <div class="stats-grid" id="statsGrid"></div>
-
-                    <!-- Agregacao por Fornecedor -->
-                    <div class="card-compact">
-                        <h3>Pedidos por Fornecedor</h3>
-                        <div id="fornecedoresLista"></div>
-                    </div>
-
-                    <!-- Tabela de Itens -->
-                    <div class="card-compact">
-                        <h3>Detalhamento de Itens</h3>
-                        <div style="max-height: 500px; overflow-y: auto;">
-                            <table class="itens-table">
-                                <thead>
-                                    <tr>
-                                        <th>Codigo</th>
-                                        <th>Descricao</th>
-                                        <th>Loja</th>
-                                        <th>ABC</th>
-                                        <th>Demanda/Dia</th>
-                                        <th>Estoque</th>
-                                        <th>Cob. Atual</th>
-                                        <th>Cob. Neces.</th>
-                                        <th>Qtd Pedido</th>
-                                        <th>Cob. Pos</th>
-                                        <th>Valor</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="itensBody"></tbody>
-                            </table>
-                        </div>
+                <!-- Instrucoes -->
+                <div id="instrucoes" class="card">
+                    <div class="card-body empty-state">
+                        <h4>Bem-vindo ao Pedido ao Fornecedor</h4>
+                        <p>Configure os parametros na lateral e clique em "Gerar Pedido" para calcular as necessidades de compra.</p>
                     </div>
                 </div>
 
                 <!-- Erro -->
-                <div id="error" class="card-compact" style="display: none; background: #ffebee;">
-                    <h3 style="color: #c62828;">Erro</h3>
-                    <p id="errorMessage"></p>
-                    <button onclick="location.reload()" class="btn-secondary-compact">Tentar Novamente</button>
+                <div id="errorCard" class="card" style="display: none;">
+                    <div class="card-body">
+                        <div class="error-state">
+                            <strong>Erro ao processar</strong>
+                            <p id="errorMessage"></p>
+                            <button onclick="location.reload()" class="btn-acao" style="margin-top: 10px; background: #dc2626; color: white;">
+                                Tentar Novamente
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Instrucoes iniciais -->
-                <div id="instrucoes" class="card-compact">
-                    <h3>Pedido ao Fornecedor Integrado</h3>
-                    <p>Este modulo integra a previsao de demanda com o calculo de pedidos ao fornecedor.</p>
+                <!-- Resultados -->
+                <div id="results" style="display: none;">
+                    <!-- Resumo Geral -->
+                    <div class="resumo-header" id="resumoHeader">
+                        <div class="titulo">RESUMO DO PEDIDO</div>
+                        <div class="fornecedor-nome" id="resumoTitulo">Carregando...</div>
+                        <div class="resumo-metricas" id="resumoMetricas"></div>
+                    </div>
 
-                    <h4>Caracteristicas:</h4>
-                    <ul>
-                        <li><strong>Cobertura ABC:</strong> Calculo automatico baseado em Lead Time + Ciclo + Seguranca ABC</li>
-                        <li><strong>Curva ABC:</strong> Usa a classificacao do cadastro de produtos</li>
-                        <li><strong>Nivel de Servico:</strong> A=98%, B=95%, C=90%</li>
-                        <li><strong>Seguranca ABC:</strong> A=+2d, B=+4d, C=+6d</li>
-                        <li><strong>Arredondamento:</strong> Multiplo de caixa</li>
-                    </ul>
+                    <!-- Lista de Fornecedores -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Pedidos por Fornecedor</h3>
+                        </div>
+                        <div class="card-body" id="fornecedoresLista" style="padding: 12px;">
+                        </div>
+                    </div>
 
-                    <h4>Como usar:</h4>
-                    <ol>
-                        <li>Selecione o destino (Lojas ou CD)</li>
-                        <li>Opcionalmente filtre por fornecedor ou categoria</li>
-                        <li>Escolha cobertura automatica ou fixa</li>
-                        <li>Clique em "Gerar Pedido Integrado"</li>
-                    </ol>
+                    <!-- Tabela Detalhada - Segregada por Fornecedor -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Detalhamento de Itens</h3>
+                            <span id="totalItensLabel" style="font-size: 0.8em; color: #6b7280;"></span>
+                        </div>
+                        <div class="card-body" id="detalhamentoContainer" style="padding: 12px;">
+                            <!-- Tabelas serao geradas dinamicamente por fornecedor -->
+                        </div>
+                    </div>
                 </div>
-            </div>
+            </main>
         </div>
     </div>
 
     <script>
-        // Carregar filtros ao iniciar
-        document.addEventListener('DOMContentLoaded', async () => {
-            await carregarFiltros();
-        });
+        let dadosPedidoAtual = null;
+
+        document.addEventListener('DOMContentLoaded', carregarFiltros);
 
         async function carregarFiltros() {
             try {
-                // Carregar lojas
-                const lojasResp = await fetch('/api/lojas');
+                const [lojasResp, fornResp, catResp] = await Promise.all([
+                    fetch('/api/lojas'),
+                    fetch('/api/fornecedores'),
+                    fetch('/api/categorias')
+                ]);
+
                 const lojas = await lojasResp.json();
+                const fornecedores = await fornResp.json();
+                const categorias = await catResp.json();
+
                 const selectLoja = document.getElementById('cod_empresa');
-                lojas.forEach(loja => {
+                lojas.forEach(l => {
                     const opt = document.createElement('option');
-                    opt.value = loja.cod_empresa;
-                    opt.textContent = loja.nome_loja;
+                    opt.value = l.cod_empresa;
+                    opt.textContent = l.nome_loja;
                     selectLoja.appendChild(opt);
                 });
 
-                // Carregar fornecedores
-                const fornResp = await fetch('/api/fornecedores');
-                const fornecedores = await fornResp.json();
                 const selectForn = document.getElementById('fornecedor');
                 fornecedores.forEach(f => {
                     const opt = document.createElement('option');
-                    opt.value = f.codigo_fornecedor;
+                    opt.value = f.nome_fornecedor;
                     opt.textContent = f.nome_fornecedor;
                     selectForn.appendChild(opt);
                 });
 
-                // Carregar categorias
-                const catResp = await fetch('/api/categorias');
-                const categorias = await catResp.json();
                 const selectCat = document.getElementById('categoria');
                 categorias.forEach(c => {
                     const opt = document.createElement('option');
@@ -363,180 +903,542 @@
                     opt.textContent = c;
                     selectCat.appendChild(opt);
                 });
-
-            } catch (error) {
-                console.error('Erro ao carregar filtros:', error);
+            } catch (e) {
+                console.error('Erro ao carregar filtros:', e);
             }
         }
 
-        async function gerarPedido() {
-            const btnGerar = document.getElementById('btnGerar');
-            btnGerar.disabled = true;
-            btnGerar.textContent = 'Processando...';
+        // Helper: obter valores selecionados de um multi-select
+        function getSelectedValues(selectId) {
+            const select = document.getElementById(selectId);
+            const selected = Array.from(select.selectedOptions).map(opt => opt.value);
+            // Se nenhum selecionado, retorna array vazio (API tratara como "todos")
+            return selected;
+        }
 
-            document.getElementById('progress').style.display = 'block';
+        async function gerarPedido() {
+            const btn = document.getElementById('btnGerar');
+            btn.disabled = true;
+            btn.textContent = 'Processando...';
+
+            document.getElementById('progressCard').style.display = 'block';
             document.getElementById('results').style.display = 'none';
-            document.getElementById('error').style.display = 'none';
+            document.getElementById('errorCard').style.display = 'none';
             document.getElementById('instrucoes').style.display = 'none';
 
-            // Simular progresso
             let progress = 0;
-            const progressInterval = setInterval(() => {
-                progress += 5;
-                if (progress <= 90) {
-                    document.getElementById('progressFill').style.width = progress + '%';
-                    if (progress < 30) {
-                        document.getElementById('progressText').textContent = 'Buscando itens...';
-                    } else if (progress < 60) {
-                        document.getElementById('progressText').textContent = 'Calculando cobertura hibrida...';
-                    } else {
-                        document.getElementById('progressText').textContent = 'Agregando por fornecedor...';
-                    }
-                }
+            const interval = setInterval(() => {
+                progress = Math.min(progress + 5, 90);
+                document.getElementById('progressFill').style.width = progress + '%';
+                document.getElementById('progressText').textContent =
+                    progress < 30 ? 'Buscando itens...' :
+                    progress < 60 ? 'Calculando cobertura...' : 'Agregando resultados...';
             }, 300);
 
             try {
-                const coberturaValue = document.getElementById('cobertura_dias').value;
+                const cobertura = document.getElementById('cobertura_dias').value;
+                const empresasSelecionadas = getSelectedValues('cod_empresa');
+                const fornecedoresSelecionados = getSelectedValues('fornecedor');
+                const categoriasSelecionadas = getSelectedValues('categoria');
 
                 const response = await fetch('/api/pedido_fornecedor_integrado', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         destino_tipo: document.getElementById('destino_tipo').value,
-                        cod_empresa: document.getElementById('cod_empresa').value,
-                        fornecedor: document.getElementById('fornecedor').value,
-                        categoria: document.getElementById('categoria').value,
-                        cobertura_dias: coberturaValue ? parseInt(coberturaValue) : null
+                        // Suporta array ou valor unico para compatibilidade
+                        cod_empresa: empresasSelecionadas.length === 1 ? empresasSelecionadas[0] : (empresasSelecionadas.length > 0 ? empresasSelecionadas : 'TODAS'),
+                        fornecedor: fornecedoresSelecionados.length === 1 ? fornecedoresSelecionados[0] : (fornecedoresSelecionados.length > 0 ? fornecedoresSelecionados : 'TODOS'),
+                        categoria: categoriasSelecionadas.length === 1 ? categoriasSelecionadas[0] : (categoriasSelecionadas.length > 0 ? categoriasSelecionadas : 'TODAS'),
+                        cobertura_dias: cobertura ? parseInt(cobertura) : null
                     })
                 });
 
-                clearInterval(progressInterval);
+                clearInterval(interval);
                 document.getElementById('progressFill').style.width = '100%';
-                document.getElementById('progressText').textContent = 'Concluido!';
 
                 const data = await response.json();
 
                 setTimeout(() => {
-                    document.getElementById('progress').style.display = 'none';
-
+                    document.getElementById('progressCard').style.display = 'none';
                     if (data.success) {
                         exibirResultados(data);
                     } else {
-                        document.getElementById('error').style.display = 'block';
+                        document.getElementById('errorCard').style.display = 'block';
                         document.getElementById('errorMessage').textContent = data.erro || 'Erro desconhecido';
                     }
                 }, 500);
 
-            } catch (error) {
-                clearInterval(progressInterval);
-                document.getElementById('progress').style.display = 'none';
-                document.getElementById('error').style.display = 'block';
-                document.getElementById('errorMessage').textContent = 'Erro de conexao: ' + error.message;
+            } catch (e) {
+                clearInterval(interval);
+                document.getElementById('progressCard').style.display = 'none';
+                document.getElementById('errorCard').style.display = 'block';
+                document.getElementById('errorMessage').textContent = 'Erro de conexao: ' + e.message;
             }
 
-            btnGerar.disabled = false;
-            btnGerar.textContent = 'Gerar Pedido Integrado';
+            btn.disabled = false;
+            btn.textContent = 'Gerar Pedido';
         }
 
         function exibirResultados(data) {
+            dadosPedidoAtual = data;
             document.getElementById('results').style.display = 'block';
 
             const stats = data.estatisticas;
             const agregacao = data.agregacao_fornecedor;
+            const fornecedor = document.getElementById('fornecedor').value;
 
-            // Estatisticas
-            document.getElementById('statsGrid').innerHTML = `
-                <div class="stat-card destaque">
-                    <div class="valor">${stats.total_itens_pedido}</div>
-                    <div class="label">Itens a Pedir</div>
-                </div>
-                <div class="stat-card destaque">
-                    <div class="valor">R$ ${stats.valor_total_pedido.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</div>
-                    <div class="label">Valor Total</div>
-                </div>
-                <div class="stat-card">
-                    <div class="valor">${agregacao.total_fornecedores}</div>
-                    <div class="label">Fornecedores</div>
-                </div>
-                <div class="stat-card">
+            // Resumo Header
+            document.getElementById('resumoTitulo').textContent =
+                fornecedor !== 'TODOS' ? fornecedor : `${agregacao.total_fornecedores} Fornecedores`;
+
+            const totalBloqueados = agregacao.total_itens_bloqueados || 0;
+
+            document.getElementById('resumoMetricas').innerHTML = `
+                <div class="metrica">
                     <div class="valor">${stats.total_itens_analisados}</div>
-                    <div class="label">Itens Analisados</div>
+                    <div class="label">Total Itens</div>
                 </div>
-                <div class="stat-card ${stats.itens_ruptura_iminente > 0 ? 'alerta' : ''}">
+                <div class="metrica">
+                    <div class="valor">${stats.total_itens_pedido}</div>
+                    <div class="label">Itens Pedidos</div>
+                </div>
+                <div class="metrica">
+                    <div class="valor">${totalBloqueados}</div>
+                    <div class="label">Bloqueados</div>
+                </div>
+                <div class="metrica">
                     <div class="valor">${stats.itens_ruptura_iminente}</div>
-                    <div class="label">Ruptura Iminente</div>
+                    <div class="label">Em Ruptura</div>
                 </div>
-                <div class="stat-card">
-                    <div class="valor">${stats.cobertura_media_atual} dias</div>
-                    <div class="label">Cob. Media Atual</div>
+                <div class="metrica">
+                    <div class="valor">R$ ${(stats.valor_total_pedido/1000).toFixed(1)}k</div>
+                    <div class="label">Valor Total</div>
                 </div>
             `;
 
+            // Criar mapa de transferencias por produto (converter para string para comparacao consistente)
+            const setProdutosTransf = new Set(
+                (data.transferencias?.produtos_com_transferencia || []).map(p => String(p))
+            );
+            const detalhesTransf = {};
+            (data.transferencias?.detalhes || []).forEach(t => {
+                const codStr = String(t.cod_produto);
+                if (!detalhesTransf[codStr]) {
+                    detalhesTransf[codStr] = [];
+                }
+                detalhesTransf[codStr].push(t);
+            });
+
+            // Combinar itens do pedido + bloqueados para a tabela
+            const itensPedido = data.itens_pedido || [];
+            const itensBloqueados = data.itens_bloqueados || [];
+
+            // Contar itens DO PEDIDO que tem transferencia (para o botao)
+            let itensComTransfNoPedido = 0;
+            itensPedido.forEach(item => {
+                const codigoStr = String(item.codigo);
+                if (setProdutosTransf.has(codigoStr)) {
+                    itensComTransfNoPedido++;
+                }
+            });
+
             // Fornecedores
             let fornHtml = '';
-            if (agregacao.fornecedores && agregacao.fornecedores.length > 0) {
-                agregacao.fornecedores.forEach(f => {
+            if (agregacao.fornecedores?.length) {
+                agregacao.fornecedores.forEach((f, idx) => {
+                    const btnTransfHtml = itensComTransfNoPedido > 0 ? `
+                        <a href="/transferencias" class="btn-sm btn-transf-forn">
+                            ${itensComTransfNoPedido} itens c/ transf.
+                        </a>
+                    ` : '';
+
                     fornHtml += `
                         <div class="fornecedor-card">
-                            <div class="fornecedor-header">
-                                <h3>${f.nome_fornecedor || f.codigo_fornecedor}</h3>
+                            <div class="fornecedor-card-header">
+                                <div class="fornecedor-info">
+                                    <h4>${f.nome_fornecedor || f.codigo_fornecedor}</h4>
+                                </div>
+                                <div class="fornecedor-valor">
+                                    <div class="total">R$ ${f.valor_total.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</div>
+                                    <div class="itens">${f.total_itens} itens</div>
+                                </div>
+                            </div>
+                            <div class="fornecedor-card-body">
                                 <div class="fornecedor-stats">
-                                    <div>
-                                        <div class="stat-valor">${f.total_itens}</div>
-                                        <div class="stat-label">Itens</div>
+                                    <div class="fornecedor-stat">
+                                        <div class="num">${f.total_unidades.toLocaleString('pt-BR')}</div>
+                                        <div class="lbl">Unidades</div>
                                     </div>
-                                    <div>
-                                        <div class="stat-valor">${f.total_unidades.toLocaleString('pt-BR')}</div>
-                                        <div class="stat-label">Unidades</div>
+                                    <div class="fornecedor-stat">
+                                        <div class="num">${f.total_caixas.toLocaleString('pt-BR')}</div>
+                                        <div class="lbl">Caixas</div>
                                     </div>
-                                    <div>
-                                        <div class="stat-valor">${f.total_caixas.toLocaleString('pt-BR')}</div>
-                                        <div class="stat-label">Caixas</div>
-                                    </div>
-                                    <div>
-                                        <div class="stat-valor">R$ ${f.valor_total.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</div>
-                                        <div class="stat-label">Valor</div>
-                                    </div>
+                                </div>
+                                <div class="fornecedor-acoes">
+                                    <button class="btn-sm btn-exportar-forn" onclick="exportarFornecedor('${f.nome_fornecedor || f.codigo_fornecedor}')">
+                                        Exportar
+                                    </button>
+                                    ${btnTransfHtml}
                                 </div>
                             </div>
                         </div>
                     `;
                 });
             } else {
-                fornHtml = '<p style="text-align: center; color: #666;">Nenhum pedido necessario</p>';
+                fornHtml = '<div class="empty-state"><p>Nenhum pedido necessario</p></div>';
             }
             document.getElementById('fornecedoresLista').innerHTML = fornHtml;
 
-            // Tabela de itens
-            let tbodyHtml = '';
-            const itens = data.itens_pedido || [];
+            // Combinar todos os itens para a tabela (pedido, bloqueados e OK)
+            const itensOk = data.itens_ok || [];
+            const todosItens = [
+                ...itensPedido.map(i => ({...i, _status: i.ruptura_iminente ? 'ruptura' : 'pedir'})),
+                ...itensBloqueados.map(i => ({...i, _status: 'bloqueado'})),
+                ...itensOk.map(i => ({...i, _status: 'ok'}))
+            ];
 
-            itens.forEach(item => {
-                const cobAtualClass = item.cobertura_atual_dias < 3 ? 'critico' :
-                                     item.cobertura_atual_dias < 7 ? 'baixo' : 'ok';
+            // Tabela - Label de totais
+            const totalTabela = todosItens.length;
+            const isPedidoMultiloja = data.is_pedido_multiloja || false;
 
-                tbodyHtml += `
-                    <tr>
-                        <td>${item.codigo}</td>
-                        <td>${item.descricao?.substring(0, 30) || ''}</td>
-                        <td>${item.nome_loja || item.cod_empresa}</td>
-                        <td><span class="badge-abc ${item.curva_abc}">${item.curva_abc}</span></td>
-                        <td>${item.demanda_media_diaria.toFixed(1)}</td>
-                        <td>${item.estoque_efetivo}</td>
-                        <td class="cobertura-valor ${cobAtualClass}">${item.cobertura_atual_dias.toFixed(1)}</td>
-                        <td>${item.cobertura_necessaria_dias}</td>
-                        <td><strong>${item.quantidade_pedido}</strong></td>
-                        <td class="cobertura-valor ok">${item.cobertura_pos_pedido_dias}</td>
-                        <td>R$ ${item.valor_pedido.toFixed(2)}</td>
-                    </tr>
-                `;
-            });
-
-            if (!tbodyHtml) {
-                tbodyHtml = '<tr><td colspan="11" style="text-align: center; padding: 20px;">Nenhum item precisa ser pedido</td></tr>';
+            if (isPedidoMultiloja) {
+                // Contar lojas unicas
+                const lojasUnicas = new Set(todosItens.map(i => i.nome_loja || i.cod_loja));
+                document.getElementById('totalItensLabel').textContent =
+                    `${totalTabela} itens (${itensPedido.length} pedidos, ${itensBloqueados.length} bloqueados, ${itensOk.length} OK) - ${lojasUnicas.size} lojas`;
+            } else {
+                document.getElementById('totalItensLabel').textContent =
+                    `${totalTabela} itens (${itensPedido.length} pedidos, ${itensBloqueados.length} bloqueados, ${itensOk.length} OK)`;
             }
 
-            document.getElementById('itensBody').innerHTML = tbodyHtml;
+            // Funcao auxiliar para gerar linha da tabela
+            // isPedidoMultiloja e passado para determinar se deve verificar loja especifica
+            function gerarLinhaTabela(item, setProdutosTransf, detalhesTransf, isPedidoMultiloja = false) {
+                const est = item.estoque_atual ?? item.estoque_efetivo ?? 0;
+                const trans = item.estoque_transito ?? 0;
+                const dem = item.demanda_prevista ?? item.demanda_periodo ?? 0;
+                const estClass = (est === 0 && dem > 0) ? 'estoque-zero' : '';
+                const cobAtual = item.cobertura_atual_dias >= 999 ? '>999' : Math.round(item.cobertura_atual_dias || 0);
+                const cobPos = item.cobertura_pos_pedido_dias >= 999 ? '>999' : Math.round(item.cobertura_pos_pedido_dias || 0);
+
+                let statusBadge = '';
+                let rowClass = '';
+                if (item._status === 'bloqueado') {
+                    const motivo = item.motivo_bloqueio || item.sit_compra || 'Bloqueado';
+                    statusBadge = `<span class="badge-status badge-bloqueado" title="${motivo}">Bloqueado</span>`;
+                    rowClass = 'linha-bloqueada';
+                } else if (item._status === 'ruptura') {
+                    statusBadge = `<span class="badge-status badge-ruptura">Ruptura</span>`;
+                } else if (item._status === 'ok') {
+                    statusBadge = `<span class="badge-status badge-ok" title="Estoque suficiente">OK</span>`;
+                    rowClass = 'linha-ok';
+                } else {
+                    statusBadge = `<span class="badge-status badge-pedir">Pedir</span>`;
+                }
+
+                const codigoStr = String(item.codigo);
+                const itemTemTransf = setProdutosTransf.has(codigoStr);
+                let transfBadge = '';
+
+                if (itemTemTransf) {
+                    const transfs = detalhesTransf[codigoStr] || [];
+
+                    if (isPedidoMultiloja && item.cod_loja) {
+                        // MODO MULTI-LOJA: Verificar se ESTA loja e origem ou destino
+                        const codLojaItem = item.cod_loja;
+
+                        // Filtrar transferencias onde esta loja e ORIGEM (vai enviar)
+                        const transfOrigem = transfs.filter(t => t.cod_loja_origem === codLojaItem);
+                        // Filtrar transferencias onde esta loja e DESTINO (vai receber)
+                        const transfDestino = transfs.filter(t => t.cod_loja_destino === codLojaItem);
+
+                        if (transfOrigem.length > 0) {
+                            // Loja e ORIGEM - vai ENVIAR para outras lojas
+                            const qtdEnviar = transfOrigem.reduce((s, t) => s + (t.qtd_sugerida || 0), 0);
+                            const destinos = transfOrigem.map(t => t.loja_destino).join(', ');
+                            transfBadge = `<span class="badge-transf badge-transf-enviar" title="Enviar para: ${destinos}"><span class="icon">↗</span>${qtdEnviar} un</span>`;
+                            rowClass = (rowClass ? rowClass + ' ' : '') + 'linha-transf-origem';
+                        } else if (transfDestino.length > 0) {
+                            // Loja e DESTINO - vai RECEBER de outras lojas
+                            const qtdReceber = transfDestino.reduce((s, t) => s + (t.qtd_sugerida || 0), 0);
+                            const origens = transfDestino.map(t => t.loja_origem).join(', ');
+                            transfBadge = `<span class="badge-transf badge-transf-receber" title="Receber de: ${origens}"><span class="icon">↙</span>${qtdReceber} un</span>`;
+                            rowClass = (rowClass ? rowClass + ' ' : '') + 'linha-transf-destino';
+                        }
+                    } else {
+                        // MODO NORMAL (CD): Mostrar badge generico de transferencia
+                        const qtdTotal = transfs.reduce((s, t) => s + (t.qtd_sugerida || 0), 0);
+                        const tooltipLines = transfs.map(t =>
+                            `${t.loja_origem} ➜ ${t.loja_destino}: ${t.qtd_sugerida} un`
+                        );
+                        const tooltip = tooltipLines.join(' | ');
+                        transfBadge = `<span class="badge-transf" title="${tooltip}"><span class="icon">↔</span>${qtdTotal} un</span>`;
+                    }
+                }
+
+                const qtdPedido = item._status === 'bloqueado' ? 0 : (item.quantidade_pedido || 0);
+                const valorPedido = item._status === 'bloqueado' ? 0 : (item.valor_pedido || 0);
+
+                return `
+                    <tr class="${rowClass}">
+                        <td>${item.codigo}${transfBadge}</td>
+                        <td title="${item.descricao || ''}">${(item.descricao || '').substring(0, 30)}</td>
+                        <td style="text-align: center;"><span class="badge badge-${(item.curva_abc || 'B').toLowerCase()}">${item.curva_abc || 'B'}</span></td>
+                        <td style="text-align: center;">${statusBadge}</td>
+                        <td class="col-num"><span class="${estClass}">${est.toLocaleString('pt-BR')}</span></td>
+                        <td class="col-num">${trans > 0 ? trans.toLocaleString('pt-BR') : '-'}</td>
+                        <td><span class="cobertura-info"><span class="atual">${cobAtual}d</span><span class="seta">→</span><span class="pos">${cobPos}d</span></span></td>
+                        <td class="col-num">${dem.toLocaleString('pt-BR')}</td>
+                        <td class="col-num" style="font-weight: 600;">${qtdPedido.toLocaleString('pt-BR')}</td>
+                        <td class="col-valor">${valorPedido > 0 ? 'R$ ' + valorPedido.toLocaleString('pt-BR', {minimumFractionDigits: 0}) : '-'}</td>
+                    </tr>
+                `;
+            }
+
+            // Funcao para gerar cabecalho da tabela
+            function gerarCabecalhoTabela() {
+                return `
+                    <thead>
+                        <tr>
+                            <th class="col-codigo">Codigo</th>
+                            <th class="col-descricao">Descricao</th>
+                            <th style="width: 50px; text-align: center;">ABC</th>
+                            <th style="width: 80px; text-align: center;">Status</th>
+                            <th class="col-num">Estoque</th>
+                            <th class="col-num">Transito</th>
+                            <th style="width: 100px;">Cobertura</th>
+                            <th class="col-num">Demanda</th>
+                            <th class="col-num">Pedido</th>
+                            <th class="col-valor">Valor</th>
+                        </tr>
+                    </thead>
+                `;
+            }
+
+            // Agrupar itens por fornecedor
+            const itensPorFornecedor = {};
+            todosItens.forEach(item => {
+                const nomeForn = item.nome_fornecedor || 'Sem Fornecedor';
+                if (!itensPorFornecedor[nomeForn]) {
+                    itensPorFornecedor[nomeForn] = [];
+                }
+                itensPorFornecedor[nomeForn].push(item);
+            });
+
+            // Ordenar fornecedores por valor total (decrescente)
+            const fornecedoresOrdenados = Object.keys(itensPorFornecedor).sort((a, b) => {
+                const valorA = itensPorFornecedor[a].reduce((s, i) => s + (i._status !== 'bloqueado' ? (i.valor_pedido || 0) : 0), 0);
+                const valorB = itensPorFornecedor[b].reduce((s, i) => s + (i._status !== 'bloqueado' ? (i.valor_pedido || 0) : 0), 0);
+                return valorB - valorA;
+            });
+
+            // Gerar HTML das secoes por fornecedor
+            let detalhamentoHtml = '';
+
+            fornecedoresOrdenados.forEach(nomeForn => {
+                const itensForn = itensPorFornecedor[nomeForn];
+                const totalItensForn = itensForn.length;
+                const itensPedidoForn = itensForn.filter(i => i._status === 'pedir' || i._status === 'ruptura').length;
+                const itensBloqForn = itensForn.filter(i => i._status === 'bloqueado').length;
+                const itensOkForn = itensForn.filter(i => i._status === 'ok').length;
+                const valorTotalForn = itensForn.reduce((s, i) => s + ((i._status === 'pedir' || i._status === 'ruptura') ? (i.valor_pedido || 0) : 0), 0);
+
+                // =====================================================================
+                // MODO MULTI-LOJA: Agrupar por loja dentro do fornecedor
+                // =====================================================================
+                if (isPedidoMultiloja) {
+                    // Agrupar itens por loja
+                    const itensPorLoja = {};
+                    itensForn.forEach(item => {
+                        const nomeLoja = item.nome_loja || `Loja ${item.cod_loja || 'Desconhecida'}`;
+                        if (!itensPorLoja[nomeLoja]) {
+                            itensPorLoja[nomeLoja] = [];
+                        }
+                        itensPorLoja[nomeLoja].push(item);
+                    });
+
+                    // Ordenar lojas por valor (decrescente)
+                    const lojasOrdenadas = Object.keys(itensPorLoja).sort((a, b) => {
+                        const valorA = itensPorLoja[a].reduce((s, i) => s + (i._status !== 'bloqueado' ? (i.valor_pedido || 0) : 0), 0);
+                        const valorB = itensPorLoja[b].reduce((s, i) => s + (i._status !== 'bloqueado' ? (i.valor_pedido || 0) : 0), 0);
+                        return valorB - valorA;
+                    });
+
+                    // Contar SKUs unicos do fornecedor (para mostrar no header)
+                    const skusUnicosForn = new Set(itensForn.map(i => i.codigo)).size;
+
+                    // Contar itens com transferencia neste fornecedor
+                    const itensComTransfForn = itensForn.filter(i => setProdutosTransf.has(String(i.codigo))).length;
+                    const skusComTransfForn = new Set(
+                        itensForn.filter(i => setProdutosTransf.has(String(i.codigo))).map(i => i.codigo)
+                    ).size;
+
+                    // Gerar sub-secoes por loja
+                    let lojasHtml = '';
+                    lojasOrdenadas.forEach(nomeLoja => {
+                        const itensLoja = itensPorLoja[nomeLoja];
+                        const totalItensLoja = itensLoja.length;
+                        const itensPedidoLoja = itensLoja.filter(i => i._status === 'pedir' || i._status === 'ruptura').length;
+                        const itensBloqLoja = itensLoja.filter(i => i._status === 'bloqueado').length;
+                        const itensOkLoja = itensLoja.filter(i => i._status === 'ok').length;
+                        const valorTotalLoja = itensLoja.reduce((s, i) => s + ((i._status === 'pedir' || i._status === 'ruptura') ? (i.valor_pedido || 0) : 0), 0);
+
+                        // Contar transferencias DESTA loja (enviar ou receber)
+                        let qtdEnviarLoja = 0;
+                        let qtdReceberLoja = 0;
+                        itensLoja.forEach(item => {
+                            const codigoStr = String(item.codigo);
+                            if (setProdutosTransf.has(codigoStr)) {
+                                const transfs = detalhesTransf[codigoStr] || [];
+                                const codLojaItem = item.cod_loja;
+                                const transfOrigem = transfs.filter(t => t.cod_loja_origem === codLojaItem);
+                                const transfDestino = transfs.filter(t => t.cod_loja_destino === codLojaItem);
+                                if (transfOrigem.length > 0) qtdEnviarLoja++;
+                                if (transfDestino.length > 0) qtdReceberLoja++;
+                            }
+                        });
+
+                        let tbodyLoja = '';
+                        itensLoja.forEach(item => {
+                            tbodyLoja += gerarLinhaTabela(item, setProdutosTransf, detalhesTransf, true);
+                        });
+
+                        // Badge de transferencia no header da loja
+                        let transfLojaHtml = '';
+                        if (qtdEnviarLoja > 0 || qtdReceberLoja > 0) {
+                            let transfParts = [];
+                            if (qtdEnviarLoja > 0) transfParts.push(`<span class="stat-transf-enviar">${qtdEnviarLoja} enviar</span>`);
+                            if (qtdReceberLoja > 0) transfParts.push(`<span class="stat-transf-receber">${qtdReceberLoja} receber</span>`);
+                            transfLojaHtml = transfParts.join(' ');
+                        }
+
+                        // Header da LOJA: mostra detalhes de SKUs
+                        lojasHtml += `
+                            <div class="loja-section">
+                                <div class="loja-section-header">
+                                    <h5>${nomeLoja}</h5>
+                                    <div class="stats">
+                                        <span>${totalItensLoja} SKUs</span>
+                                        <span class="stat-pedir">${itensPedidoLoja} pedir</span>
+                                        <span class="stat-bloq">${itensBloqLoja} bloq.</span>
+                                        <span class="stat-ok">${itensOkLoja} OK</span>
+                                        ${transfLojaHtml}
+                                        <span class="valor-total">R$ ${valorTotalLoja.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
+                                    </div>
+                                </div>
+                                <div class="tabela-container">
+                                    <table class="tabela-itens">
+                                        ${gerarCabecalhoTabela()}
+                                        <tbody>${tbodyLoja}</tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    // Badge de transferencia no header do fornecedor
+                    const transfFornHtml = skusComTransfForn > 0
+                        ? `<span class="stat-transf">${skusComTransfForn} c/ transf.</span>`
+                        : '';
+
+                    // Header do FORNECEDOR: apenas nome, SKUs unicos e valor total
+                    detalhamentoHtml += `
+                        <div class="fornecedor-section multiloja">
+                            <div class="fornecedor-section-header">
+                                <h4>${nomeForn}</h4>
+                                <div class="stats">
+                                    <span>${skusUnicosForn} SKUs</span>
+                                    <span>${lojasOrdenadas.length} lojas</span>
+                                    ${transfFornHtml}
+                                    <span class="valor-total">R$ ${valorTotalForn.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
+                                </div>
+                            </div>
+                            ${lojasHtml}
+                        </div>
+                    `;
+                } else {
+                    // =====================================================================
+                    // MODO NORMAL: Layout padrao sem sub-lojas
+                    // =====================================================================
+                    let tbodyForn = '';
+                    itensForn.forEach(item => {
+                        tbodyForn += gerarLinhaTabela(item, setProdutosTransf, detalhesTransf);
+                    });
+
+                    detalhamentoHtml += `
+                        <div class="fornecedor-section">
+                            <div class="fornecedor-section-header">
+                                <h4>${nomeForn}</h4>
+                                <div class="stats">
+                                    <span>${totalItensForn} itens</span>
+                                    ${itensPedidoForn > 0 ? `<span>(${itensPedidoForn} pedir)</span>` : ''}
+                                    ${itensBloqForn > 0 ? `<span>(${itensBloqForn} bloq.)</span>` : ''}
+                                    ${itensOkForn > 0 ? `<span>(${itensOkForn} OK)</span>` : ''}
+                                    <span class="valor-total">R$ ${valorTotalForn.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
+                                </div>
+                            </div>
+                            <div class="tabela-container">
+                                <table class="tabela-itens">
+                                    ${gerarCabecalhoTabela()}
+                                    <tbody>${tbodyForn}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+
+            if (!detalhamentoHtml) {
+                detalhamentoHtml = '<div class="empty-state"><p>Nenhum item para exibir</p></div>';
+            }
+
+            document.getElementById('detalhamentoContainer').innerHTML = detalhamentoHtml;
+        }
+
+        async function exportarFornecedor(nomeFornecedor) {
+            if (!dadosPedidoAtual?.itens_pedido) return;
+
+            // Filtrar itens do fornecedor
+            const itensForn = dadosPedidoAtual.itens_pedido.filter(i =>
+                (i.nome_fornecedor || '') === nomeFornecedor
+            );
+
+            if (!itensForn.length) {
+                alert('Nenhum item encontrado para este fornecedor');
+                return;
+            }
+
+            // Criar dados filtrados
+            const dadosFiltrados = {
+                ...dadosPedidoAtual,
+                itens_pedido: itensForn,
+                estatisticas: {
+                    ...dadosPedidoAtual.estatisticas,
+                    total_itens_pedido: itensForn.length,
+                    valor_total_pedido: itensForn.reduce((s, i) => s + (i.valor_pedido || 0), 0)
+                }
+            };
+
+            try {
+                const response = await fetch('/api/pedido_fornecedor_integrado/exportar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(dadosFiltrados)
+                });
+
+                if (!response.ok) throw new Error('Erro ao exportar');
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `pedido_${nomeFornecedor.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0,10)}.xlsx`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Erro: ' + e.message);
+            }
         }
     </script>
 </body>

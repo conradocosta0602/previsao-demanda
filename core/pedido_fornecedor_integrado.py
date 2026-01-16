@@ -4,6 +4,7 @@ Integra previsão de demanda V2 com cálculo de cobertura baseado em ABC
 
 Características:
 - Usa previsão V2 (Bottom-Up) em tempo real
+- Previsão semanal ISO-8601 para cálculo de demanda no período
 - Cobertura: Lead Time + Ciclo + Segurança_ABC
 - Curva ABC do cadastro de produtos para nível de serviço
 - Arredondamento para múltiplo de caixa
@@ -13,7 +14,7 @@ Características:
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from scipy import stats
 
 
@@ -38,6 +39,22 @@ NIVEL_SERVICO_ABC = {
 
 # Ciclo de pedido padrão (semanal)
 CICLO_PEDIDO_DIAS = 7
+
+
+# ==============================================================================
+# FUNÇÕES AUXILIARES
+# ==============================================================================
+
+def sanitizar_float(valor, valor_padrao=0):
+    """Sanitiza valor float, substituindo NaN/Inf por valor padrao."""
+    if valor is None:
+        return valor_padrao
+    try:
+        if np.isnan(valor) or np.isinf(valor):
+            return valor_padrao
+        return valor
+    except (TypeError, ValueError):
+        return valor_padrao
 
 
 # ==============================================================================
@@ -216,85 +233,194 @@ class PedidoFornecedorIntegrado:
     Processador de pedidos ao fornecedor integrado com previsão V2.
     """
 
-    def __init__(self, conn):
+    def __init__(self, conn, usar_previsao_semanal: bool = True):
         """
         Args:
             conn: Conexão com o banco PostgreSQL
+            usar_previsao_semanal: Se True, usa previsão semanal ISO-8601 (padrão)
         """
         self.conn = conn
+        self.usar_previsao_semanal = usar_previsao_semanal
+        # Cache das regras de situação de compra
+        self._regras_sit_compra = None
+        # Instância de previsão semanal
+        self._weekly_forecast = None
 
-    def buscar_dados_produto(self, codigo: int) -> Optional[Dict]:
+    def _get_weekly_forecast(self):
+        """Retorna instância de WeeklyForecast (lazy loading)."""
+        if self._weekly_forecast is None and self.usar_previsao_semanal:
+            from core.weekly_forecast import WeeklyForecast
+            self._weekly_forecast = WeeklyForecast(self.conn)
+        return self._weekly_forecast
+
+    def carregar_regras_sit_compra(self) -> Dict:
         """
-        Busca dados do produto no cadastro.
-
-        Args:
-            codigo: Código do produto
+        Carrega as regras de situação de compra do banco.
 
         Returns:
-            Dicionário com dados do produto ou None
+            Dicionário com código -> regra
         """
-        query = """
-            SELECT
-                p.codigo,
-                p.descricao,
-                p.categoria,
-                p.subcategoria,
-                p.curva_abc,
-                p.und_venda,
-                f.codigo_fornecedor,
-                f.nome_fornecedor,
-                f.lead_time_dias,
-                f.pedido_minimo
-            FROM cadastro_produtos p
-            LEFT JOIN cadastro_fornecedores f ON p.id_fornecedor = f.id_fornecedor
-            WHERE p.codigo = %s AND p.ativo = TRUE
+        if self._regras_sit_compra is not None:
+            return self._regras_sit_compra
+
+        try:
+            query = """
+                SELECT codigo_situacao, descricao, bloqueia_compra_automatica,
+                       permite_compra_manual, cor_alerta, icone
+                FROM situacao_compra_regras
+                WHERE ativo = TRUE
+            """
+            df = pd.read_sql(query, self.conn)
+
+            self._regras_sit_compra = {}
+            for _, row in df.iterrows():
+                self._regras_sit_compra[row['codigo_situacao']] = {
+                    'descricao': row['descricao'],
+                    'bloqueia_compra_automatica': row['bloqueia_compra_automatica'],
+                    'permite_compra_manual': row['permite_compra_manual'],
+                    'cor_alerta': row['cor_alerta'],
+                    'icone': row['icone']
+                }
+        except Exception:
+            # Se tabela não existe, retorna vazio
+            self._regras_sit_compra = {}
+
+        return self._regras_sit_compra
+
+    def verificar_situacao_compra(self, codigo, cod_empresa: int) -> Optional[Dict]:
         """
-
-        df = pd.read_sql(query, self.conn, params=[codigo])
-
-        if df.empty:
-            return None
-
-        return df.iloc[0].to_dict()
-
-    def buscar_estoque_atual(self, codigo: int, cod_empresa: int) -> Dict:
-        """
-        Busca estoque atual e em trânsito.
+        Verifica se o item tem alguma situação de compra que bloqueia pedido.
 
         Args:
             codigo: Código do produto
             cod_empresa: Código da empresa/loja
 
         Returns:
-            Dicionário com estoque disponível e em trânsito
+            None se liberado, ou dicionário com informações do bloqueio
         """
-        # Estoque disponível
+        try:
+            codigo_int = int(codigo)
+        except (ValueError, TypeError):
+            return None
+
+        try:
+            query = """
+                SELECT sci.sit_compra, scr.descricao, scr.bloqueia_compra_automatica,
+                       scr.permite_compra_manual, scr.cor_alerta, scr.icone
+                FROM situacao_compra_itens sci
+                JOIN situacao_compra_regras scr ON sci.sit_compra = scr.codigo_situacao
+                WHERE sci.codigo = %s
+                  AND sci.cod_empresa = %s
+                  AND scr.bloqueia_compra_automatica = TRUE
+                  AND scr.ativo = TRUE
+                  AND (sci.data_fim IS NULL OR sci.data_fim >= CURRENT_DATE)
+            """
+            df = pd.read_sql(query, self.conn, params=[codigo_int, cod_empresa])
+
+            if df.empty:
+                return None
+
+            row = df.iloc[0]
+            return {
+                'sit_compra': row['sit_compra'],
+                'descricao': row['descricao'],
+                'bloqueia_compra_automatica': row['bloqueia_compra_automatica'],
+                'permite_compra_manual': row['permite_compra_manual'],
+                'cor_alerta': row['cor_alerta'],
+                'icone': row['icone']
+            }
+        except Exception:
+            # Se tabela não existe, não bloqueia
+            return None
+
+    def buscar_dados_produto(self, codigo) -> Optional[Dict]:
+        """
+        Busca dados do produto no cadastro.
+
+        Args:
+            codigo: Código do produto (pode ser string ou int)
+
+        Returns:
+            Dicionário com dados do produto ou None
+        """
+        # cod_produto em cadastro_produtos_completo é VARCHAR
+        codigo_str = str(codigo)
+
+        query = """
+            SELECT
+                cod_produto as codigo,
+                descricao,
+                categoria,
+                descricao_linha as subcategoria,
+                'B' as curva_abc,
+                'UN' as und_venda,
+                cnpj_fornecedor as codigo_fornecedor,
+                nome_fornecedor,
+                15 as lead_time_dias,
+                0 as pedido_minimo
+            FROM cadastro_produtos_completo
+            WHERE cod_produto = %s AND ativo = TRUE
+        """
+
+        df = pd.read_sql(query, self.conn, params=[codigo_str])
+
+        if df.empty:
+            return None
+
+        return df.iloc[0].to_dict()
+
+    def buscar_estoque_atual(self, codigo, cod_empresa: int) -> Dict:
+        """
+        Busca estoque atual da tabela estoque_posicao_atual (importada do arquivo).
+
+        Args:
+            codigo: Código do produto (pode ser string ou int)
+            cod_empresa: Código da empresa/loja
+
+        Returns:
+            Dicionário com estoque disponível, em trânsito e pendente
+        """
+        # Converter codigo para int
+        try:
+            codigo_int = int(codigo)
+        except (ValueError, TypeError):
+            return {'estoque_disponivel': 0, 'estoque_transito': 0, 'estoque_efetivo': 0, 'qtd_pendente': 0}
+
+        # Buscar estoque da tabela de posição atual (dados importados)
         query_estoque = """
-            SELECT COALESCE(SUM(qtd_disponivel), 0) as estoque_disponivel
-            FROM estoque_atual
+            SELECT
+                COALESCE(estoque, 0) as estoque_disponivel,
+                COALESCE(qtd_pendente, 0) as qtd_pendente,
+                COALESCE(qtd_pend_transf, 0) as qtd_pend_transf
+            FROM estoque_posicao_atual
             WHERE codigo = %s AND cod_empresa = %s
         """
 
-        df_estoque = pd.read_sql(query_estoque, self.conn, params=[codigo, cod_empresa])
-        estoque_disponivel = float(df_estoque.iloc[0]['estoque_disponivel']) if not df_estoque.empty else 0
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            df_estoque = pd.read_sql(query_estoque, self.conn, params=[codigo_int, cod_empresa])
 
-        # Estoque em trânsito
-        query_transito = """
-            SELECT COALESCE(SUM(qtd_transito), 0) as estoque_transito
-            FROM transito_atual
-            WHERE codigo = %s AND destino = %s::text
-        """
+        if df_estoque.empty:
+            return {'estoque_disponivel': 0, 'estoque_transito': 0, 'estoque_efetivo': 0, 'qtd_pendente': 0}
 
-        df_transito = pd.read_sql(query_transito, self.conn, params=[codigo, str(cod_empresa)])
-        estoque_transito = float(df_transito.iloc[0]['estoque_transito']) if not df_transito.empty else 0
+        row = df_estoque.iloc[0]
+        estoque_disponivel = float(row['estoque_disponivel'])
+        qtd_pendente = float(row['qtd_pendente'])  # Pedidos pendentes de entrega
+        qtd_pend_transf = float(row['qtd_pend_transf'])  # Transferências pendentes
+
+        # Estoque em trânsito = pedidos pendentes + transferências pendentes
+        estoque_transito = qtd_pendente + qtd_pend_transf
 
         return {
             'estoque_disponivel': estoque_disponivel,
             'estoque_transito': estoque_transito,
-            'estoque_efetivo': estoque_disponivel + estoque_transito
+            'estoque_efetivo': estoque_disponivel + estoque_transito,
+            'qtd_pendente': qtd_pendente,
+            'qtd_pend_transf': qtd_pend_transf
         }
 
-    def buscar_parametros_gondola(self, codigo: int, cod_empresa: int) -> Dict:
+    def buscar_parametros_gondola(self, codigo, cod_empresa: int) -> Dict:
         """
         Busca parâmetros de gôndola (múltiplo, lote mínimo).
 
@@ -303,56 +429,89 @@ class PedidoFornecedorIntegrado:
             cod_empresa: Código da empresa
 
         Returns:
-            Dicionário com parâmetros
+            Dicionário com parâmetros padrão (tabela parametros_gondola não existe)
         """
-        query = """
-            SELECT
-                COALESCE(multiplo, 1) as multiplo_caixa,
-                COALESCE(lote_minimo, 1) as lote_minimo,
-                COALESCE(estoque_seguranca, 0) as estoque_seguranca_gondola
-            FROM parametros_gondola
-            WHERE codigo = %s AND cod_empresa = %s
+        # Retornar valores padrão - tabela parametros_gondola não existe no banco atual
+        return {
+            'multiplo_caixa': 1,
+            'lote_minimo': 1,
+            'estoque_seguranca_gondola': 0
+        }
+
+    def buscar_preco_custo(self, codigo, cod_empresa: int) -> float:
         """
-
-        df = pd.read_sql(query, self.conn, params=[codigo, cod_empresa])
-
-        if df.empty:
-            return {
-                'multiplo_caixa': 1,
-                'lote_minimo': 1,
-                'estoque_seguranca_gondola': 0
-            }
-
-        return df.iloc[0].to_dict()
-
-    def buscar_preco_custo(self, codigo: int, cod_empresa: int) -> float:
-        """
-        Busca preço de custo do produto.
+        Busca preço de custo (CUE) do produto da tabela estoque_posicao_atual.
 
         Args:
             codigo: Código do produto
             cod_empresa: Código da empresa
 
         Returns:
-            Preço de custo
+            Preço de custo (CUE)
         """
-        query = """
-            SELECT preco_custo
-            FROM precos_vigentes
-            WHERE codigo = %s
-              AND cod_empresa = %s
-              AND data_inicio <= CURRENT_DATE
-              AND (data_fim IS NULL OR data_fim >= CURRENT_DATE)
-            ORDER BY data_inicio DESC
-            LIMIT 1
-        """
-
-        df = pd.read_sql(query, self.conn, params=[codigo, cod_empresa])
-
-        if df.empty or pd.isna(df.iloc[0]['preco_custo']):
+        # Converter codigo para int
+        try:
+            codigo_int = int(codigo)
+        except (ValueError, TypeError):
             return 0.0
 
-        return float(df.iloc[0]['preco_custo'])
+        # Buscar CUE da tabela de posição atual
+        query = """
+            SELECT COALESCE(cue, 0) as cue
+            FROM estoque_posicao_atual
+            WHERE codigo = %s AND cod_empresa = %s
+        """
+
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            df = pd.read_sql(query, self.conn, params=[codigo_int, cod_empresa])
+
+        if df.empty:
+            return 0.0
+
+        return float(df.iloc[0]['cue'])
+
+    def buscar_historico_vendas(self, codigo, cod_empresa: int, dias: int = 365) -> List[float]:
+        """
+        Busca histórico de vendas diárias para cálculo de demanda.
+
+        Args:
+            codigo: Código do produto (pode ser string ou int)
+            cod_empresa: Código da empresa/loja
+            dias: Número de dias de histórico
+
+        Returns:
+            Lista com quantidades vendidas por dia
+        """
+        from datetime import datetime, timedelta
+
+        data_fim = datetime.now().date()
+        data_inicio = data_fim - timedelta(days=dias)
+
+        # Converter codigo para int (historico_vendas_diario usa INTEGER)
+        try:
+            codigo_int = int(codigo)
+        except (ValueError, TypeError):
+            return []
+
+        query = """
+            SELECT data, COALESCE(SUM(qtd_venda), 0) as qtd_venda
+            FROM historico_vendas_diario
+            WHERE codigo = %s
+              AND cod_empresa = %s
+              AND data >= %s
+              AND data <= %s
+            GROUP BY data
+            ORDER BY data
+        """
+
+        df = pd.read_sql(query, self.conn, params=[codigo_int, cod_empresa, data_inicio, data_fim])
+
+        if df.empty:
+            return []
+
+        return [float(x) for x in df['qtd_venda'].tolist()]
 
     def processar_item(
         self,
@@ -360,7 +519,11 @@ class PedidoFornecedorIntegrado:
         cod_empresa: int,
         previsao_diaria: float,
         desvio_padrao: float,
-        cobertura_dias: Optional[int] = None
+        cobertura_dias: Optional[int] = None,
+        usar_previsao_semanal_item: bool = True,
+        lead_time_dias: Optional[int] = None,
+        ciclo_pedido_dias: Optional[int] = None,
+        pedido_minimo_valor: Optional[float] = None
     ) -> Dict:
         """
         Processa um item individual calculando necessidade de pedido.
@@ -371,14 +534,46 @@ class PedidoFornecedorIntegrado:
             previsao_diaria: Demanda média diária prevista (da previsão V2)
             desvio_padrao: Desvio padrão da demanda
             cobertura_dias: Cobertura em dias (se None, calcula automaticamente)
+            usar_previsao_semanal_item: Se True, usa previsão semanal para este item.
+                                        Se False, usa previsao_diaria * cobertura_dias
+                                        (útil quando demanda já foi calculada externamente)
+            lead_time_dias: Lead time do fornecedor (se None, busca do cadastro ou usa 15)
+            ciclo_pedido_dias: Ciclo de pedido do fornecedor (se None, usa padrão)
+            pedido_minimo_valor: Valor mínimo do pedido (para validação posterior)
 
         Returns:
             Dicionário com análise completa do item
         """
+        # 0. Verificar situação de compra (antes de qualquer processamento)
+        bloqueio = self.verificar_situacao_compra(codigo, cod_empresa)
+        if bloqueio:
+            # Item bloqueado - retorna informações mínimas
+            produto = self.buscar_dados_produto(codigo)
+            return {
+                'codigo': codigo,
+                'descricao': produto.get('descricao', '') if produto else f'Produto {codigo}',
+                'categoria': produto.get('categoria', '') if produto else '',
+                'cod_empresa': cod_empresa,
+                'bloqueado': True,
+                'sit_compra': bloqueio['sit_compra'],
+                'motivo_bloqueio': bloqueio['descricao'],
+                'permite_compra_manual': bloqueio['permite_compra_manual'],
+                'cor_alerta': bloqueio['cor_alerta'],
+                'icone_bloqueio': bloqueio['icone'],
+                'quantidade_pedido': 0,
+                'deve_pedir': False,
+                'codigo_fornecedor': produto.get('codigo_fornecedor', '') if produto else '',
+                'nome_fornecedor': produto.get('nome_fornecedor', '') if produto else ''
+            }
+
         # 1. Buscar dados do produto
         produto = self.buscar_dados_produto(codigo)
         if not produto:
             return {'erro': f'Produto {codigo} não encontrado'}
+
+        # 1.5 Validar previsao_diaria
+        if previsao_diaria is None or np.isnan(previsao_diaria) or np.isinf(previsao_diaria):
+            previsao_diaria = 0.01  # Valor minimo para evitar divisao por zero
 
         # 2. Buscar estoque atual
         estoque = self.buscar_estoque_atual(codigo, cod_empresa)
@@ -389,28 +584,36 @@ class PedidoFornecedorIntegrado:
         # 4. Buscar preço de custo
         preco_custo = self.buscar_preco_custo(codigo, cod_empresa)
 
-        # 5. Dados do fornecedor
-        lead_time = produto.get('lead_time_dias') or 15
+        # 5. Dados do fornecedor (usar parametro se fornecido, senao buscar do produto ou usar padrao)
+        lead_time = lead_time_dias if lead_time_dias is not None else (produto.get('lead_time_dias') or 15)
+        ciclo_pedido = ciclo_pedido_dias if ciclo_pedido_dias is not None else CICLO_PEDIDO_DIAS
         curva_abc = produto.get('curva_abc') or 'B'
 
         # 6. Calcular cobertura baseada em ABC (se não informada)
         if cobertura_dias is None:
             cobertura_info = calcular_cobertura_abc(
                 lead_time_dias=lead_time,
-                curva_abc=curva_abc
+                curva_abc=curva_abc,
+                ciclo_pedido_dias=ciclo_pedido
             )
             cobertura_dias = cobertura_info['cobertura_total_dias']
         else:
             cobertura_info = {
                 'cobertura_total_dias': cobertura_dias,
                 'lead_time_dias': lead_time,
-                'ciclo_pedido_dias': CICLO_PEDIDO_DIAS,
+                'ciclo_pedido_dias': ciclo_pedido,
                 'seguranca_abc_dias': SEGURANCA_BASE_ABC.get(curva_abc.upper(), 4),
                 'curva_abc': curva_abc
             }
 
         # 7. Calcular estoque de segurança
-        desvio_diario = desvio_padrao / np.sqrt(30) if desvio_padrao else previsao_diaria * 0.3
+        # Garantir que desvio_padrao nao seja NaN
+        if desvio_padrao is None or np.isnan(desvio_padrao) or np.isinf(desvio_padrao):
+            desvio_padrao = previsao_diaria * 0.3 if previsao_diaria > 0 else 0.1
+        desvio_diario = desvio_padrao / np.sqrt(30) if desvio_padrao > 0 else previsao_diaria * 0.3
+        # Garantir que desvio_diario nao seja NaN
+        if np.isnan(desvio_diario) or np.isinf(desvio_diario):
+            desvio_diario = 0.1
         es_info = calcular_estoque_seguranca(
             desvio_padrao_diario=desvio_diario,
             lead_time_dias=lead_time,
@@ -418,7 +621,33 @@ class PedidoFornecedorIntegrado:
         )
 
         # 8. Calcular demanda no período de cobertura
-        demanda_periodo = previsao_diaria * cobertura_dias
+        # Usa previsão semanal ISO-8601 se habilitado E se o item permitir
+        # (para CDs com demanda agregada de múltiplas lojas, usar_previsao_semanal_item=False)
+        previsao_semanal_info = None
+        if self.usar_previsao_semanal and usar_previsao_semanal_item:
+            weekly_forecast = self._get_weekly_forecast()
+            if weekly_forecast:
+                try:
+                    previsao_semanal_info = weekly_forecast.calcular_demanda_periodo_cobertura(
+                        codigo=codigo,
+                        cod_empresa=cod_empresa,
+                        lead_time_dias=lead_time,
+                        cobertura_dias=cobertura_dias,
+                        demanda_media_diaria=previsao_diaria
+                    )
+                    demanda_periodo = previsao_semanal_info['demanda_total']
+                    # Atualizar desvio se disponível
+                    if previsao_semanal_info.get('desvio_padrao_total', 0) > 0:
+                        desvio_diario = previsao_semanal_info['desvio_padrao_total'] / cobertura_dias
+                except Exception:
+                    # Fallback para cálculo tradicional
+                    demanda_periodo = previsao_diaria * cobertura_dias
+                    previsao_semanal_info = None
+            else:
+                demanda_periodo = previsao_diaria * cobertura_dias
+        else:
+            # Usar demanda diária fornecida (já calculada externamente, ex: soma de lojas)
+            demanda_periodo = previsao_diaria * cobertura_dias
 
         # 9. Calcular quantidade a pedir
         pedido_info = calcular_quantidade_pedido(
@@ -429,29 +658,50 @@ class PedidoFornecedorIntegrado:
             multiplo_caixa=parametros['multiplo_caixa']
         )
 
-        # 10. Calcular coberturas
+        # 10. Calcular valor do pedido (antes de calcular coberturas para usar CUE)
+        valor_pedido = pedido_info['quantidade_pedido'] * preco_custo
+
+        # Calcular demanda média diária a partir da previsão do período
+        # (usa a demanda do período dividida pelo número de dias)
+        demanda_prevista_diaria = demanda_periodo / cobertura_dias if cobertura_dias > 0 else previsao_diaria
+
+        # Garantir que demanda_prevista_diaria não seja NaN ou infinito
+        if np.isnan(demanda_prevista_diaria) or np.isinf(demanda_prevista_diaria):
+            demanda_prevista_diaria = previsao_diaria if previsao_diaria > 0 else 0.01
+
+        # 11. Calcular coberturas com base na demanda prevista diária
         cobertura_atual = (
-            estoque['estoque_efetivo'] / previsao_diaria
-            if previsao_diaria > 0 else 999
+            estoque['estoque_efetivo'] / demanda_prevista_diaria
+            if demanda_prevista_diaria > 0 else 999
         )
+
+        # Garantir que cobertura não seja NaN ou infinito
+        if np.isnan(cobertura_atual) or np.isinf(cobertura_atual):
+            cobertura_atual = 999
 
         cobertura_pos_pedido = calcular_cobertura_pos_pedido(
             estoque_disponivel=estoque['estoque_disponivel'],
             estoque_transito=estoque['estoque_transito'],
             quantidade_pedido=pedido_info['quantidade_pedido'],
-            demanda_media_diaria=previsao_diaria
+            demanda_media_diaria=demanda_prevista_diaria
         )
 
-        # 11. Calcular valor do pedido
-        valor_pedido = pedido_info['quantidade_pedido'] * preco_custo
+        # Garantir que cobertura_pos_pedido não seja NaN ou infinito
+        if np.isnan(cobertura_pos_pedido) or np.isinf(cobertura_pos_pedido):
+            cobertura_pos_pedido = 999
 
         # 12. Montar resultado
-        return {
+        resultado = {
             # Identificação
             'codigo': codigo,
             'descricao': produto.get('descricao', ''),
             'categoria': produto.get('categoria', ''),
             'cod_empresa': cod_empresa,
+
+            # Situação de compra (não bloqueado)
+            'bloqueado': False,
+            'sit_compra': None,
+            'motivo_bloqueio': None,
 
             # Fornecedor
             'codigo_fornecedor': produto.get('codigo_fornecedor', ''),
@@ -462,37 +712,55 @@ class PedidoFornecedorIntegrado:
             'curva_abc': curva_abc,
             'nivel_servico': es_info['nivel_servico'],
 
-            # Demanda
-            'demanda_media_diaria': round(previsao_diaria, 2),
-            'demanda_periodo': round(demanda_periodo, 0),
+            # Demanda Prevista (do período de cobertura) - sanitizar valores
+            'demanda_prevista': round(sanitizar_float(demanda_periodo, 0), 0),
+            'demanda_prevista_diaria': round(sanitizar_float(demanda_prevista_diaria, 0.01), 2),
 
-            # Estoque
-            'estoque_disponivel': round(estoque['estoque_disponivel'], 0),
-            'estoque_transito': round(estoque['estoque_transito'], 0),
-            'estoque_efetivo': round(estoque['estoque_efetivo'], 0),
-            'estoque_seguranca': es_info['estoque_seguranca'],
+            # Estoque Atual (da posição de estoque importada)
+            'estoque_atual': round(sanitizar_float(estoque['estoque_disponivel'], 0), 0),
+            'estoque_transito': round(sanitizar_float(estoque['estoque_transito'], 0), 0),
+            'estoque_efetivo': round(sanitizar_float(estoque['estoque_efetivo'], 0), 0),
+            'estoque_seguranca': sanitizar_float(es_info['estoque_seguranca'], 0),
 
-            # Cobertura
-            'cobertura_necessaria_dias': cobertura_dias,
-            'cobertura_atual_dias': round(cobertura_atual, 1),
-            'cobertura_pos_pedido_dias': cobertura_pos_pedido,
+            # Cobertura (sempre em DIAS para interface) - sanitizar valores
+            'cobertura_atual_dias': round(sanitizar_float(cobertura_atual, 999), 1),
+            'cobertura_necessaria_dias': sanitizar_float(cobertura_dias, 30),
+            'cobertura_pos_pedido_dias': round(sanitizar_float(cobertura_pos_pedido, 999), 1),
             'detalhes_cobertura': cobertura_info,
 
             # Pedido
-            'quantidade_pedido': pedido_info['quantidade_pedido'],
-            'numero_caixas': pedido_info['numero_caixas'],
-            'multiplo_caixa': parametros['multiplo_caixa'],
+            'quantidade_pedido': sanitizar_float(pedido_info['quantidade_pedido'], 0),
+            'numero_caixas': sanitizar_float(pedido_info['numero_caixas'], 0),
+            'multiplo_caixa': sanitizar_float(parametros['multiplo_caixa'], 1),
             'deve_pedir': pedido_info['deve_pedir'],
             'ajustado_multiplo': pedido_info['ajustado_multiplo'],
 
-            # Valores
-            'preco_custo': round(preco_custo, 2),
-            'valor_pedido': round(valor_pedido, 2),
+            # Valores (usando CUE importado) - sanitizar valores
+            'preco_custo': round(sanitizar_float(preco_custo, 0), 2),
+            'valor_pedido': round(sanitizar_float(valor_pedido, 0), 2),
 
-            # Alertas
-            'risco_ruptura': cobertura_atual < lead_time,
-            'ruptura_iminente': cobertura_atual < 3
+            # Alertas - usar valor sanitizado para comparacao
+            'risco_ruptura': sanitizar_float(cobertura_atual, 999) < lead_time,
+            'ruptura_iminente': sanitizar_float(cobertura_atual, 999) < 3
         }
+
+        # Adicionar informações da previsão semanal (se usada)
+        if previsao_semanal_info is not None:
+            resultado['previsao_semanal'] = {
+                'usado': True,
+                'numero_semanas': previsao_semanal_info.get('numero_semanas', 0),
+                'semana_atual': previsao_semanal_info.get('detalhes', {}).get('semana_atual', ''),
+                'semana_entrega': previsao_semanal_info.get('detalhes', {}).get('semana_entrega', ''),
+                'semanas_cobertura': previsao_semanal_info.get('semanas_cobertura', []),
+                'metodo': 'previsao_semanal_iso8601'
+            }
+        else:
+            resultado['previsao_semanal'] = {
+                'usado': False,
+                'metodo': 'demanda_diaria_simples'
+            }
+
+        return resultado
 
 
 def agregar_por_fornecedor(resultados: List[Dict]) -> Dict:
@@ -510,13 +778,28 @@ def agregar_por_fornecedor(resultados: List[Dict]) -> Dict:
 
     df = pd.DataFrame(resultados)
 
-    # Filtrar apenas itens que devem ser pedidos
-    df_pedidos = df[df['deve_pedir'] == True].copy()
+    # Contar itens bloqueados
+    itens_bloqueados = []
+    if 'bloqueado' in df.columns:
+        df_bloqueados = df[df['bloqueado'] == True].copy()
+        if not df_bloqueados.empty:
+            # Agrupar bloqueados por situação
+            bloqueados_por_sit = df_bloqueados.groupby('sit_compra').agg({
+                'codigo': 'count',
+                'motivo_bloqueio': 'first'
+            }).reset_index()
+            bloqueados_por_sit.columns = ['sit_compra', 'quantidade', 'descricao']
+            itens_bloqueados = bloqueados_por_sit.to_dict('records')
+
+    # Filtrar apenas itens que devem ser pedidos (não bloqueados)
+    df_pedidos = df[(df['deve_pedir'] == True) & (df.get('bloqueado', False) != True)].copy()
 
     if df_pedidos.empty:
         return {
             'total_fornecedores': 0,
             'total_itens': 0,
+            'total_itens_bloqueados': len(df[df.get('bloqueado', False) == True]) if 'bloqueado' in df.columns else 0,
+            'itens_bloqueados_por_situacao': itens_bloqueados,
             'valor_total': 0,
             'fornecedores': []
         }
@@ -540,6 +823,8 @@ def agregar_por_fornecedor(resultados: List[Dict]) -> Dict:
     return {
         'total_fornecedores': len(fornecedores),
         'total_itens': int(df_pedidos['codigo'].count()),
+        'total_itens_bloqueados': len(df[df['bloqueado'] == True]) if 'bloqueado' in df.columns else 0,
+        'itens_bloqueados_por_situacao': itens_bloqueados,
         'valor_total': round(float(df_pedidos['valor_pedido'].sum()), 2),
         'fornecedores': fornecedores
     }

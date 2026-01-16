@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Importar Parametros de Fornecedor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .card-stat {
+            border-left: 4px solid #0d6efd;
+        }
+        .card-stat.success { border-left-color: #198754; }
+        .card-stat.warning { border-left-color: #ffc107; }
+        .card-stat.danger { border-left-color: #dc3545; }
+        .critica-erro { background-color: #fff3f3; }
+        .critica-aviso { background-color: #fffbf0; }
+        .preview-table { max-height: 400px; overflow-y: auto; }
+        .upload-zone {
+            border: 2px dashed #ccc;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-zone:hover {
+            border-color: #0d6efd;
+            background-color: #f8f9fa;
+        }
+        .upload-zone.dragover {
+            border-color: #198754;
+            background-color: #e8f5e9;
+        }
+        .step { display: none; }
+        .step.active { display: block; }
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        .step-indicator .step-item {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #e9ecef;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 10px;
+            font-weight: bold;
+        }
+        .step-indicator .step-item.active {
+            background: #0d6efd;
+            color: white;
+        }
+        .step-indicator .step-item.completed {
+            background: #198754;
+            color: white;
+        }
+        .alert-fornecedor-nao-cadastrado {
+            background-color: #fff3cd;
+            border: 1px solid #ffecb5;
+            color: #664d03;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-graph-up-arrow"></i> Previsao de Demanda
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/"><i class="bi bi-house"></i> Inicio</a>
+                <a class="nav-link" href="/pedido-fornecedor"><i class="bi bi-cart"></i> Pedido Fornecedor</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h2><i class="bi bi-upload"></i> Importar Parametros de Fornecedor</h2>
+        <p class="text-muted">Importe Lead Time, Ciclo de Pedido e Faturamento Minimo por fornecedor/loja</p>
+
+        <!-- Indicador de etapas -->
+        <div class="step-indicator mb-4">
+            <div class="step-item active" id="step-ind-1">1</div>
+            <div class="step-item" id="step-ind-2">2</div>
+            <div class="step-item" id="step-ind-3">3</div>
+        </div>
+
+        <!-- ETAPA 1: Upload -->
+        <div class="step active" id="step-1">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <i class="bi bi-cloud-upload"></i> Etapa 1: Selecionar Arquivo
+                </div>
+                <div class="card-body">
+                    <div class="upload-zone" id="uploadZone">
+                        <i class="bi bi-file-earmark-excel" style="font-size: 48px; color: #198754;"></i>
+                        <h5 class="mt-3">Arraste o arquivo Excel aqui</h5>
+                        <p class="text-muted">ou clique para selecionar</p>
+                        <input type="file" id="fileInput" accept=".xlsx,.xls" style="display: none;">
+                    </div>
+
+                    <div class="mt-4">
+                        <h6>Formato esperado do arquivo:</h6>
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Coluna</th>
+                                    <th>Obrigatorio</th>
+                                    <th>Descricao</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>CNPJ</td><td><i class="bi bi-check-circle text-success"></i></td><td>CNPJ do fornecedor</td></tr>
+                                <tr><td>COD_EMPRESA</td><td><i class="bi bi-check-circle text-success"></i></td><td>Codigo da loja/empresa</td></tr>
+                                <tr><td>LEAD_TIME_DIAS</td><td><i class="bi bi-check-circle text-success"></i></td><td>Tempo de entrega em dias</td></tr>
+                                <tr><td>FANTAS</td><td></td><td>Nome fantasia do fornecedor</td></tr>
+                                <tr><td>TIPO_DESTINO</td><td></td><td>LOJA ou CD</td></tr>
+                                <tr><td>CICLO_PEDIDO_DIAS</td><td></td><td>Ciclo de pedido em dias</td></tr>
+                                <tr><td>FAT_MINIMO</td><td></td><td>Faturamento minimo do pedido</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ETAPA 2: Preview e Validacao -->
+        <div class="step" id="step-2">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <i class="bi bi-eye"></i> Etapa 2: Revisar Dados
+                </div>
+                <div class="card-body">
+                    <!-- Resumo -->
+                    <div class="row mb-4" id="resumoCards">
+                        <!-- Cards serao preenchidos via JS -->
+                    </div>
+
+                    <!-- Criticas -->
+                    <div id="criticasSection" class="mb-4" style="display: none;">
+                        <h5><i class="bi bi-exclamation-triangle text-warning"></i> Criticas Encontradas</h5>
+                        <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+                            <table class="table table-sm" id="tabelaCriticas">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Linha</th>
+                                        <th>Tipo</th>
+                                        <th>Mensagem</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Preview dos dados -->
+                    <h5><i class="bi bi-table"></i> Preview dos Dados</h5>
+                    <div class="preview-table">
+                        <table class="table table-sm table-striped" id="tabelaPreview">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>CNPJ</th>
+                                    <th>Fornecedor</th>
+                                    <th>Loja</th>
+                                    <th>Tipo</th>
+                                    <th>Lead Time</th>
+                                    <th>Ciclo</th>
+                                    <th>Fat. Minimo</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Opcoes de importacao -->
+                    <div class="mt-4">
+                        <h6>Modo de importacao:</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="modoImportacao" id="modoAtualizar" value="atualizar" checked>
+                            <label class="form-check-label" for="modoAtualizar">
+                                <strong>Atualizar</strong> - Mantem registros existentes, atualiza os que ja existem
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="modoImportacao" id="modoSubstituir" value="substituir">
+                            <label class="form-check-label" for="modoSubstituir">
+                                <strong>Substituir</strong> - Desativa todos os registros anteriores
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 d-flex justify-content-between">
+                        <button class="btn btn-secondary" onclick="voltarEtapa()">
+                            <i class="bi bi-arrow-left"></i> Voltar
+                        </button>
+                        <button class="btn btn-primary" onclick="confirmarImportacao()" id="btnConfirmar">
+                            <i class="bi bi-check-circle"></i> Confirmar Importacao
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ETAPA 3: Resultado -->
+        <div class="step" id="step-3">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <i class="bi bi-check-circle"></i> Etapa 3: Resultado
+                </div>
+                <div class="card-body" id="resultadoImportacao">
+                    <!-- Sera preenchido via JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Dados atuais -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <i class="bi bi-database"></i> Parametros Cadastrados Atualmente
+                <button class="btn btn-sm btn-outline-primary float-end" onclick="carregarDadosAtuais()">
+                    <i class="bi bi-arrow-clockwise"></i> Atualizar
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="dadosAtuais">
+                    <p class="text-muted">Clique em "Atualizar" para ver os dados cadastrados.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script>
+        let dadosValidados = null;
+        let criticasGlobal = [];
+        let etapaAtual = 1;
+
+        // Upload zone events
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadZone.addEventListener('click', () => fileInput.click());
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) processarArquivo(files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) processarArquivo(e.target.files[0]);
+        });
+
+        function processarArquivo(file) {
+            if (!file.name.match(/\.(xlsx|xls)$/i)) {
+                alert('Por favor, selecione um arquivo Excel (.xlsx ou .xls)');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+
+                    validarDados(jsonData);
+                } catch (error) {
+                    alert('Erro ao ler arquivo: ' + error.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function validarDados(dados) {
+            // Validar e preparar dados
+            dadosValidados = [];
+            criticasGlobal = [];
+
+            dados.forEach((row, idx) => {
+                const linha = idx + 2;
+
+                // Validar CNPJ
+                const cnpj = String(row['CNPJ'] || '').trim();
+                if (!cnpj) {
+                    criticasGlobal.push({linha, tipo: 'ERRO', mensagem: 'CNPJ vazio ou invalido'});
+                    return;
+                }
+
+                // Validar COD_EMPRESA
+                const codEmpresa = parseInt(row['COD_EMPRESA']);
+                if (isNaN(codEmpresa)) {
+                    criticasGlobal.push({linha, tipo: 'ERRO', mensagem: 'COD_EMPRESA invalido'});
+                    return;
+                }
+
+                // Validar LEAD_TIME
+                let leadTime = parseInt(row['LEAD_TIME_DIAS']);
+                if (isNaN(leadTime) || leadTime < 0) {
+                    leadTime = 15;
+                    criticasGlobal.push({linha, tipo: 'AVISO', mensagem: 'Lead time invalido, usando padrao (15 dias)'});
+                }
+
+                // Outros campos
+                let cicloPedido = parseInt(row['CICLO_PEDIDO_DIAS']) || 7;
+                let fatMinimo = parseFloat(row['FAT_MINIMO']) || 0;
+                let nomeFor = String(row['FANTAS'] || '').trim();
+                let tipoDestino = String(row['TIPO_DESTINO'] || 'LOJA').toUpperCase();
+
+                dadosValidados.push({
+                    cnpj_fornecedor: cnpj,
+                    nome_fornecedor: nomeFor,
+                    cod_empresa: codEmpresa,
+                    tipo_destino: tipoDestino,
+                    lead_time_dias: leadTime,
+                    ciclo_pedido_dias: cicloPedido,
+                    pedido_minimo_valor: fatMinimo
+                });
+            });
+
+            mostrarEtapa(2);
+            exibirResumo();
+        }
+
+        function exibirResumo() {
+            const totalRegistros = dadosValidados.length;
+            const fornecedoresUnicos = [...new Set(dadosValidados.map(d => d.cnpj_fornecedor))].length;
+            const lojasUnicas = [...new Set(dadosValidados.map(d => d.cod_empresa))].length;
+            const erros = criticasGlobal.filter(c => c.tipo === 'ERRO').length;
+            const avisos = criticasGlobal.filter(c => c.tipo === 'AVISO').length;
+
+            // Cards de resumo
+            document.getElementById('resumoCards').innerHTML = `
+                <div class="col-md-3">
+                    <div class="card card-stat success">
+                        <div class="card-body">
+                            <h3 class="mb-0">${totalRegistros}</h3>
+                            <small class="text-muted">Registros Validos</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card card-stat">
+                        <div class="card-body">
+                            <h3 class="mb-0">${fornecedoresUnicos}</h3>
+                            <small class="text-muted">Fornecedores</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card card-stat">
+                        <div class="card-body">
+                            <h3 class="mb-0">${lojasUnicas}</h3>
+                            <small class="text-muted">Lojas</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card card-stat ${erros > 0 ? 'danger' : avisos > 0 ? 'warning' : 'success'}">
+                        <div class="card-body">
+                            <h3 class="mb-0">${erros + avisos}</h3>
+                            <small class="text-muted">Criticas (${erros} erros, ${avisos} avisos)</small>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Criticas
+            if (criticasGlobal.length > 0) {
+                document.getElementById('criticasSection').style.display = 'block';
+                const tbody = document.querySelector('#tabelaCriticas tbody');
+                tbody.innerHTML = criticasGlobal.slice(0, 20).map(c => `
+                    <tr class="${c.tipo === 'ERRO' ? 'critica-erro' : 'critica-aviso'}">
+                        <td>${c.linha}</td>
+                        <td><span class="badge ${c.tipo === 'ERRO' ? 'bg-danger' : 'bg-warning'}">${c.tipo}</span></td>
+                        <td>${c.mensagem}</td>
+                    </tr>
+                `).join('');
+            } else {
+                document.getElementById('criticasSection').style.display = 'none';
+            }
+
+            // Preview
+            const tbodyPreview = document.querySelector('#tabelaPreview tbody');
+            tbodyPreview.innerHTML = dadosValidados.slice(0, 50).map(d => `
+                <tr>
+                    <td>${d.cnpj_fornecedor}</td>
+                    <td>${d.nome_fornecedor}</td>
+                    <td>${d.cod_empresa}</td>
+                    <td>${d.tipo_destino}</td>
+                    <td>${d.lead_time_dias} dias</td>
+                    <td>${d.ciclo_pedido_dias} dias</td>
+                    <td>R$ ${d.pedido_minimo_valor.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
+                </tr>
+            `).join('');
+
+            if (dadosValidados.length > 50) {
+                tbodyPreview.innerHTML += `<tr><td colspan="7" class="text-center text-muted">... e mais ${dadosValidados.length - 50} registros</td></tr>`;
+            }
+
+            // Habilitar/desabilitar botao
+            document.getElementById('btnConfirmar').disabled = dadosValidados.length === 0;
+        }
+
+        function confirmarImportacao() {
+            if (dadosValidados.length === 0) {
+                alert('Nenhum dado valido para importar');
+                return;
+            }
+
+            const modo = document.querySelector('input[name="modoImportacao"]:checked').value;
+
+            if (modo === 'substituir') {
+                if (!confirm('ATENCAO: Isso ira desativar todos os parametros anteriores. Deseja continuar?')) {
+                    return;
+                }
+            }
+
+            document.getElementById('btnConfirmar').disabled = true;
+            document.getElementById('btnConfirmar').innerHTML = '<span class="spinner-border spinner-border-sm"></span> Importando...';
+
+            // Enviar para o servidor
+            fetch('/api/importar-parametros-fornecedor', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    dados: dadosValidados,
+                    modo: modo
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                mostrarResultado(result);
+            })
+            .catch(error => {
+                mostrarResultado({
+                    sucesso: false,
+                    mensagem: 'Erro na comunicacao com o servidor: ' + error.message
+                });
+            });
+        }
+
+        function mostrarResultado(result) {
+            mostrarEtapa(3);
+
+            const container = document.getElementById('resultadoImportacao');
+
+            if (result.sucesso) {
+                container.innerHTML = `
+                    <div class="text-center">
+                        <i class="bi bi-check-circle text-success" style="font-size: 64px;"></i>
+                        <h4 class="mt-3 text-success">Importacao Concluida!</h4>
+                        <p>${result.mensagem}</p>
+                        <div class="row justify-content-center mt-4">
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h3>${result.total || dadosValidados.length}</h3>
+                                        <small>Registros Processados</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-4">
+                            <button class="btn btn-primary" onclick="window.location.reload()">
+                                <i class="bi bi-arrow-clockwise"></i> Nova Importacao
+                            </button>
+                            <a href="/pedido-fornecedor" class="btn btn-success">
+                                <i class="bi bi-cart"></i> Ir para Pedido Fornecedor
+                            </a>
+                        </div>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <div class="text-center">
+                        <i class="bi bi-x-circle text-danger" style="font-size: 64px;"></i>
+                        <h4 class="mt-3 text-danger">Erro na Importacao</h4>
+                        <p>${result.mensagem}</p>
+                        <div class="mt-4">
+                            <button class="btn btn-secondary" onclick="mostrarEtapa(2)">
+                                <i class="bi bi-arrow-left"></i> Voltar
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function mostrarEtapa(etapa) {
+            etapaAtual = etapa;
+
+            // Esconder todas as etapas
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+
+            // Mostrar etapa atual
+            document.getElementById('step-' + etapa).classList.add('active');
+
+            // Atualizar indicadores
+            for (let i = 1; i <= 3; i++) {
+                const ind = document.getElementById('step-ind-' + i);
+                ind.classList.remove('active', 'completed');
+                if (i < etapa) ind.classList.add('completed');
+                else if (i === etapa) ind.classList.add('active');
+            }
+        }
+
+        function voltarEtapa() {
+            if (etapaAtual > 1) {
+                mostrarEtapa(etapaAtual - 1);
+            }
+        }
+
+        function carregarDadosAtuais() {
+            const container = document.getElementById('dadosAtuais');
+            container.innerHTML = '<p class="text-muted"><span class="spinner-border spinner-border-sm"></span> Carregando...</p>';
+
+            fetch('/api/parametros-fornecedor')
+            .then(response => response.json())
+            .then(data => {
+                if (data.length === 0) {
+                    container.innerHTML = '<p class="text-muted">Nenhum parametro cadastrado.</p>';
+                    return;
+                }
+
+                // Agrupar por fornecedor
+                const porFornecedor = {};
+                data.forEach(d => {
+                    if (!porFornecedor[d.cnpj_fornecedor]) {
+                        porFornecedor[d.cnpj_fornecedor] = {
+                            nome: d.nome_fornecedor,
+                            lojas: []
+                        };
+                    }
+                    porFornecedor[d.cnpj_fornecedor].lojas.push(d);
+                });
+
+                let html = `
+                    <p><strong>${data.length}</strong> registros de <strong>${Object.keys(porFornecedor).length}</strong> fornecedores</p>
+                    <div class="table-responsive" style="max-height: 400px;">
+                        <table class="table table-sm table-striped">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>CNPJ</th>
+                                    <th>Fornecedor</th>
+                                    <th>Loja</th>
+                                    <th>Tipo</th>
+                                    <th>Lead Time</th>
+                                    <th>Ciclo</th>
+                                    <th>Fat. Minimo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
+                data.slice(0, 100).forEach(d => {
+                    html += `
+                        <tr>
+                            <td>${d.cnpj_fornecedor}</td>
+                            <td>${d.nome_fornecedor}</td>
+                            <td>${d.cod_empresa}</td>
+                            <td>${d.tipo_destino}</td>
+                            <td>${d.lead_time_dias} dias</td>
+                            <td>${d.ciclo_pedido_dias} dias</td>
+                            <td>R$ ${parseFloat(d.pedido_minimo_valor).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
+                        </tr>
+                    `;
+                });
+
+                if (data.length > 100) {
+                    html += `<tr><td colspan="7" class="text-center text-muted">... e mais ${data.length - 100} registros</td></tr>`;
+                }
+
+                html += '</tbody></table></div>';
+                container.innerHTML = html;
+            })
+            .catch(error => {
+                container.innerHTML = `<p class="text-danger">Erro ao carregar dados: ${error.message}</p>`;
+            });
+        }
+
+        // Carregar dados atuais ao iniciar
+        carregarDadosAtuais();
+    </script>
+</body>
+</html>

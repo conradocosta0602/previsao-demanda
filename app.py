@@ -1255,156 +1255,823 @@ def api_pedido_fornecedor_integrado():
         print(f"\n{'='*60}")
         print("PEDIDO FORNECEDOR INTEGRADO")
         print(f"{'='*60}")
-        print(f"  Fornecedor: {fornecedor_filtro}")
-        print(f"  Categoria: {categoria_filtro}")
+        print(f"  Fornecedor: {fornecedor_filtro} (tipo: {type(fornecedor_filtro).__name__})")
+        print(f"  Categoria: {categoria_filtro} (tipo: {type(categoria_filtro).__name__})")
         print(f"  Destino: {destino_tipo}")
         print(f"  Empresa: {cod_empresa}")
         print(f"  Cobertura: {'Automática (ABC)' if cobertura_dias is None else f'{cobertura_dias} dias'}")
 
-        # Conectar ao banco
-        import psycopg2
-        conn = psycopg2.connect(
-            host="localhost",
-            database="demanda_reabastecimento",
-            user="postgres",
-            password="1234",
-            port="5432"
-        )
+        # Conectar ao banco usando configuração centralizada
+        conn = get_db_connection()
 
-        # 1. Buscar lista de itens x filiais para processar
-        query_itens = """
-            SELECT DISTINCT
-                p.codigo,
-                p.descricao,
-                p.categoria,
-                p.curva_abc,
-                f.codigo_fornecedor,
-                f.nome_fornecedor,
-                f.lead_time_dias,
-                l.cod_empresa,
-                l.nome_loja
-            FROM cadastro_produtos p
-            LEFT JOIN cadastro_fornecedores f ON p.id_fornecedor = f.id_fornecedor
-            CROSS JOIN cadastro_lojas l
-            WHERE p.ativo = TRUE
-              AND l.ativo = TRUE
-              AND l.tipo = %s
-        """
-        params = [destino_tipo]
+        # Normalizar cod_empresa: pode ser string, lista ou 'TODAS'
+        lojas_selecionadas = []
+        if isinstance(cod_empresa, list):
+            lojas_selecionadas = [int(x) for x in cod_empresa]
+        elif cod_empresa != 'TODAS':
+            lojas_selecionadas = [int(cod_empresa)]
 
-        # Filtros opcionais
-        if fornecedor_filtro != 'TODOS':
-            query_itens += " AND f.codigo_fornecedor = %s"
-            params.append(fornecedor_filtro)
+        # Identificar se o destino é CD (centralizado)
+        # CDs são lojas com cod_empresa >= 80
+        if lojas_selecionadas:
+            is_destino_cd = destino_tipo == 'CD' or any(loja >= 80 for loja in lojas_selecionadas)
+            cod_destino = lojas_selecionadas[0]  # Usar a primeira loja para parâmetros
+        else:
+            is_destino_cd = destino_tipo == 'CD'
+            cod_destino = 80  # Default para CD
 
-        if categoria_filtro != 'TODAS':
-            query_itens += " AND p.categoria = %s"
-            params.append(categoria_filtro)
+        # =====================================================================
+        # 1. DETERMINAR LISTA DE FORNECEDORES A PROCESSAR
+        # =====================================================================
+        # Suporta: string 'TODOS', string com nome, ou array de nomes
+        fornecedores_a_processar = []
 
-        if cod_empresa != 'TODAS':
-            query_itens += " AND l.cod_empresa = %s"
-            params.append(int(cod_empresa))
+        # Normalizar: se for lista com 'TODOS', tratar como TODOS
+        if isinstance(fornecedor_filtro, list):
+            # Verificar se 'TODOS' está na lista
+            if 'TODOS' in fornecedor_filtro:
+                fornecedor_filtro = 'TODOS'  # Converter para string para cair no bloco seguinte
+            else:
+                # Multi-select: lista de fornecedores específicos
+                fornecedores_a_processar = fornecedor_filtro
+                print(f"  Modo: Multi-select ({len(fornecedores_a_processar)} fornecedores)")
 
-        query_itens += " LIMIT 500"  # Limitar para performance
+        # Se ainda não preencheu (não era multi-select)
+        if not fornecedores_a_processar:
+            if fornecedor_filtro == 'TODOS':
+                # Buscar todos os fornecedores que tem produtos ativos
+                query_fornecedores = """
+                    SELECT DISTINCT nome_fornecedor
+                    FROM cadastro_produtos_completo
+                    WHERE ativo = TRUE AND nome_fornecedor IS NOT NULL
+                """
+                params_forn = []
 
-        df_itens = pd.read_sql(query_itens, conn, params=params)
+                # Aplicar filtro de categoria se especificado
+                if categoria_filtro != 'TODAS':
+                    if isinstance(categoria_filtro, list):
+                        placeholders = ','.join(['%s'] * len(categoria_filtro))
+                        query_fornecedores += f" AND categoria IN ({placeholders})"
+                        params_forn.extend(categoria_filtro)
+                    else:
+                        query_fornecedores += " AND categoria = %s"
+                        params_forn.append(categoria_filtro)
 
-        if df_itens.empty:
+                query_fornecedores += " ORDER BY nome_fornecedor"
+
+                df_fornecedores = pd.read_sql(query_fornecedores, conn, params=params_forn if params_forn else None)
+                fornecedores_a_processar = df_fornecedores['nome_fornecedor'].tolist()
+                print(f"  Modo: TODOS ({len(fornecedores_a_processar)} fornecedores encontrados)")
+            else:
+                # Fornecedor unico (string)
+                fornecedores_a_processar = [fornecedor_filtro]
+                print(f"  Modo: Fornecedor unico ({fornecedor_filtro})")
+
+        if not fornecedores_a_processar:
             conn.close()
             return jsonify({
                 'success': False,
-                'erro': 'Nenhum item encontrado com os filtros selecionados'
+                'erro': 'Nenhum fornecedor encontrado com os filtros selecionados.'
             }), 400
 
-        print(f"  Itens a processar: {len(df_itens)}")
+        # =====================================================================
+        # 2. PROCESSAR PRODUTOS POR FORNECEDOR (sem LIMIT global)
+        # =====================================================================
+        print(f"  Destino CD: {is_destino_cd}")
 
-        # 2. Processar cada item usando previsão V2
+        # Verificar se tabela parametros_fornecedor existe (graceful degradation)
+        cursor_check = conn.cursor()
+        cursor_check.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'parametros_fornecedor'
+            )
+        """)
+        tabela_params_existe = cursor_check.fetchone()[0]
+        cursor_check.close()
+
+        df_produtos_total = pd.DataFrame()
+        total_produtos_por_fornecedor = {}
+
+        for idx_forn, nome_fornecedor in enumerate(fornecedores_a_processar):
+            # DEBUG: Log do nome do fornecedor sendo processado
+            if 'FAME' in str(nome_fornecedor).upper():
+                print(f"    [DEBUG-FAME] Processando fornecedor: '{nome_fornecedor}' (repr: {repr(nome_fornecedor)})")
+
+            # Query para buscar produtos deste fornecedor
+            # Se tabela parametros_fornecedor existe, faz JOIN para buscar parametros
+            # Senao, usa valores padrao
+            if tabela_params_existe:
+                query_produtos = """
+                    SELECT DISTINCT
+                        p.cod_produto as codigo,
+                        p.descricao,
+                        p.categoria,
+                        'B' as curva_abc,
+                        p.cnpj_fornecedor as codigo_fornecedor,
+                        p.nome_fornecedor,
+                        COALESCE(pf.lead_time_dias, 15) as lead_time_dias,
+                        COALESCE(pf.ciclo_pedido_dias, 7) as ciclo_pedido_dias,
+                        COALESCE(pf.pedido_minimo_valor, 0) as pedido_minimo_valor,
+                        CASE WHEN pf.id IS NOT NULL THEN TRUE ELSE FALSE END as fornecedor_cadastrado
+                    FROM cadastro_produtos_completo p
+                    LEFT JOIN parametros_fornecedor pf ON p.cnpj_fornecedor = pf.cnpj_fornecedor
+                        AND pf.cod_empresa = %s AND pf.ativo = TRUE
+                    WHERE p.ativo = TRUE
+                        AND p.nome_fornecedor = %s
+                """
+                params = [cod_destino, nome_fornecedor]
+            else:
+                # Fallback: sem tabela de parametros, usa valores padrao
+                query_produtos = """
+                    SELECT DISTINCT
+                        p.cod_produto as codigo,
+                        p.descricao,
+                        p.categoria,
+                        'B' as curva_abc,
+                        p.cnpj_fornecedor as codigo_fornecedor,
+                        p.nome_fornecedor,
+                        15 as lead_time_dias,
+                        7 as ciclo_pedido_dias,
+                        0 as pedido_minimo_valor,
+                        FALSE as fornecedor_cadastrado
+                    FROM cadastro_produtos_completo p
+                    WHERE p.ativo = TRUE
+                        AND p.nome_fornecedor = %s
+                """
+                params = [nome_fornecedor]
+
+            # Filtro de categoria (se especificado)
+            if categoria_filtro != 'TODAS':
+                if isinstance(categoria_filtro, list):
+                    placeholders = ','.join(['%s'] * len(categoria_filtro))
+                    query_produtos += f" AND p.categoria IN ({placeholders})"
+                    params.extend(categoria_filtro)
+                else:
+                    query_produtos += " AND p.categoria = %s"
+                    params.append(categoria_filtro)
+
+            query_produtos += " ORDER BY p.cod_produto"
+
+            df_forn = pd.read_sql(query_produtos, conn, params=params)
+
+            if not df_forn.empty:
+                total_produtos_por_fornecedor[nome_fornecedor] = len(df_forn)
+                df_produtos_total = pd.concat([df_produtos_total, df_forn], ignore_index=True)
+
+                # DEBUG: Log específico para Fame
+                if 'FAME' in str(nome_fornecedor).upper():
+                    print(f"    [DEBUG-FAME] Produtos encontrados: {len(df_forn)}")
+            else:
+                # DEBUG: Log quando não encontra produtos
+                if 'FAME' in str(nome_fornecedor).upper():
+                    print(f"    [DEBUG-FAME] NENHUM produto encontrado para '{nome_fornecedor}'")
+
+            # Log de progresso a cada 10 fornecedores
+            if (idx_forn + 1) % 10 == 0:
+                print(f"    Fornecedores processados: {idx_forn + 1}/{len(fornecedores_a_processar)}")
+
+        df_produtos = df_produtos_total
+
+        if df_produtos.empty:
+            conn.close()
+            return jsonify({
+                'success': False,
+                'erro': f'Nenhum item encontrado com os filtros selecionados.'
+            }), 400
+
+        # Verificar duplicatas por código de produto (apenas debug, não remove)
+        total_produtos = len(df_produtos)
+        produtos_unicos = df_produtos['codigo'].nunique()
+        duplicatas = total_produtos - produtos_unicos
+
+        print(f"  Total de produtos a processar: {total_produtos} (de {len(fornecedores_a_processar)} fornecedores)")
+        if duplicatas > 0:
+            print(f"  [AVISO] Encontradas {duplicatas} duplicatas de código de produto!")
+            # Mostrar quais produtos estão duplicados
+            duplicados = df_produtos[df_produtos.duplicated(subset=['codigo'], keep=False)]
+            print(f"    Produtos duplicados: {duplicados['codigo'].unique().tolist()[:10]}...")  # Mostrar primeiros 10
+            # Remover duplicatas mantendo o primeiro (preserva fornecedor original do produto)
+            df_produtos = df_produtos.drop_duplicates(subset=['codigo'], keep='first')
+            print(f"    Após remoção: {len(df_produtos)} produtos")
+
+        # DEBUG: Mostrar quantos produtos por fornecedor foram carregados
+        for forn_nome, qtd in total_produtos_por_fornecedor.items():
+            print(f"    [DEBUG] {forn_nome}: {qtd} produtos")
+
+        # DEBUG: Contar produtos por fornecedor no DataFrame final
+        contagem_final = df_produtos.groupby('nome_fornecedor').size().to_dict()
+        print(f"  [DEBUG] Produtos por fornecedor no DataFrame final:")
+        for forn, qtd in sorted(contagem_final.items()):
+            if 'FAME' in str(forn).upper():
+                print(f"    >>> {forn}: {qtd} produtos <<<")  # Destacar Fame
+            else:
+                print(f"    {forn}: {qtd} produtos")
+
+        # Buscar lojas para somar demanda (lojas que vendem, cod_empresa < 80)
+        # Flag para identificar pedido direto multi-loja (layout segregado por loja)
+        is_pedido_multiloja = False
+        mapa_nomes_lojas = {}  # {cod_empresa: nome_loja}
+
+        if is_destino_cd:
+            # Para CD: somar demanda de todas as lojas (cod_empresa 1-9)
+            lojas_demanda = pd.read_sql(
+                "SELECT cod_empresa FROM cadastro_lojas WHERE ativo = TRUE AND cod_empresa < 80",
+                conn
+            )['cod_empresa'].tolist()
+            nome_destino = f"CD {cod_destino}"
+        else:
+            # Para loja(s) específica(s): usar as lojas selecionadas
+            if lojas_selecionadas:
+                lojas_demanda = lojas_selecionadas
+                if len(lojas_selecionadas) == 1:
+                    nome_destino = f"Loja {lojas_selecionadas[0]}"
+                else:
+                    # Pedido direto multi-loja: processar cada loja separadamente
+                    is_pedido_multiloja = True
+                    nome_destino = f"Lojas {', '.join(str(l) for l in lojas_selecionadas)}"
+                    # Buscar nomes das lojas
+                    placeholders = ','.join(['%s'] * len(lojas_selecionadas))
+                    df_nomes_lojas = pd.read_sql(
+                        f"SELECT cod_empresa, nome_loja FROM cadastro_lojas WHERE cod_empresa IN ({placeholders})",
+                        conn,
+                        params=lojas_selecionadas
+                    )
+                    mapa_nomes_lojas = dict(zip(df_nomes_lojas['cod_empresa'], df_nomes_lojas['nome_loja']))
+                    print(f"  [MULTILOJA] Modo pedido direto multi-loja ativado")
+                    print(f"  [MULTILOJA] Lojas: {mapa_nomes_lojas}")
+            else:
+                # Nenhuma loja selecionada: usar todas
+                lojas_demanda = pd.read_sql(
+                    "SELECT cod_empresa FROM cadastro_lojas WHERE ativo = TRUE AND cod_empresa < 80",
+                    conn
+                )['cod_empresa'].tolist()
+                nome_destino = "Todas as Lojas"
+
+        print(f"  Lojas para calcular demanda: {lojas_demanda}")
+        print(f"  Modo multiloja: {is_pedido_multiloja}")
+
+        # 2. Processar cada produto
+        from core.demand_calculator import DemandCalculator
+
         processador = PedidoFornecedorIntegrado(conn)
         resultados = []
 
-        for idx, row in df_itens.iterrows():
+        itens_sem_historico = 0
+        itens_sem_demanda = 0
+
+        # DEBUG: Rastreamento por fornecedor
+        debug_por_fornecedor = {}
+
+        for idx, row in df_produtos.iterrows():
             try:
-                codigo = int(row['codigo'])
-                cod_emp = int(row['cod_empresa'])
+                codigo = row['codigo']
+                nome_forn_atual = row.get('nome_fornecedor', 'DESCONHECIDO')
 
-                # Buscar histórico para calcular demanda média
-                historico = processador.buscar_historico_vendas(codigo, cod_emp, dias=365)
+                # Inicializar contador para este fornecedor
+                if nome_forn_atual not in debug_por_fornecedor:
+                    debug_por_fornecedor[nome_forn_atual] = {
+                        'total': 0, 'sem_historico': 0, 'sem_demanda': 0, 'processados': 0
+                    }
+                debug_por_fornecedor[nome_forn_atual]['total'] += 1
 
-                if not historico or len(historico) < 30:
-                    continue  # Pular itens sem histórico suficiente
+                # Obter parametros do fornecedor do cadastro
+                lead_time_forn = int(row.get('lead_time_dias', 15))
+                ciclo_pedido_forn = int(row.get('ciclo_pedido_dias', 7))
+                pedido_min_forn = float(row.get('pedido_minimo_valor', 0))
+                fornecedor_cadastrado = row.get('fornecedor_cadastrado', False)
 
-                # Calcular demanda média diária e desvio padrão
-                demanda_diaria = np.mean(historico)
-                desvio_padrao = np.std(historico, ddof=1) if len(historico) > 1 else demanda_diaria * 0.3
+                # =====================================================================
+                # MODO MULTI-LOJA: Processar cada loja separadamente
+                # IMPORTANTE: Todos os itens devem aparecer em todas as lojas para transparencia
+                # =====================================================================
+                if is_pedido_multiloja:
+                    for loja_cod in lojas_demanda:
+                        loja_nome = mapa_nomes_lojas.get(loja_cod, f"Loja {loja_cod}")
 
-                if demanda_diaria <= 0:
-                    continue  # Pular itens sem demanda
+                        # Buscar histórico apenas desta loja
+                        historico_loja = processador.buscar_historico_vendas(codigo, loja_cod, dias=365)
 
-                # Processar item
-                resultado = processador.processar_item(
-                    codigo=codigo,
-                    cod_empresa=cod_emp,
-                    previsao_diaria=demanda_diaria,
-                    desvio_padrao=desvio_padrao,
-                    cobertura_dias=cobertura_dias
-                )
+                        # Calcular demanda (pode ser 0 se não houver histórico)
+                        demanda_diaria = 0
+                        desvio_padrao = 0
+                        metadata = {'metodo_usado': 'sem_historico'}
 
-                if 'erro' not in resultado:
-                    resultado['nome_loja'] = row['nome_loja']
-                    resultados.append(resultado)
+                        if historico_loja and len(historico_loja) >= 7:
+                            demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_loja, metodo='auto')
+                            demanda_diaria = demanda_media if demanda_media > 0 else 0
+
+                        # Processar item para esta loja (mesmo sem demanda, para transparencia)
+                        resultado = processador.processar_item(
+                            codigo=codigo,
+                            cod_empresa=loja_cod,
+                            previsao_diaria=demanda_diaria,
+                            desvio_padrao=desvio_padrao,
+                            cobertura_dias=cobertura_dias,
+                            usar_previsao_semanal_item=True,
+                            lead_time_dias=lead_time_forn,
+                            ciclo_pedido_dias=ciclo_pedido_forn,
+                            pedido_minimo_valor=pedido_min_forn
+                        )
+
+                        # IMPORTANTE: Incluir TODOS os itens, mesmo com erro
+                        # Se houver erro, criar resultado basico para transparencia
+                        if 'erro' in resultado:
+                            resultado = {
+                                'codigo': codigo,
+                                'descricao': row.get('descricao', ''),
+                                'nome_fornecedor': nome_forn_atual,
+                                'curva_abc': row.get('curva_abc', 'B'),
+                                'estoque_atual': 0,
+                                'estoque_transito': 0,
+                                'demanda_prevista': 0,
+                                'demanda_prevista_diaria': 0,
+                                'cobertura_atual_dias': 999,
+                                'cobertura_pos_pedido_dias': 999,
+                                'quantidade_pedido': 0,
+                                'valor_pedido': 0,
+                                'deve_pedir': False,
+                                'bloqueado': False,
+                                'erro_processamento': resultado.get('erro', 'Erro desconhecido')
+                            }
+
+                        resultado['cod_loja'] = loja_cod
+                        resultado['nome_loja'] = loja_nome
+                        resultado['codigo_fornecedor'] = row.get('codigo_fornecedor', '')  # CNPJ
+                        resultado['metodo_previsao'] = metadata.get('metodo_usado', 'auto')
+                        resultado['lojas_consideradas'] = 1
+                        resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
+                        resultado['lead_time_usado'] = lead_time_forn
+                        resultado['ciclo_pedido_usado'] = ciclo_pedido_forn
+                        resultado['pedido_minimo_fornecedor'] = pedido_min_forn
+                        # Marcar se não tem demanda (para classificar como OK no frontend)
+                        resultado['sem_demanda_loja'] = demanda_diaria <= 0
+                        resultados.append(resultado)
+                        debug_por_fornecedor[nome_forn_atual]['processados'] += 1
+
+                else:
+                    # =====================================================================
+                    # MODO NORMAL: Agregar demanda de todas as lojas
+                    # =====================================================================
+                    # Buscar e somar histórico de todas as lojas relevantes
+                    historico_total = []
+                    for loja in lojas_demanda:
+                        historico_loja = processador.buscar_historico_vendas(codigo, loja, dias=365)
+                        if historico_loja:
+                            if not historico_total:
+                                historico_total = historico_loja.copy()
+                            else:
+                                # Somar históricos (dia a dia)
+                                for i in range(min(len(historico_total), len(historico_loja))):
+                                    historico_total[i] += historico_loja[i]
+
+                    if not historico_total or len(historico_total) < 7:
+                        itens_sem_historico += 1
+                        debug_por_fornecedor[nome_forn_atual]['sem_historico'] += 1
+                        if idx < 5:
+                            print(f"    [DEBUG] Item {codigo}: sem historico suficiente")
+                        continue
+
+                    # Usar DemandCalculator para calcular demanda de forma inteligente
+                    demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_total, metodo='auto')
+
+                    demanda_diaria = demanda_media
+
+                    if demanda_diaria <= 0:
+                        itens_sem_demanda += 1
+                        debug_por_fornecedor[nome_forn_atual]['sem_demanda'] += 1
+                        continue
+
+                    # Se destino é CD ou demanda foi agregada de múltiplas lojas,
+                    # não usar previsão semanal (já calculamos a demanda somada)
+                    usar_prev_semanal = not is_destino_cd and len(lojas_demanda) == 1
+
+                    resultado = processador.processar_item(
+                        codigo=codigo,
+                        cod_empresa=cod_destino,
+                        previsao_diaria=demanda_diaria,
+                        desvio_padrao=desvio_padrao,
+                        cobertura_dias=cobertura_dias,
+                        usar_previsao_semanal_item=usar_prev_semanal,
+                        lead_time_dias=lead_time_forn,
+                        ciclo_pedido_dias=ciclo_pedido_forn,
+                        pedido_minimo_valor=pedido_min_forn
+                    )
+
+                    if 'erro' not in resultado:
+                        resultado['nome_loja'] = nome_destino
+                        resultado['cod_loja'] = cod_destino
+                        resultado['codigo_fornecedor'] = row.get('codigo_fornecedor', '')  # CNPJ
+                        resultado['metodo_previsao'] = metadata.get('metodo_usado', 'auto')
+                        resultado['lojas_consideradas'] = len(lojas_demanda)
+                        resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
+                        resultado['lead_time_usado'] = lead_time_forn
+                        resultado['ciclo_pedido_usado'] = ciclo_pedido_forn
+                        resultado['pedido_minimo_fornecedor'] = pedido_min_forn
+                        resultados.append(resultado)
+                        debug_por_fornecedor[nome_forn_atual]['processados'] += 1
 
             except Exception as e:
                 print(f"  [AVISO] Erro ao processar item {row.get('codigo')}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
             # Progresso
             if (idx + 1) % 50 == 0:
-                print(f"  Processados {idx + 1}/{len(df_itens)} itens...")
+                print(f"  Processados {idx + 1}/{len(df_produtos)} produtos...")
+
+        # =====================================================================
+        # CALCULO DE OPORTUNIDADES DE TRANSFERENCIA
+        # Para CD: usa logica de grupo regional
+        # Para Multi-Loja: verifica excesso entre lojas selecionadas
+        # =====================================================================
+        oportunidades_transferencia = []
+        sessao_pedido = None
+
+        # =====================================================================
+        # TRANSFERENCIAS PARA PEDIDO MULTI-LOJA (direto entre lojas selecionadas)
+        # =====================================================================
+        if is_pedido_multiloja and resultados and len(lojas_selecionadas) > 1:
+            try:
+                print(f"\n  [TRANSFERENCIAS MULTILOJA] Analisando oportunidades entre {len(lojas_selecionadas)} lojas...")
+
+                import uuid
+                sessao_pedido = f"ML_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+                # Agrupar resultados por produto
+                resultados_por_produto = {}
+                for r in resultados:
+                    cod = r['codigo']
+                    if cod not in resultados_por_produto:
+                        resultados_por_produto[cod] = {}
+                    loja_cod = r.get('cod_loja')
+                    if loja_cod:
+                        resultados_por_produto[cod][loja_cod] = r
+
+                total_oportunidades = 0
+                cobertura_alvo = cobertura_dias or 21
+
+                for cod_produto, lojas_data in resultados_por_produto.items():
+                    if len(lojas_data) < 2:
+                        continue
+
+                    # Identificar lojas com excesso e lojas com necessidade
+                    # IMPORTANTE: Uma loja NAO pode ser origem E destino ao mesmo tempo!
+                    lojas_excesso = []  # (loja_cod, excesso_unidades, dados)
+                    lojas_necessidade = []  # (loja_cod, necessidade_unidades, dados)
+
+                    for loja_cod, dados in lojas_data.items():
+                        demanda_diaria = dados.get('demanda_prevista_diaria', 0) or 0
+                        estoque = dados.get('estoque_atual', 0) or 0
+                        transito = dados.get('estoque_transito', 0) or 0
+                        cobertura_atual = dados.get('cobertura_atual_dias', 0) or 0
+                        deve_pedir = dados.get('deve_pedir', False)
+                        qtd_pedido = dados.get('quantidade_pedido', 0) or 0
+
+                        # REGRA PRINCIPAL: Se a loja PRECISA PEDIR, ela e DESTINO (nao pode ser origem)
+                        if deve_pedir and qtd_pedido > 0:
+                            lojas_necessidade.append((loja_cod, int(qtd_pedido), dados))
+                            continue  # NAO avaliar como possivel origem
+
+                        # Se NAO precisa pedir, verificar se tem excesso para ser origem
+                        if demanda_diaria <= 0:
+                            # Sem demanda = potencial doador se tem estoque significativo
+                            if estoque > 5:  # Minimo de 5 unidades para doar
+                                lojas_excesso.append((loja_cod, estoque, dados))
+                        elif cobertura_atual > cobertura_alvo * 1.5:
+                            # Tem excesso (cobertura > 150% do alvo) e NAO precisa pedir
+                            estoque_necessario = demanda_diaria * cobertura_alvo
+                            estoque_disponivel = estoque + transito
+                            excesso = int(estoque_disponivel - estoque_necessario)
+                            if excesso > 0:
+                                lojas_excesso.append((loja_cod, excesso, dados))
+
+                    # Se tem lojas com excesso e lojas com necessidade, sugerir transferencias
+                    if lojas_excesso and lojas_necessidade:
+                        # DEBUG: Log para verificar classificacao
+                        print(f"    [TRANSF DEBUG] Produto {cod_produto}:")
+                        print(f"      Lojas EXCESSO (podem enviar): {[(l[0], l[1]) for l in lojas_excesso]}")
+                        print(f"      Lojas NECESSIDADE (precisam receber): {[(l[0], l[1]) for l in lojas_necessidade]}")
+
+                        # Ordenar por prioridade (maior excesso primeiro, maior necessidade primeiro)
+                        lojas_excesso.sort(key=lambda x: x[1], reverse=True)
+                        lojas_necessidade.sort(key=lambda x: x[1], reverse=True)
+
+                        for loja_dest, necessidade, dados_dest in lojas_necessidade:
+                            qtd_restante = necessidade
+
+                            for i, (loja_orig, excesso, dados_orig) in enumerate(lojas_excesso):
+                                if qtd_restante <= 0 or excesso <= 0:
+                                    continue
+
+                                # Calcular quantidade a transferir
+                                qtd_transferir = min(qtd_restante, excesso)
+
+                                if qtd_transferir > 0:
+                                    # Criar oportunidade de transferencia
+                                    cue = dados_orig.get('cue', 0) or dados_dest.get('cue', 0) or 0
+                                    valor_estimado = qtd_transferir * cue
+
+                                    transferencia = {
+                                        'cod_produto': cod_produto,
+                                        'descricao_produto': dados_orig.get('descricao', ''),
+                                        'curva_abc': dados_orig.get('curva_abc', 'B'),
+                                        'loja_origem': loja_orig,
+                                        'nome_loja_origem': dados_orig.get('nome_loja', f'Loja {loja_orig}'),
+                                        'estoque_origem': dados_orig.get('estoque_atual', 0),
+                                        'cobertura_origem_dias': dados_orig.get('cobertura_atual_dias', 0),
+                                        'loja_destino': loja_dest,
+                                        'nome_loja_destino': dados_dest.get('nome_loja', f'Loja {loja_dest}'),
+                                        'estoque_destino': dados_dest.get('estoque_atual', 0),
+                                        'cobertura_destino_dias': dados_dest.get('cobertura_atual_dias', 0),
+                                        'qtd_sugerida': qtd_transferir,
+                                        'valor_estimado': valor_estimado,
+                                        'cue': cue,
+                                        'urgencia': 'ALTA' if dados_dest.get('ruptura_iminente') else 'MEDIA',
+                                        'tipo': 'MULTILOJA'
+                                    }
+
+                                    oportunidades_transferencia.append(transferencia)
+                                    total_oportunidades += 1
+
+                                    # Atualizar excesso restante
+                                    lojas_excesso[i] = (loja_orig, excesso - qtd_transferir, dados_orig)
+                                    qtd_restante -= qtd_transferir
+
+                print(f"  [TRANSFERENCIAS MULTILOJA] {total_oportunidades} oportunidades identificadas")
+
+            except Exception as e:
+                print(f"  [TRANSFERENCIAS MULTILOJA] Erro: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # =====================================================================
+        # TRANSFERENCIAS PARA PEDIDO CD (logica original com grupo regional)
+        # =====================================================================
+        elif is_destino_cd and resultados:
+            try:
+                from core.transferencia_regional import TransferenciaRegional
+
+                print(f"\n  [TRANSFERENCIAS] Calculando oportunidades de transferencia...")
+
+                calculador = TransferenciaRegional(conn)
+                sessao_pedido = calculador.gerar_sessao_pedido()
+
+                # Identificar grupo regional pelo CD
+                grupo = calculador._get_grupo_por_cd(cod_destino)
+
+                if grupo:
+                    grupo_id = grupo['id']
+                    total_oportunidades = 0
+
+                    # Para cada item processado, verificar desbalanceamento
+                    for resultado in resultados:
+                        codigo = resultado['codigo']
+                        descricao = resultado.get('descricao', '')
+                        curva_abc = resultado.get('curva_abc', 'B')
+
+                        # Consolidar posicao do item
+                        posicao = calculador.consolidar_posicao_item(
+                            cod_produto=int(codigo),
+                            grupo_id=grupo_id,
+                            cd_principal=cod_destino
+                        )
+
+                        # Montar demanda por loja
+                        demanda_por_loja = {}
+                        demanda_diaria_total = resultado.get('demanda_prevista_diaria', 0)
+
+                        if lojas_demanda and demanda_diaria_total > 0:
+                            # Distribuir demanda proporcionalmente (simplificado)
+                            demanda_por_loja_unit = demanda_diaria_total / len(lojas_demanda)
+                            for loja in lojas_demanda:
+                                demanda_por_loja[loja] = demanda_por_loja_unit
+
+                        if demanda_por_loja:
+                            # Analisar desbalanceamento
+                            analise = calculador.analisar_desbalanceamento(
+                                posicao=posicao,
+                                demanda_por_loja=demanda_por_loja,
+                                cobertura_alvo=cobertura_dias or 21
+                            )
+
+                            # Calcular transferencias se houver desbalanceamento
+                            if analise['tem_desbalanceamento']:
+                                transferencias = calculador.calcular_transferencias(
+                                    posicao=posicao,
+                                    analise=analise,
+                                    cobertura_alvo=cobertura_dias or 21
+                                )
+
+                                if transferencias:
+                                    # Salvar oportunidades
+                                    salvos = calculador.salvar_oportunidades(
+                                        transferencias=transferencias,
+                                        grupo_id=grupo_id,
+                                        sessao_pedido=sessao_pedido,
+                                        descricao_produto=descricao,
+                                        curva_abc=curva_abc
+                                    )
+                                    total_oportunidades += salvos
+                                    oportunidades_transferencia.extend(transferencias)
+
+                    print(f"  [TRANSFERENCIAS] {total_oportunidades} oportunidades identificadas e salvas")
+                else:
+                    print(f"  [TRANSFERENCIAS] CD {cod_destino} nao pertence a nenhum grupo de transferencia")
+
+            except Exception as e:
+                print(f"  [TRANSFERENCIAS] Erro ao calcular transferencias: {e}")
+                import traceback
+                traceback.print_exc()
 
         conn.close()
+
+        print(f"  [DEBUG] Itens sem histórico suficiente: {itens_sem_historico}")
+        print(f"  [DEBUG] Itens sem demanda: {itens_sem_demanda}")
+        print(f"  [DEBUG] Itens processados com sucesso: {len(resultados)}")
+
+        # DEBUG: Detalhamento por fornecedor
+        print(f"\n  [DEBUG] ====== DETALHAMENTO POR FORNECEDOR ======")
+        for forn_nome, stats in sorted(debug_por_fornecedor.items()):
+            if stats['total'] > 0:  # Mostrar apenas fornecedores com produtos
+                print(f"    {forn_nome}: {stats['total']} produtos -> "
+                      f"{stats['processados']} processados, "
+                      f"{stats['sem_historico']} sem histórico, "
+                      f"{stats['sem_demanda']} sem demanda")
+        print(f"  [DEBUG] ================================================")
 
         if not resultados:
             return jsonify({
                 'success': False,
-                'erro': 'Nenhum item com dados suficientes para gerar pedido'
+                'erro': f'Nenhum item com dados suficientes para gerar pedido. Itens analisados: {len(df_produtos)}, sem histórico: {itens_sem_historico}, sem demanda: {itens_sem_demanda}'
             }), 400
 
         print(f"  Total processado: {len(resultados)} itens")
 
+        # Converter tipos NumPy para tipos Python nativos (para serialização JSON)
+        def converter_tipos_json(obj):
+            """Converte tipos NumPy para tipos Python nativos e trata NaN/Infinito/None"""
+            import math
+
+            # Tratar None primeiro
+            if obj is None:
+                return None
+
+            # Tratar dicionários
+            if isinstance(obj, dict):
+                return {k: converter_tipos_json(v) for k, v in obj.items()}
+
+            # Tratar listas
+            elif isinstance(obj, list):
+                return [converter_tipos_json(item) for item in obj]
+
+            # Tratar tipos numpy
+            elif isinstance(obj, (np.bool_, np.generic)):
+                valor = obj.item()
+                # Tratar NaN e infinito
+                if isinstance(valor, float):
+                    if math.isnan(valor):
+                        return 0
+                    if math.isinf(valor):
+                        return 999 if valor > 0 else -999
+                return valor
+
+            # Tratar arrays numpy
+            elif isinstance(obj, np.ndarray):
+                return converter_tipos_json(obj.tolist())
+
+            # Tratar floats Python (incluindo pandas NaN)
+            elif isinstance(obj, float):
+                if math.isnan(obj):
+                    return 0
+                if math.isinf(obj):
+                    return 999 if obj > 0 else -999
+                return obj
+
+            # Tratar pandas NA/NaT (com try/except para tipos não suportados)
+            else:
+                try:
+                    if pd.isna(obj):
+                        return None
+                except (TypeError, ValueError):
+                    pass
+
+            return obj
+
+        resultados = converter_tipos_json(resultados)
+
         # 3. Agregar por fornecedor
         agregacao = agregar_por_fornecedor(resultados)
 
-        # 4. Separar itens que devem ser pedidos
-        itens_pedido = [r for r in resultados if r.get('deve_pedir')]
-        itens_ok = [r for r in resultados if not r.get('deve_pedir')]
+        # 4. Separar itens que devem ser pedidos, bloqueados e ok
+        itens_pedido = [r for r in resultados if r.get('deve_pedir') and not r.get('bloqueado')]
+        itens_bloqueados = [r for r in resultados if r.get('bloqueado')]
+        itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
+
+        # DEBUG: Contar por fornecedor nos resultados finais (apenas FAME)
+        print(f"\n  [DEBUG] ====== FAME - DISTRIBUIÇÃO POR CATEGORIA ======")
+        fame_pedido = len([r for r in itens_pedido if 'FAME' in str(r.get('nome_fornecedor', '')).upper()])
+        fame_bloq = len([r for r in itens_bloqueados if 'FAME' in str(r.get('nome_fornecedor', '')).upper()])
+        fame_ok = len([r for r in itens_ok if 'FAME' in str(r.get('nome_fornecedor', '')).upper()])
+        print(f"    FAME - Pedido: {fame_pedido} itens")
+        print(f"    FAME - Bloqueados: {fame_bloq} itens")
+        print(f"    FAME - OK (sem necessidade): {fame_ok} itens")
+        print(f"    FAME - Total na tabela (pedido+bloq): {fame_pedido + fame_bloq} itens")
+        print(f"    FAME - Total geral: {fame_pedido + fame_bloq + fame_ok} itens")
+        print(f"  [DEBUG] ================================================")
 
         # 5. Estatísticas
+        # Filtrar itens não bloqueados para cálculos
+        itens_nao_bloqueados = [r for r in resultados if not r.get('bloqueado')]
+
+        # Verificar quantos itens usaram previsão semanal
+        itens_com_previsao_semanal = len([r for r in itens_pedido if r.get('previsao_semanal', {}).get('usado', False)])
+
+        # Calcular coberturas medias de forma segura (evitando NaN)
+        coberturas_atuais = [r.get('cobertura_atual_dias', 0) for r in itens_nao_bloqueados if r.get('cobertura_atual_dias', 0) < 900]
+        coberturas_pos = [r.get('cobertura_pos_pedido_dias', 0) for r in itens_pedido if r.get('cobertura_pos_pedido_dias', 0) < 900]
+
+        cobertura_media_atual = round(np.mean(coberturas_atuais), 1) if coberturas_atuais else 0
+        cobertura_media_pos = round(np.mean(coberturas_pos), 1) if coberturas_pos else 0
+
+        # Garantir que nao ha NaN
+        import math
+        if math.isnan(cobertura_media_atual) or math.isinf(cobertura_media_atual):
+            cobertura_media_atual = 0
+        if math.isnan(cobertura_media_pos) or math.isinf(cobertura_media_pos):
+            cobertura_media_pos = 0
+
         estatisticas = {
             'total_itens_analisados': len(resultados),
             'total_itens_pedido': len(itens_pedido),
+            'total_itens_bloqueados': len(itens_bloqueados),
             'total_itens_ok': len(itens_ok),
             'valor_total_pedido': round(sum(r.get('valor_pedido', 0) for r in itens_pedido), 2),
-            'itens_ruptura_iminente': len([r for r in resultados if r.get('ruptura_iminente')]),
-            'itens_risco_ruptura': len([r for r in resultados if r.get('risco_ruptura')]),
-            'cobertura_media_atual': round(np.mean([r.get('cobertura_atual_dias', 0) for r in resultados if r.get('cobertura_atual_dias', 0) < 900]), 1),
-            'cobertura_media_pos_pedido': round(np.mean([r.get('cobertura_pos_pedido_dias', 0) for r in itens_pedido if r.get('cobertura_pos_pedido_dias', 0) < 900]), 1) if itens_pedido else 0
+            'itens_ruptura_iminente': len([r for r in itens_nao_bloqueados if r.get('ruptura_iminente')]),
+            'itens_risco_ruptura': len([r for r in itens_nao_bloqueados if r.get('risco_ruptura')]),
+            'cobertura_media_atual': cobertura_media_atual,
+            'cobertura_media_pos_pedido': cobertura_media_pos,
+            'itens_previsao_semanal': itens_com_previsao_semanal,
+            'usa_previsao_semanal': itens_com_previsao_semanal > 0,
+            # Debug info - ajuda a identificar problemas
+            'total_produtos_consultados': len(df_produtos),
+            'total_fornecedores_processados': len(fornecedores_a_processar),
+            'itens_sem_historico': itens_sem_historico,
+            'itens_sem_demanda': itens_sem_demanda
         }
 
         print(f"\n{'='*60}")
         print("RESULTADO")
         print(f"{'='*60}")
         print(f"  Itens a pedir: {estatisticas['total_itens_pedido']}")
+        print(f"  Itens bloqueados: {estatisticas['total_itens_bloqueados']}")
         print(f"  Valor total: R$ {estatisticas['valor_total_pedido']:,.2f}")
         print(f"  Fornecedores: {agregacao['total_fornecedores']}")
+        if oportunidades_transferencia:
+            print(f"  Oportunidades de transferencia: {len(oportunidades_transferencia)}")
         print(f"{'='*60}\n")
 
-        return jsonify({
+        # Adicionar info de transferencias nas estatisticas
+        estatisticas['total_oportunidades_transferencia'] = len(oportunidades_transferencia)
+        estatisticas['sessao_pedido'] = sessao_pedido
+
+        # Aplicar conversao JSON a todo o resultado (para garantir que nao ha NaN)
+        resposta = converter_tipos_json({
             'success': True,
             'estatisticas': estatisticas,
             'agregacao_fornecedor': agregacao,
             'itens_pedido': itens_pedido,
-            'itens_ok': itens_ok[:50]  # Limitar itens OK para não sobrecarregar resposta
+            'itens_bloqueados': itens_bloqueados,
+            'itens_ok': itens_ok,  # Todos os itens OK (sem necessidade de pedido)
+            # Informacoes para layout multi-loja
+            'is_pedido_multiloja': is_pedido_multiloja,
+            'lojas_info': [
+                {'cod_loja': cod, 'nome_loja': nome}
+                for cod, nome in mapa_nomes_lojas.items()
+            ] if is_pedido_multiloja else [],
+            'transferencias': {
+                'total': len(oportunidades_transferencia),
+                'sessao_pedido': sessao_pedido,
+                'tem_oportunidades': len(oportunidades_transferencia) > 0,
+                'produtos_com_transferencia': list(set(t.get('cod_produto') for t in oportunidades_transferencia)),
+                'detalhes': [
+                    {
+                        'cod_produto': t.get('cod_produto'),
+                        'qtd_sugerida': t.get('qtd_sugerida'),
+                        'loja_origem': t.get('nome_loja_origem'),
+                        'loja_destino': t.get('nome_loja_destino'),
+                        'cod_loja_origem': t.get('loja_origem'),  # Codigo numerico
+                        'cod_loja_destino': t.get('loja_destino'),  # Codigo numerico
+                        'urgencia': t.get('urgencia'),
+                        'tipo': t.get('tipo', 'REGIONAL')  # MULTILOJA ou REGIONAL
+                    }
+                    for t in oportunidades_transferencia
+                ]
+            }
         })
+
+        return jsonify(resposta)
 
     except Exception as e:
         import traceback
@@ -1416,10 +2083,500 @@ def api_pedido_fornecedor_integrado():
         }), 500
 
 
+@app.route('/api/pedido_fornecedor_integrado/exportar', methods=['POST'])
+def api_pedido_fornecedor_integrado_exportar():
+    """Exporta o pedido ao fornecedor para Excel."""
+    try:
+        import io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils.dataframe import dataframe_to_rows
+
+        dados = request.get_json()
+
+        if not dados:
+            return jsonify({'success': False, 'erro': 'Dados não fornecidos'}), 400
+
+        itens_pedido = dados.get('itens_pedido', [])
+        estatisticas = dados.get('estatisticas', {})
+        agregacao = dados.get('agregacao_fornecedor', {})
+
+        if not itens_pedido:
+            return jsonify({'success': False, 'erro': 'Nenhum item para exportar'}), 400
+
+        # Criar workbook
+        wb = Workbook()
+
+        # =====================================================================
+        # ABA 1: RESUMO
+        # =====================================================================
+        ws_resumo = wb.active
+        ws_resumo.title = 'Resumo'
+
+        # Estilos
+        header_font = Font(bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='667EEA', end_color='764BA2', fill_type='solid')
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        # Titulo
+        ws_resumo['A1'] = 'PEDIDO AO FORNECEDOR - RESUMO'
+        ws_resumo['A1'].font = Font(bold=True, size=14)
+        ws_resumo.merge_cells('A1:D1')
+
+        ws_resumo['A2'] = f'Data: {datetime.now().strftime("%d/%m/%Y %H:%M")}'
+
+        # Estatisticas
+        ws_resumo['A4'] = 'Estatisticas'
+        ws_resumo['A4'].font = Font(bold=True)
+
+        stats_data = [
+            ('Total de Itens a Pedir', estatisticas.get('total_itens_pedido', 0)),
+            ('Valor Total do Pedido', f"R$ {estatisticas.get('valor_total_pedido', 0):,.2f}"),
+            ('Itens Analisados', estatisticas.get('total_itens_analisados', 0)),
+            ('Itens em Ruptura Iminente', estatisticas.get('itens_ruptura_iminente', 0)),
+            ('Total de Fornecedores', agregacao.get('total_fornecedores', 0)),
+        ]
+
+        for i, (label, valor) in enumerate(stats_data, start=5):
+            ws_resumo[f'A{i}'] = label
+            ws_resumo[f'B{i}'] = valor
+
+        # Resumo por fornecedor
+        ws_resumo['A12'] = 'Resumo por Fornecedor'
+        ws_resumo['A12'].font = Font(bold=True)
+
+        fornecedores = agregacao.get('fornecedores', [])
+        if fornecedores:
+            headers_forn = ['Fornecedor', 'Itens', 'Unidades', 'Valor']
+            for col, header in enumerate(headers_forn, start=1):
+                cell = ws_resumo.cell(row=13, column=col, value=header)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.border = border
+
+            for i, f in enumerate(fornecedores, start=14):
+                ws_resumo.cell(row=i, column=1, value=f.get('nome_fornecedor', '')).border = border
+                ws_resumo.cell(row=i, column=2, value=f.get('total_itens', 0)).border = border
+                ws_resumo.cell(row=i, column=3, value=f.get('total_unidades', 0)).border = border
+                ws_resumo.cell(row=i, column=4, value=f.get('valor_total', 0)).border = border
+                ws_resumo.cell(row=i, column=4).number_format = '#,##0.00'
+
+        # Ajustar largura das colunas
+        ws_resumo.column_dimensions['A'].width = 30
+        ws_resumo.column_dimensions['B'].width = 20
+        ws_resumo.column_dimensions['C'].width = 15
+        ws_resumo.column_dimensions['D'].width = 15
+
+        # =====================================================================
+        # ABA 2: ITENS DO PEDIDO (estrutura por filial)
+        # Estrutura: Cod Filial, Nome Filial, Cod Item, Descricao, CNPJ Forn, Nome Forn, Qtd, CUE
+        # =====================================================================
+        ws_itens = wb.create_sheet('Itens Pedido')
+
+        # Headers na estrutura solicitada
+        headers = [
+            'Cod Filial', 'Nome Filial', 'Cod Item', 'Descricao Item',
+            'CNPJ Fornecedor', 'Nome Fornecedor', 'Qtd Pedido', 'CUE'
+        ]
+
+        for col, header in enumerate(headers, start=1):
+            cell = ws_itens.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center')
+
+        # Ordenar itens por Codigo Filial e CNPJ Fornecedor
+        itens_ordenados = sorted(itens_pedido, key=lambda x: (
+            x.get('cod_loja', x.get('cod_empresa', 0)) or 0,
+            x.get('cnpj_fornecedor', x.get('codigo_fornecedor', '')) or ''
+        ))
+
+        # Dados na estrutura solicitada (ordenados por filial e CNPJ)
+        for row_idx, item in enumerate(itens_ordenados, start=2):
+            # Codigo da filial (cod_loja ou cod_empresa)
+            cod_filial = item.get('cod_loja', item.get('cod_empresa', ''))
+            ws_itens.cell(row=row_idx, column=1, value=cod_filial).border = border
+
+            # Nome da filial
+            nome_filial = item.get('nome_loja', item.get('nome_empresa', f'Filial {cod_filial}'))
+            ws_itens.cell(row=row_idx, column=2, value=nome_filial).border = border
+
+            # Codigo do item
+            ws_itens.cell(row=row_idx, column=3, value=item.get('codigo', '')).border = border
+
+            # Descricao do item
+            ws_itens.cell(row=row_idx, column=4, value=item.get('descricao', '')[:60]).border = border
+
+            # CNPJ do fornecedor
+            cnpj_forn = item.get('cnpj_fornecedor', item.get('codigo_fornecedor', ''))
+            ws_itens.cell(row=row_idx, column=5, value=cnpj_forn).border = border
+
+            # Nome do fornecedor
+            ws_itens.cell(row=row_idx, column=6, value=item.get('nome_fornecedor', '')).border = border
+
+            # Quantidade do pedido
+            ws_itens.cell(row=row_idx, column=7, value=item.get('quantidade_pedido', 0)).border = border
+
+            # CUE (Custo Unitario Efetivo)
+            cue = item.get('cue', item.get('preco_custo', 0))
+            ws_itens.cell(row=row_idx, column=8, value=cue).border = border
+            ws_itens.cell(row=row_idx, column=8).number_format = '#,##0.00'
+
+        # Ajustar largura das colunas
+        col_widths = [12, 25, 12, 50, 18, 30, 12, 12]
+        for i, width in enumerate(col_widths, start=1):
+            ws_itens.column_dimensions[chr(64 + i)].width = width
+
+        # Congelar primeira linha
+        ws_itens.freeze_panes = 'A2'
+
+        # =====================================================================
+        # ABA 3: POR FORNECEDOR (agrupado)
+        # =====================================================================
+        ws_forn = wb.create_sheet('Por Fornecedor')
+
+        # Agrupar itens por fornecedor
+        itens_por_fornecedor = {}
+        for item in itens_pedido:
+            forn = item.get('nome_fornecedor', 'Sem Fornecedor')
+            if forn not in itens_por_fornecedor:
+                itens_por_fornecedor[forn] = []
+            itens_por_fornecedor[forn].append(item)
+
+        row = 1
+        for fornecedor, itens in sorted(itens_por_fornecedor.items()):
+            # Header do fornecedor
+            ws_forn.cell(row=row, column=1, value=fornecedor)
+            ws_forn.cell(row=row, column=1).font = Font(bold=True, size=12)
+            ws_forn.merge_cells(f'A{row}:F{row}')
+
+            valor_forn = sum(i.get('valor_pedido', 0) for i in itens)
+            ws_forn.cell(row=row, column=7, value=f'Total: R$ {valor_forn:,.2f}')
+            ws_forn.cell(row=row, column=7).font = Font(bold=True)
+
+            row += 1
+
+            # Headers da tabela
+            headers_forn = ['Codigo', 'Descricao', 'Qtd Pedido', 'CUE', 'Valor']
+            for col, header in enumerate(headers_forn, start=1):
+                cell = ws_forn.cell(row=row, column=col, value=header)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color='E0E0E0', end_color='E0E0E0', fill_type='solid')
+
+            row += 1
+
+            # Itens do fornecedor
+            for item in itens:
+                ws_forn.cell(row=row, column=1, value=item.get('codigo', ''))
+                ws_forn.cell(row=row, column=2, value=item.get('descricao', '')[:40])
+                ws_forn.cell(row=row, column=3, value=item.get('quantidade_pedido', 0))
+                ws_forn.cell(row=row, column=4, value=item.get('preco_custo', 0))
+                ws_forn.cell(row=row, column=4).number_format = '#,##0.00'
+                ws_forn.cell(row=row, column=5, value=item.get('valor_pedido', 0))
+                ws_forn.cell(row=row, column=5).number_format = '#,##0.00'
+                row += 1
+
+            row += 1  # Linha em branco entre fornecedores
+
+        # Ajustar largura
+        ws_forn.column_dimensions['A'].width = 12
+        ws_forn.column_dimensions['B'].width = 40
+        ws_forn.column_dimensions['C'].width = 12
+        ws_forn.column_dimensions['D'].width = 12
+        ws_forn.column_dimensions['E'].width = 14
+
+        # Salvar em buffer
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'pedido_fornecedor_{timestamp}.xlsx'
+
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        print(f"Erro ao exportar pedido: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
 @app.route('/transferencias')
 def transferencias():
-    """Página de transferências entre lojas"""
+    """Página de transferências entre lojas - Oportunidades calculadas automaticamente"""
     return render_template('transferencias.html')
+
+
+@app.route('/api/transferencias/oportunidades', methods=['GET'])
+def api_transferencias_oportunidades():
+    """
+    Retorna oportunidades de transferência calculadas.
+    Query params:
+        - grupo_id: Filtrar por grupo (opcional)
+        - horas: Limitar a oportunidades das últimas X horas (default: 24)
+    """
+    try:
+        from core.transferencia_regional import TransferenciaRegional
+
+        grupo_id = request.args.get('grupo_id', type=int)
+        horas = request.args.get('horas', default=24, type=int)
+
+        conn = get_db_connection()
+
+        # Verificar se tabelas de transferencia existem (graceful degradation)
+        cursor_check = conn.cursor()
+        cursor_check.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'oportunidades_transferencia'
+            )
+        """)
+        tabela_existe = cursor_check.fetchone()[0]
+        cursor_check.close()
+
+        if not tabela_existe:
+            conn.close()
+            return jsonify({
+                'success': True,
+                'oportunidades': [],
+                'resumo': {'total': 0, 'criticas': 0, 'altas': 0, 'valor_total': 0, 'produtos_unicos': 0},
+                'aviso': 'Tabela de transferencias ainda nao foi criada. Execute o script de migracao (migration_v5.sql).'
+            })
+
+        calculador = TransferenciaRegional(conn)
+
+        oportunidades = calculador.buscar_oportunidades_recentes(
+            grupo_id=grupo_id,
+            limite_horas=horas
+        )
+        resumo = calculador.resumo_oportunidades(oportunidades)
+
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'oportunidades': oportunidades,
+            'resumo': resumo
+        })
+
+    except Exception as e:
+        print(f"Erro ao buscar oportunidades: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/api/transferencias/grupos', methods=['GET'])
+def api_transferencias_grupos():
+    """Retorna grupos de transferência disponíveis."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Verificar se tabela existe (graceful degradation)
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'grupos_transferencia'
+            )
+        """)
+        tabela_existe = cursor.fetchone()[0]
+
+        if not tabela_existe:
+            cursor.close()
+            conn.close()
+            return jsonify({
+                'success': True,
+                'grupos': [],
+                'aviso': 'Tabelas de transferencia ainda nao foram criadas. Execute o script de migracao (migration_v5.sql).'
+            })
+
+        cursor.close()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                gt.id,
+                gt.nome,
+                gt.descricao,
+                gt.cd_principal,
+                COUNT(lgt.id) as total_lojas
+            FROM grupos_transferencia gt
+            LEFT JOIN lojas_grupo_transferencia lgt ON gt.id = lgt.grupo_id AND lgt.ativo = TRUE
+            WHERE gt.ativo = TRUE
+            GROUP BY gt.id, gt.nome, gt.descricao, gt.cd_principal
+            ORDER BY gt.nome
+        """)
+
+        grupos = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'grupos': grupos
+        })
+
+    except Exception as e:
+        print(f"Erro ao buscar grupos: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/api/transferencias/exportar', methods=['GET'])
+def api_transferencias_exportar():
+    """Exporta oportunidades de transferência para Excel."""
+    try:
+        from core.transferencia_regional import TransferenciaRegional
+        import io
+
+        grupo_id = request.args.get('grupo_id', type=int)
+        horas = request.args.get('horas', default=24, type=int)
+
+        conn = get_db_connection()
+
+        # Verificar se tabela existe (graceful degradation)
+        cursor_check = conn.cursor()
+        cursor_check.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'oportunidades_transferencia'
+            )
+        """)
+        tabela_existe = cursor_check.fetchone()[0]
+        cursor_check.close()
+
+        if not tabela_existe:
+            conn.close()
+            return jsonify({
+                'success': False,
+                'erro': 'Tabela de transferencias ainda nao foi criada. Execute o script de migracao (migration_v5.sql).'
+            }), 404
+
+        calculador = TransferenciaRegional(conn)
+
+        oportunidades = calculador.buscar_oportunidades_recentes(
+            grupo_id=grupo_id,
+            limite_horas=horas
+        )
+        conn.close()
+
+        if not oportunidades:
+            return jsonify({'success': False, 'erro': 'Nenhuma oportunidade encontrada'}), 404
+
+        # Criar DataFrame
+        df = pd.DataFrame(oportunidades)
+
+        # Selecionar e renomear colunas
+        colunas = {
+            'cod_produto': 'Codigo',
+            'descricao_produto': 'Descricao',
+            'curva_abc': 'ABC',
+            'nome_loja_origem': 'Loja Origem',
+            'estoque_origem': 'Estoque Origem',
+            'cobertura_origem_dias': 'Cobertura Origem (dias)',
+            'nome_loja_destino': 'Loja Destino',
+            'estoque_destino': 'Estoque Destino',
+            'cobertura_destino_dias': 'Cobertura Destino (dias)',
+            'qtd_sugerida': 'Qtd Transferir',
+            'valor_estimado': 'Valor Estimado',
+            'urgencia': 'Urgencia',
+            'grupo_nome': 'Grupo Regional'
+        }
+
+        df_export = df[[c for c in colunas.keys() if c in df.columns]].copy()
+        df_export.columns = [colunas[c] for c in df_export.columns]
+
+        # Gerar Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_export.to_excel(writer, sheet_name='Transferencias', index=False)
+
+            # Ajustar largura das colunas
+            worksheet = writer.sheets['Transferencias']
+            for idx, col in enumerate(df_export.columns):
+                max_len = max(df_export[col].astype(str).map(len).max(), len(col)) + 2
+                worksheet.column_dimensions[chr(65 + idx)].width = min(max_len, 50)
+
+        output.seek(0)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'transferencias_{timestamp}.xlsx'
+
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        print(f"Erro ao exportar: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/api/transferencias/limpar', methods=['DELETE'])
+def api_transferencias_limpar():
+    """Limpa todo o histórico de oportunidades de transferência."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Verificar se tabela existe (graceful degradation)
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'oportunidades_transferencia'
+            )
+        """)
+        tabela_existe = cursor.fetchone()[0]
+
+        if not tabela_existe:
+            cursor.close()
+            conn.close()
+            return jsonify({
+                'success': True,
+                'registros_removidos': 0,
+                'mensagem': 'Tabela de transferencias ainda nao foi criada. Execute o script de migracao.'
+            })
+
+        # Contar registros antes de deletar
+        cursor.execute("SELECT COUNT(*) FROM oportunidades_transferencia")
+        total_antes = cursor.fetchone()[0]
+
+        # Deletar todos os registros
+        cursor.execute("DELETE FROM oportunidades_transferencia")
+        conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        print(f"[TRANSFERENCIAS] Historico limpo: {total_antes} registros removidos")
+
+        return jsonify({
+            'success': True,
+            'registros_removidos': total_antes,
+            'mensagem': f'{total_antes} registros removidos com sucesso'
+        })
+
+    except Exception as e:
+        print(f"Erro ao limpar historico: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
 
 
 @app.route('/pedido_manual')
@@ -1872,17 +3029,21 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 # Configuração do banco
+# Configuração do banco de dados via variáveis de ambiente
+# Para usar localmente, defina as variáveis ou crie um arquivo .env
 DB_CONFIG = {
-    'host': 'localhost',
-    'database': 'previsao_demanda',
-    'user': 'postgres',
-    'password': 'FerreiraCost@01',
-    'port': 5432
+    'host': os.environ.get('DB_HOST', 'localhost'),
+    'database': os.environ.get('DB_NAME', 'previsao_demanda'),
+    'user': os.environ.get('DB_USER', 'postgres'),
+    'password': os.environ.get('DB_PASSWORD', 'sua_senha_aqui'),
+    'port': int(os.environ.get('DB_PORT', 5432))
 }
 
 def get_db_connection():
     """Cria conexão com o banco PostgreSQL"""
-    return psycopg2.connect(**DB_CONFIG)
+    conn = psycopg2.connect(**DB_CONFIG)
+    conn.set_client_encoding('LATIN1')
+    return conn
 
 
 @app.route('/visualizacao')
@@ -1984,7 +3145,7 @@ def api_produtos():
             """
             params.append(int(loja))
 
-        query += " ORDER BY p.descricao LIMIT 200"
+        query += " ORDER BY p.descricao"
 
         cursor.execute(query, params)
         produtos = cursor.fetchall()
@@ -2151,7 +3312,7 @@ def api_produtos_completo():
             """
             params.append(int(loja))
 
-        query += " ORDER BY p.descricao LIMIT 500"
+        query += " ORDER BY p.descricao"
 
         cursor.execute(query, params)
         produtos = cursor.fetchall()
@@ -5038,6 +6199,246 @@ def api_gerar_previsao_banco_v2_interno():
         print(f"ERRO na previsão V2: {erro_msg}", flush=True)
         with open('erro_previsao_v2.log', 'w', encoding='utf-8') as f:
             f.write(erro_msg)
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==============================================================================
+# PARAMETROS DE FORNECEDOR - Importacao e Consulta
+# ==============================================================================
+
+@app.route('/importar-parametros-fornecedor')
+def pagina_importar_parametros_fornecedor():
+    """Pagina de importacao de parametros de fornecedor."""
+    return render_template('importar_parametros_fornecedor.html')
+
+
+@app.route('/api/parametros-fornecedor', methods=['GET'])
+def api_listar_parametros_fornecedor():
+    """Lista parametros de fornecedor cadastrados."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Verificar se tabela existe
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'parametros_fornecedor'
+            )
+        """)
+        if not cursor.fetchone()['exists']:
+            conn.close()
+            return jsonify([])
+
+        # Filtros opcionais
+        cnpj = request.args.get('cnpj')
+        cod_empresa = request.args.get('cod_empresa')
+
+        query = """
+            SELECT cnpj_fornecedor, nome_fornecedor, cod_empresa, tipo_destino,
+                   lead_time_dias, ciclo_pedido_dias, pedido_minimo_valor, ativo
+            FROM parametros_fornecedor
+            WHERE ativo = TRUE
+        """
+        params = []
+
+        if cnpj:
+            query += " AND cnpj_fornecedor = %s"
+            params.append(cnpj)
+
+        if cod_empresa:
+            query += " AND cod_empresa = %s"
+            params.append(int(cod_empresa))
+
+        query += " ORDER BY nome_fornecedor, cod_empresa"
+
+        cursor.execute(query, params)
+        resultados = cursor.fetchall()
+        conn.close()
+
+        return jsonify(resultados)
+
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/importar-parametros-fornecedor', methods=['POST'])
+def api_importar_parametros_fornecedor():
+    """Importa parametros de fornecedor do arquivo Excel."""
+    try:
+        dados = request.get_json()
+        registros = dados.get('dados', [])
+        modo = dados.get('modo', 'atualizar')
+
+        if not registros:
+            return jsonify({
+                'sucesso': False,
+                'mensagem': 'Nenhum registro para importar'
+            })
+
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+
+        # Criar tabela se nao existir
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS parametros_fornecedor (
+                id SERIAL PRIMARY KEY,
+                cnpj_fornecedor VARCHAR(20) NOT NULL,
+                nome_fornecedor VARCHAR(200),
+                cod_empresa INTEGER NOT NULL,
+                tipo_destino VARCHAR(20) DEFAULT 'LOJA',
+                lead_time_dias INTEGER DEFAULT 15,
+                ciclo_pedido_dias INTEGER DEFAULT 7,
+                pedido_minimo_valor DECIMAL(12,2) DEFAULT 0,
+                data_importacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ativo BOOLEAN DEFAULT TRUE,
+                UNIQUE(cnpj_fornecedor, cod_empresa)
+            )
+        """)
+        conn.commit()
+
+        # Criar indices
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_param_forn_cnpj ON parametros_fornecedor(cnpj_fornecedor)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_param_forn_empresa ON parametros_fornecedor(cod_empresa)")
+        conn.commit()
+
+        # Se modo substituir, desativar todos
+        if modo == 'substituir':
+            cursor.execute("UPDATE parametros_fornecedor SET ativo = FALSE")
+            conn.commit()
+
+        # Inserir/atualizar registros
+        from psycopg2.extras import execute_values
+        valores = []
+        for r in registros:
+            # Garantir CNPJ com 14 digitos (adicionar zeros a esquerda se necessario)
+            cnpj_raw = str(r.get('cnpj_fornecedor', '')).strip()
+            cnpj_formatado = cnpj_raw.zfill(14) if cnpj_raw and len(cnpj_raw) < 14 else cnpj_raw
+            valores.append((
+                cnpj_formatado,
+                str(r.get('nome_fornecedor', '')).strip(),
+                int(r.get('cod_empresa', 0)),
+                str(r.get('tipo_destino', 'LOJA')).upper(),
+                int(r.get('lead_time_dias', 15)),
+                int(r.get('ciclo_pedido_dias', 7)),
+                float(r.get('pedido_minimo_valor', 0))
+            ))
+
+        execute_values(cursor, """
+            INSERT INTO parametros_fornecedor
+                (cnpj_fornecedor, nome_fornecedor, cod_empresa, tipo_destino,
+                 lead_time_dias, ciclo_pedido_dias, pedido_minimo_valor)
+            VALUES %s
+            ON CONFLICT (cnpj_fornecedor, cod_empresa) DO UPDATE SET
+                nome_fornecedor = EXCLUDED.nome_fornecedor,
+                tipo_destino = EXCLUDED.tipo_destino,
+                lead_time_dias = EXCLUDED.lead_time_dias,
+                ciclo_pedido_dias = EXCLUDED.ciclo_pedido_dias,
+                pedido_minimo_valor = EXCLUDED.pedido_minimo_valor,
+                data_importacao = CURRENT_TIMESTAMP,
+                ativo = TRUE
+        """, valores)
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'sucesso': True,
+            'mensagem': f'Importacao concluida com sucesso',
+            'total': len(valores)
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'sucesso': False,
+            'mensagem': f'Erro na importacao: {str(e)}'
+        }), 500
+
+
+@app.route('/api/parametros-fornecedor-produto', methods=['GET'])
+def api_parametros_fornecedor_por_produto():
+    """
+    Busca parametros do fornecedor de um produto especifico.
+    Params: codigo (codigo do produto), cod_empresa (loja destino)
+    """
+    try:
+        codigo = request.args.get('codigo')
+        cod_empresa = request.args.get('cod_empresa')
+
+        if not codigo or not cod_empresa:
+            return jsonify({'erro': 'Parametros codigo e cod_empresa sao obrigatorios'}), 400
+
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Verificar se tabela existe
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'parametros_fornecedor'
+            )
+        """)
+        if not cursor.fetchone()['exists']:
+            conn.close()
+            return jsonify({
+                'encontrado': False,
+                'mensagem': 'Tabela de parametros de fornecedor nao existe. Execute a importacao primeiro.'
+            })
+
+        # Buscar CNPJ do fornecedor do produto
+        cursor.execute("""
+            SELECT cnpj_fornecedor, nome_fornecedor
+            FROM cadastro_produtos_completo
+            WHERE cod_produto = %s
+            LIMIT 1
+        """, [str(codigo)])
+
+        produto = cursor.fetchone()
+        if not produto or not produto['cnpj_fornecedor']:
+            conn.close()
+            return jsonify({
+                'encontrado': False,
+                'mensagem': 'Produto nao encontrado ou sem fornecedor cadastrado'
+            })
+
+        cnpj = str(produto['cnpj_fornecedor']).strip()
+
+        # Buscar parametros do fornecedor para a loja
+        cursor.execute("""
+            SELECT cnpj_fornecedor, nome_fornecedor, cod_empresa, tipo_destino,
+                   lead_time_dias, ciclo_pedido_dias, pedido_minimo_valor
+            FROM parametros_fornecedor
+            WHERE cnpj_fornecedor = %s
+              AND cod_empresa = %s
+              AND ativo = TRUE
+            LIMIT 1
+        """, [cnpj, int(cod_empresa)])
+
+        params = cursor.fetchone()
+        conn.close()
+
+        if not params:
+            return jsonify({
+                'encontrado': False,
+                'cnpj_fornecedor': cnpj,
+                'nome_fornecedor': produto.get('nome_fornecedor', ''),
+                'mensagem': f'Fornecedor nao cadastrado para loja {cod_empresa}'
+            })
+
+        return jsonify({
+            'encontrado': True,
+            'cnpj_fornecedor': params['cnpj_fornecedor'],
+            'nome_fornecedor': params['nome_fornecedor'],
+            'cod_empresa': params['cod_empresa'],
+            'tipo_destino': params['tipo_destino'],
+            'lead_time_dias': params['lead_time_dias'],
+            'ciclo_pedido_dias': params['ciclo_pedido_dias'],
+            'pedido_minimo_valor': float(params['pedido_minimo_valor']) if params['pedido_minimo_valor'] else 0
+        })
+
+    except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
 
