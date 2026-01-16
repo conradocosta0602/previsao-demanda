@@ -1247,7 +1247,11 @@ def api_pedido_fornecedor_integrado():
 
         # Parâmetros de filtro
         fornecedor_filtro = dados.get('fornecedor', 'TODOS')
-        categoria_filtro = dados.get('categoria', 'TODAS')
+        linha1_filtro = dados.get('linha1', 'TODAS')  # Linha 1 (categoria)
+        linha3_filtro = dados.get('linha3', 'TODAS')  # Linha 3 (sublinha/codigo_linha)
+        # Compatibilidade com versao anterior (categoria -> linha1)
+        if linha1_filtro == 'TODAS' and 'categoria' in dados:
+            linha1_filtro = dados.get('categoria', 'TODAS')
         destino_tipo = dados.get('destino_tipo', 'LOJA')  # 'LOJA' ou 'CD'
         cod_empresa = dados.get('cod_empresa', 'TODAS')
         cobertura_dias = dados.get('cobertura_dias')  # None = automático
@@ -1256,7 +1260,8 @@ def api_pedido_fornecedor_integrado():
         print("PEDIDO FORNECEDOR INTEGRADO")
         print(f"{'='*60}")
         print(f"  Fornecedor: {fornecedor_filtro} (tipo: {type(fornecedor_filtro).__name__})")
-        print(f"  Categoria: {categoria_filtro} (tipo: {type(categoria_filtro).__name__})")
+        print(f"  Linha 1: {linha1_filtro} (tipo: {type(linha1_filtro).__name__})")
+        print(f"  Linha 3: {linha3_filtro} (tipo: {type(linha3_filtro).__name__})")
         print(f"  Destino: {destino_tipo}")
         print(f"  Empresa: {cod_empresa}")
         print(f"  Cobertura: {'Automática (ABC)' if cobertura_dias is None else f'{cobertura_dias} dias'}")
@@ -1307,15 +1312,25 @@ def api_pedido_fornecedor_integrado():
                 """
                 params_forn = []
 
-                # Aplicar filtro de categoria se especificado
-                if categoria_filtro != 'TODAS':
-                    if isinstance(categoria_filtro, list):
-                        placeholders = ','.join(['%s'] * len(categoria_filtro))
+                # Aplicar filtro de Linha 1 (categoria) se especificado
+                if linha1_filtro != 'TODAS':
+                    if isinstance(linha1_filtro, list):
+                        placeholders = ','.join(['%s'] * len(linha1_filtro))
                         query_fornecedores += f" AND categoria IN ({placeholders})"
-                        params_forn.extend(categoria_filtro)
+                        params_forn.extend(linha1_filtro)
                     else:
                         query_fornecedores += " AND categoria = %s"
-                        params_forn.append(categoria_filtro)
+                        params_forn.append(linha1_filtro)
+
+                # Aplicar filtro de Linha 3 (codigo_linha) se especificado
+                if linha3_filtro != 'TODAS':
+                    if isinstance(linha3_filtro, list):
+                        placeholders = ','.join(['%s'] * len(linha3_filtro))
+                        query_fornecedores += f" AND codigo_linha IN ({placeholders})"
+                        params_forn.extend(linha3_filtro)
+                    else:
+                        query_fornecedores += " AND codigo_linha = %s"
+                        params_forn.append(linha3_filtro)
 
                 query_fornecedores += " ORDER BY nome_fornecedor"
 
@@ -1366,7 +1381,9 @@ def api_pedido_fornecedor_integrado():
                     SELECT DISTINCT
                         p.cod_produto as codigo,
                         p.descricao,
-                        p.categoria,
+                        p.categoria as linha1,
+                        p.codigo_linha as linha3,
+                        p.descricao_linha as linha3_descricao,
                         'B' as curva_abc,
                         p.cnpj_fornecedor as codigo_fornecedor,
                         p.nome_fornecedor,
@@ -1387,7 +1404,9 @@ def api_pedido_fornecedor_integrado():
                     SELECT DISTINCT
                         p.cod_produto as codigo,
                         p.descricao,
-                        p.categoria,
+                        p.categoria as linha1,
+                        p.codigo_linha as linha3,
+                        p.descricao_linha as linha3_descricao,
                         'B' as curva_abc,
                         p.cnpj_fornecedor as codigo_fornecedor,
                         p.nome_fornecedor,
@@ -1401,15 +1420,25 @@ def api_pedido_fornecedor_integrado():
                 """
                 params = [nome_fornecedor]
 
-            # Filtro de categoria (se especificado)
-            if categoria_filtro != 'TODAS':
-                if isinstance(categoria_filtro, list):
-                    placeholders = ','.join(['%s'] * len(categoria_filtro))
+            # Filtro de Linha 1 (categoria) se especificado
+            if linha1_filtro != 'TODAS':
+                if isinstance(linha1_filtro, list):
+                    placeholders = ','.join(['%s'] * len(linha1_filtro))
                     query_produtos += f" AND p.categoria IN ({placeholders})"
-                    params.extend(categoria_filtro)
+                    params.extend(linha1_filtro)
                 else:
                     query_produtos += " AND p.categoria = %s"
-                    params.append(categoria_filtro)
+                    params.append(linha1_filtro)
+
+            # Filtro de Linha 3 (codigo_linha) se especificado
+            if linha3_filtro != 'TODAS':
+                if isinstance(linha3_filtro, list):
+                    placeholders = ','.join(['%s'] * len(linha3_filtro))
+                    query_produtos += f" AND p.codigo_linha IN ({placeholders})"
+                    params.extend(linha3_filtro)
+                else:
+                    query_produtos += " AND p.codigo_linha = %s"
+                    params.append(linha3_filtro)
 
             query_produtos += " ORDER BY p.cod_produto"
 

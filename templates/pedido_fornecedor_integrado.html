@@ -769,8 +769,15 @@
                 </div>
 
                 <div class="filtro-grupo">
-                    <label>Categoria</label>
-                    <select id="categoria" multiple>
+                    <label>Linha 1</label>
+                    <select id="linha1" multiple>
+                    </select>
+                    <div class="filtro-hint">Ctrl+Click para selecionar varias</div>
+                </div>
+
+                <div class="filtro-grupo">
+                    <label>Linha 3</label>
+                    <select id="linha3" multiple>
                     </select>
                     <div class="filtro-hint">Ctrl+Click para selecionar varias</div>
                 </div>
@@ -870,15 +877,17 @@
 
         async function carregarFiltros() {
             try {
-                const [lojasResp, fornResp, catResp] = await Promise.all([
+                const [lojasResp, fornResp, linha1Resp, linha3Resp] = await Promise.all([
                     fetch('/api/lojas'),
                     fetch('/api/fornecedores'),
-                    fetch('/api/categorias')
+                    fetch('/api/linhas'),
+                    fetch('/api/sublinhas')
                 ]);
 
                 const lojas = await lojasResp.json();
                 const fornecedores = await fornResp.json();
-                const categorias = await catResp.json();
+                const linhas1 = await linha1Resp.json();
+                const linhas3 = await linha3Resp.json();
 
                 const selectLoja = document.getElementById('cod_empresa');
                 lojas.forEach(l => {
@@ -896,12 +905,26 @@
                     selectForn.appendChild(opt);
                 });
 
-                const selectCat = document.getElementById('categoria');
-                categorias.forEach(c => {
-                    const opt = document.createElement('option');
-                    opt.value = c;
-                    opt.textContent = c;
-                    selectCat.appendChild(opt);
+                // Linha 1 (categoria)
+                const selectLinha1 = document.getElementById('linha1');
+                linhas1.forEach(l => {
+                    if (l.linha && l.linha !== 'TODAS') {
+                        const opt = document.createElement('option');
+                        opt.value = l.linha;
+                        opt.textContent = l.linha;
+                        selectLinha1.appendChild(opt);
+                    }
+                });
+
+                // Linha 3 (sublinha)
+                const selectLinha3 = document.getElementById('linha3');
+                linhas3.forEach(l => {
+                    if (l.codigo_linha && l.codigo_linha !== 'TODAS') {
+                        const opt = document.createElement('option');
+                        opt.value = l.codigo_linha;
+                        opt.textContent = `${l.codigo_linha} - ${l.descricao_linha}`;
+                        selectLinha3.appendChild(opt);
+                    }
                 });
             } catch (e) {
                 console.error('Erro ao carregar filtros:', e);
@@ -939,7 +962,8 @@
                 const cobertura = document.getElementById('cobertura_dias').value;
                 const empresasSelecionadas = getSelectedValues('cod_empresa');
                 const fornecedoresSelecionados = getSelectedValues('fornecedor');
-                const categoriasSelecionadas = getSelectedValues('categoria');
+                const linha1Selecionadas = getSelectedValues('linha1');
+                const linha3Selecionadas = getSelectedValues('linha3');
 
                 const response = await fetch('/api/pedido_fornecedor_integrado', {
                     method: 'POST',
@@ -949,7 +973,8 @@
                         // Suporta array ou valor unico para compatibilidade
                         cod_empresa: empresasSelecionadas.length === 1 ? empresasSelecionadas[0] : (empresasSelecionadas.length > 0 ? empresasSelecionadas : 'TODAS'),
                         fornecedor: fornecedoresSelecionados.length === 1 ? fornecedoresSelecionados[0] : (fornecedoresSelecionados.length > 0 ? fornecedoresSelecionados : 'TODOS'),
-                        categoria: categoriasSelecionadas.length === 1 ? categoriasSelecionadas[0] : (categoriasSelecionadas.length > 0 ? categoriasSelecionadas : 'TODAS'),
+                        linha1: linha1Selecionadas.length === 1 ? linha1Selecionadas[0] : (linha1Selecionadas.length > 0 ? linha1Selecionadas : 'TODAS'),
+                        linha3: linha3Selecionadas.length === 1 ? linha3Selecionadas[0] : (linha3Selecionadas.length > 0 ? linha3Selecionadas : 'TODAS'),
                         cobertura_dias: cobertura ? parseInt(cobertura) : null
                     })
                 });
