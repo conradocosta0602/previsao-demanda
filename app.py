@@ -6912,12 +6912,14 @@ def api_salvar_demanda_validada():
         itens_salvos = 0
         for item in itens:
             cod_produto = str(item.get('cod_produto'))
-            cod_loja = int(item.get('cod_loja'))
+            # cod_loja pode ser None quando selecionado "TODAS" as lojas
+            cod_loja_raw = item.get('cod_loja')
+            cod_loja = int(cod_loja_raw) if cod_loja_raw is not None else 0  # 0 = todas as lojas
             cod_fornecedor = item.get('cod_fornecedor')
             data_inicio = item.get('data_inicio')
             data_fim = item.get('data_fim')
-            demanda_diaria = float(item.get('demanda_diaria', 0))
-            demanda_total = float(item.get('demanda_total_periodo', 0))
+            demanda_diaria = float(item.get('demanda_diaria') or 0)
+            demanda_total = float(item.get('demanda_total_periodo') or 0)
 
             # Calcular semana_ano (formato: YYYY-SWW)
             from datetime import datetime as dt
@@ -7282,7 +7284,8 @@ def api_pedido_planejado():
 
         if linhas1_lista:
             placeholders = ','.join(['%s'] * len(linhas1_lista))
-            where_conditions.append(f"p.linha IN ({placeholders})")
+            # categoria corresponde a Linha 1 (DESCR_LINHA1)
+            where_conditions.append(f"p.categoria IN ({placeholders})")
             params.extend(linhas1_lista)
 
         if linhas3_lista:
@@ -7298,10 +7301,10 @@ def api_pedido_planejado():
                 p.descricao,
                 p.nome_fornecedor,
                 p.cnpj_fornecedor,
-                p.linha,
+                p.categoria as linha,
                 p.codigo_linha,
-                p.curva_abc,
-                p.custo_unitario
+                'B' as curva_abc,
+                0 as custo_unitario
             FROM cadastro_produtos_completo p
             WHERE {where_clause}
         """, params)
@@ -7335,15 +7338,16 @@ def api_pedido_planejado():
                 codigo = str(produto['codigo'])
 
                 # Verificar situacao de compra
-                bloqueado, motivo = processador.verificar_situacao_compra(codigo, loja)
-                if bloqueado:
+                # verificar_situacao_compra retorna None se liberado, ou dict com info do bloqueio
+                situacao = processador.verificar_situacao_compra(codigo, loja)
+                if situacao is not None:
                     itens_bloqueados.append({
                         'codigo': codigo,
                         'descricao': produto['descricao'],
                         'nome_fornecedor': produto['nome_fornecedor'],
                         'cod_loja': loja,
                         'nome_loja': nome_loja,
-                        'motivo_bloqueio': motivo,
+                        'motivo_bloqueio': situacao.get('descricao', 'Bloqueado'),
                         'curva_abc': produto.get('curva_abc', 'B')
                     })
                     continue

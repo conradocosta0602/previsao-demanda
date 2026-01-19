@@ -2655,57 +2655,76 @@ function preencherModalValidacao() {
     const dados = dadosPrevisaoAtual.relatorio_detalhado;
     const modelos = dadosPrevisaoAtual.modelos || {};
 
-    // Obter datas do período da previsão (da consulta)
-    let dataInicio = '';
-    let dataFim = '';
+    // Obter granularidade do filtro usado na previsão
     let granularidade = document.getElementById('granularidade_banco')?.value || 'mensal';
 
-    // Tentar obter as datas do modelo Bottom-Up
-    if (modelos['Bottom-Up'] && modelos['Bottom-Up'].periodos) {
+    // Obter datas DIRETAMENTE dos campos de filtro (que o usuário usou)
+    let dataInicio = '';
+    let dataFim = '';
+
+    if (granularidade === 'semanal') {
+        // Semanal: usar semana_inicio/ano_semana_inicio e semana_fim/ano_semana_fim
+        const semanaInicio = document.getElementById('semana_inicio')?.value;
+        const anoSemanaInicio = document.getElementById('ano_semana_inicio')?.value;
+        const semanaFim = document.getElementById('semana_fim')?.value;
+        const anoSemanaFim = document.getElementById('ano_semana_fim')?.value;
+
+        if (semanaInicio && anoSemanaInicio) {
+            const dataInicioSemana = getDateFromWeek(parseInt(anoSemanaInicio), parseInt(semanaInicio));
+            dataInicio = dataInicioSemana.toISOString().split('T')[0];
+        }
+        if (semanaFim && anoSemanaFim) {
+            const dataFimSemana = getDateFromWeek(parseInt(anoSemanaFim), parseInt(semanaFim));
+            dataFimSemana.setDate(dataFimSemana.getDate() + 6); // Fim da semana
+            dataFim = dataFimSemana.toISOString().split('T')[0];
+        }
+    } else if (granularidade === 'diario') {
+        // Diário: usar data_inicio e data_fim diretamente
+        dataInicio = document.getElementById('data_inicio')?.value || '';
+        dataFim = document.getElementById('data_fim')?.value || '';
+    } else {
+        // Mensal: usar mes_inicio/ano_inicio e mes_fim/ano_fim
+        const mesInicio = document.getElementById('mes_inicio')?.value;
+        const anoInicio = document.getElementById('ano_inicio')?.value;
+        const mesFim = document.getElementById('mes_fim')?.value;
+        const anoFim = document.getElementById('ano_fim')?.value;
+
+        if (mesInicio && anoInicio) {
+            dataInicio = `${anoInicio}-${String(mesInicio).padStart(2, '0')}-01`;
+        }
+        if (mesFim && anoFim) {
+            // Último dia do mês
+            const ultimoDia = new Date(parseInt(anoFim), parseInt(mesFim), 0).getDate();
+            dataFim = `${anoFim}-${String(mesFim).padStart(2, '0')}-${ultimoDia}`;
+        }
+    }
+
+    // Fallback: tentar obter das datas do modelo se não conseguiu dos filtros
+    if ((!dataInicio || !dataFim) && modelos['Bottom-Up'] && modelos['Bottom-Up'].periodos) {
         const periodos = modelos['Bottom-Up'].periodos;
         if (periodos.length > 0) {
-            // Primeiro período
             const primeiro = periodos[0];
-            // Último período
             const ultimo = periodos[periodos.length - 1];
 
-            if (granularidade === 'semanal') {
-                // Formato semanal: {semana: X, ano: Y}
-                if (primeiro.semana && primeiro.ano) {
-                    // Converter semana para data (início da semana)
-                    const dataInicioSemana = getDateFromWeek(primeiro.ano, primeiro.semana);
-                    dataInicio = dataInicioSemana.toISOString().split('T')[0];
-                }
-                if (ultimo.semana && ultimo.ano) {
-                    // Fim da última semana
-                    const dataFimSemana = getDateFromWeek(ultimo.ano, ultimo.semana);
-                    dataFimSemana.setDate(dataFimSemana.getDate() + 6); // Fim da semana
-                    dataFim = dataFimSemana.toISOString().split('T')[0];
-                }
-            } else if (granularidade === 'diario') {
-                // Formato diário: string de data
-                dataInicio = typeof primeiro === 'string' ? primeiro : primeiro;
-                dataFim = typeof ultimo === 'string' ? ultimo : ultimo;
-            } else {
-                // Formato mensal: {mes: X, ano: Y}
-                if (primeiro.mes && primeiro.ano) {
+            if (!dataInicio) {
+                if (granularidade === 'semanal' && primeiro.semana && primeiro.ano) {
+                    const dt = getDateFromWeek(primeiro.ano, primeiro.semana);
+                    dataInicio = dt.toISOString().split('T')[0];
+                } else if (primeiro.mes && primeiro.ano) {
                     dataInicio = `${primeiro.ano}-${String(primeiro.mes).padStart(2, '0')}-01`;
                 }
-                if (ultimo.mes && ultimo.ano) {
-                    // Último dia do mês
+            }
+            if (!dataFim) {
+                if (granularidade === 'semanal' && ultimo.semana && ultimo.ano) {
+                    const dt = getDateFromWeek(ultimo.ano, ultimo.semana);
+                    dt.setDate(dt.getDate() + 6);
+                    dataFim = dt.toISOString().split('T')[0];
+                } else if (ultimo.mes && ultimo.ano) {
                     const ultimoDia = new Date(ultimo.ano, ultimo.mes, 0).getDate();
                     dataFim = `${ultimo.ano}-${String(ultimo.mes).padStart(2, '0')}-${ultimoDia}`;
                 }
             }
         }
-    }
-
-    // Fallback: usar campos do formulário se não conseguiu extrair
-    if (!dataInicio) {
-        dataInicio = document.getElementById('data_inicio_banco')?.value || '';
-    }
-    if (!dataFim) {
-        dataFim = document.getElementById('data_fim_banco')?.value || '';
     }
 
     // Preencher campos read-only de data

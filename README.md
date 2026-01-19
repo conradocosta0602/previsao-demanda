@@ -161,6 +161,40 @@ http://localhost:5001/menu
 
 ---
 
+## URLs de Acesso
+
+Todas as telas do sistema estao disponiveis nas seguintes URLs (servidor rodando na porta 5001):
+
+| Modulo | URL | Descricao |
+|--------|-----|-----------|
+| **Menu Principal** | `http://localhost:5001/menu` | Pagina inicial com acesso a todos os modulos |
+| **Previsao de Demanda** | `http://localhost:5001/` | Geracao de previsoes de vendas (Bottom-Up V2) |
+| **Pedido ao Fornecedor** | `http://localhost:5001/pedido_fornecedor_integrado` | Pedido multi-loja com calculo ABC |
+| **Transferencias** | `http://localhost:5001/transferencias` | Gestao de transferencias entre lojas |
+| **Simulador** | `http://localhost:5001/simulador` | Simulacao de cenarios what-if |
+| **Eventos** | `http://localhost:5001/eventos` | Calendario promocional |
+| **KPIs e Metricas** | `http://localhost:5001/kpis` | Dashboard de indicadores |
+| **Pedido Manual** | `http://localhost:5001/pedido_manual` | Entrada manual de pedidos |
+
+### APIs Disponiveis
+
+| Endpoint | Metodo | Descricao |
+|----------|--------|-----------|
+| `/api/previsao_v2` | POST | Gera previsao de demanda |
+| `/api/pedido_fornecedor_integrado` | POST | Calcula pedido ao fornecedor |
+| `/api/transferencias/oportunidades` | GET | Lista oportunidades de transferencia |
+| `/api/transferencias/grupos` | GET | Lista grupos de transferencia |
+| `/api/transferencias/exportar` | GET | Exporta transferencias para Excel |
+| `/api/demanda_validada/salvar` | POST | Salva demanda validada |
+| `/api/demanda_validada/listar` | GET | Lista demandas validadas |
+| `/api/pedido_planejado` | POST | Gera pedido planejado com demanda validada |
+| `/api/fornecedores` | GET | Lista fornecedores cadastrados |
+| `/api/lojas` | GET | Lista lojas cadastradas |
+| `/api/linhas` | GET | Lista linhas de produtos |
+| `/api/sublinhas` | GET | Lista sublinhas de produtos |
+
+---
+
 ## Como Usar
 
 ### 1. Menu Principal
