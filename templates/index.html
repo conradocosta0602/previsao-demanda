@@ -402,11 +402,16 @@
                         </div>
                     </div>
 
-                    <!-- Botão Download Compacto -->
-                    <div class="download-section-compact">
+                    <!-- Botões de Ação -->
+                    <div class="download-section-compact" style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
                         <a id="downloadBtn" class="btn-download-compact" download>
                             Download Excel
                         </a>
+                        <button id="btnValidarDemanda" onclick="abrirModalValidacao()" disabled
+                            title="Selecione um fornecedor e gere uma previsão para habilitar"
+                            style="padding: 12px 24px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 8px; cursor: not-allowed; font-weight: 600; font-size: 0.9em; display: flex; align-items: center; gap: 8px; opacity: 0.5; transition: all 0.3s ease;">
+                            <span style="font-size: 1.1em;">&#10004;</span> Validar Demanda
+                        </button>
                     </div>
                 </div>
 

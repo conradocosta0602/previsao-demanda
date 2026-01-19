@@ -1665,23 +1665,26 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
     });
 
     // 3. Dataset Teste - Previsão (25%) - Linha verde tracejada
-    const dadosTestePrevisao = new Array(valoresBase.length).fill(null);
-    dadosTestePrevisao.push(...previsaoTeste);
-    while (dadosTestePrevisao.length < todasDatas.length) {
-        dadosTestePrevisao.push(null);
-    }
+    // Mostra a previsão do modelo para o período de teste (backtest)
+    if (previsaoTeste && previsaoTeste.length > 0) {
+        const dadosTestePrevisao = new Array(valoresBase.length).fill(null);
+        dadosTestePrevisao.push(...previsaoTeste);
+        while (dadosTestePrevisao.length < todasDatas.length) {
+            dadosTestePrevisao.push(null);
+        }
 
-    datasets.push({
-        label: 'Teste - Previsão (25%)',
-        data: dadosTestePrevisao,
-        borderColor: '#059669',
-        backgroundColor: 'rgba(5, 150, 105, 0.1)',
-        borderWidth: 2,
-        borderDash: [5, 5],
-        fill: false,
-        tension: 0.1,
-        pointRadius: 3
-    });
+        datasets.push({
+            label: 'Teste - Previsão (25%)',
+            data: dadosTestePrevisao,
+            borderColor: '#059669',
+            backgroundColor: 'rgba(5, 150, 105, 0.1)',
+            borderWidth: 2,
+            borderDash: [5, 5],
+            fill: false,
+            tension: 0.1,
+            pointRadius: 3
+        });
+    }
 
     // 4. Dataset Previsão Futura (25%) - Linha roxa tracejada
     const dadosPrevisaoFuturo = new Array(valoresBase.length + valoresTeste.length).fill(null);
@@ -2069,8 +2072,14 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
 
             // Exibir relatório detalhado por fornecedor/item (se houver dados)
             if (resultado.relatorio_detalhado) {
+                console.log('[Debug] relatorio_detalhado encontrado com', resultado.relatorio_detalhado.itens?.length || 0, 'itens');
                 exibirRelatorioDetalhado(resultado.relatorio_detalhado);
+            } else {
+                console.log('[Debug] relatorio_detalhado NAO encontrado no resultado');
             }
+
+            // Armazenar dados para validação de demanda (v6.0)
+            armazenarDadosPrevisao(resultado);
 
         } else {
             // Mostrar erro
@@ -2421,3 +2430,604 @@ function exibirResumoRelatorio(itens) {
 }
 
 // Função gerarPrevisaoV2 removida - lógica V2 (Bottom-Up) agora é padrão no botão "Gerar Previsão"
+
+// =====================================================
+// VALIDAÇÃO DE DEMANDA (v6.0)
+// =====================================================
+
+// Variável global para armazenar dados da previsão atual (para validação)
+let dadosPrevisaoAtual = null;
+
+// Função para verificar se há um único fornecedor selecionado
+function verificarFornecedorUnico() {
+    const selectFornecedor = document.getElementById('fornecedor_banco');
+    if (!selectFornecedor) {
+        console.log('[Validacao] Select fornecedor_banco nao encontrado');
+        return { valido: false, fornecedor: null };
+    }
+
+    const valor = selectFornecedor.value;
+    // Válido apenas se não for vazio, não for "TODOS" e for um único valor
+    const valido = valor && valor !== '' && valor !== 'TODOS' && valor !== 'Carregando...';
+    console.log('[Validacao] Fornecedor verificado:', valor, '- Valido:', valido);
+    return { valido: valido, fornecedor: valido ? valor : null };
+}
+
+// Função para verificar se a granularidade permite validação
+function verificarGranularidadeValida() {
+    const selectGranularidade = document.getElementById('granularidade_banco');
+    if (!selectGranularidade) {
+        console.log('[Validacao] Select granularidade_banco nao encontrado');
+        return { valido: false, granularidade: null };
+    }
+
+    const valor = selectGranularidade.value;
+    // Válido apenas para semanal ou diário
+    const valido = valor === 'semanal' || valor === 'diario';
+    console.log('[Validacao] Granularidade verificada:', valor, '- Valido:', valido);
+    return { valido: valido, granularidade: valor };
+}
+
+// Função para armazenar dados da previsão quando gerada
+function armazenarDadosPrevisao(resultado) {
+    dadosPrevisaoAtual = resultado;
+    console.log('[Validacao] Dados armazenados. Tem relatorio_detalhado:', !!(resultado && resultado.relatorio_detalhado));
+
+    // Habilitar botão de validação APENAS se:
+    // 1. Houver dados do relatório detalhado
+    // 2. Houver um único fornecedor selecionado
+    // 3. Granularidade for semanal ou diário
+    const btnValidar = document.getElementById('btnValidarDemanda');
+    if (btnValidar) {
+        const { valido: fornecedorUnico } = verificarFornecedorUnico();
+        const { valido: granularidadeValida, granularidade } = verificarGranularidadeValida();
+        const temDados = resultado && resultado.relatorio_detalhado;
+        const temItens = temDados && resultado.relatorio_detalhado.itens && resultado.relatorio_detalhado.itens.length > 0;
+
+        console.log('[Validacao] Fornecedor unico:', fornecedorUnico, '- Granularidade valida:', granularidadeValida, '- Tem dados:', temDados, '- Tem itens:', temItens);
+
+        // Botão só ativo se: granularidade (semanal ou diário) + 1 fornecedor + tem itens
+        const podeValidar = temItens && fornecedorUnico && granularidadeValida;
+        btnValidar.disabled = !podeValidar;
+
+        // Atualizar estilo visual quando desabilitado
+        if (btnValidar.disabled) {
+            btnValidar.style.opacity = '0.5';
+            btnValidar.style.cursor = 'not-allowed';
+        } else {
+            btnValidar.style.opacity = '1';
+            btnValidar.style.cursor = 'pointer';
+        }
+
+        // Atualizar tooltip do botão com mensagem específica
+        if (!granularidadeValida) {
+            btnValidar.title = 'Validação disponível apenas para granularidade Semanal ou Diário';
+        } else if (!fornecedorUnico) {
+            btnValidar.title = 'Selecione um único fornecedor para validar a demanda';
+        } else if (!temItens) {
+            btnValidar.title = 'Gere uma previsão com dados detalhados primeiro';
+        } else {
+            btnValidar.title = 'Validar demanda para período futuro';
+        }
+
+        console.log('[Validacao] Botao disabled:', btnValidar.disabled);
+    } else {
+        console.log('[Validacao] Botao btnValidarDemanda nao encontrado');
+    }
+}
+
+// Função para abrir modal de validação de demanda
+function abrirModalValidacao() {
+    console.log('[Validacao] Abrindo modal. dadosPrevisaoAtual:', dadosPrevisaoAtual);
+
+    // Verificar se tem fornecedor único selecionado
+    const { valido: fornecedorUnico, fornecedor } = verificarFornecedorUnico();
+    if (!fornecedorUnico) {
+        mostrarMensagemValidacao('erro', 'Fornecedor não selecionado',
+            'Selecione um único fornecedor antes de validar a demanda.\n\nA validação deve ser feita por fornecedor para garantir a rastreabilidade.');
+        return;
+    }
+
+    if (!dadosPrevisaoAtual || !dadosPrevisaoAtual.relatorio_detalhado) {
+        mostrarMensagemValidacao('erro', 'Previsão não gerada',
+            'Gere uma previsão primeiro antes de validar a demanda.\n\nCertifique-se de usar os filtros corretos e clicar em "Gerar Previsão".');
+        return;
+    }
+
+    const modal = document.getElementById('modalValidacaoDemanda');
+    if (!modal) {
+        criarModalValidacao();
+    }
+
+    // Preencher dados no modal
+    preencherModalValidacao();
+
+    // Mostrar modal
+    document.getElementById('modalValidacaoDemanda').style.display = 'flex';
+}
+
+// Função para criar o modal de validação (se não existir)
+function criarModalValidacao() {
+    const modalHtml = `
+        <div id="modalValidacaoDemanda" class="modal-validacao" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+            <div class="modal-content" style="background: white; border-radius: 12px; max-width: 900px; width: 95%; max-height: 90vh; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+                <!-- Header -->
+                <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px; display: flex; justify-content: space-between; align-items: center;">
+                    <h2 style="margin: 0; font-size: 1.2em;">Validar Demanda para Período Futuro</h2>
+                    <button onclick="fecharModalValidacao()" style="background: none; border: none; color: white; font-size: 1.5em; cursor: pointer;">&times;</button>
+                </div>
+
+                <!-- Body -->
+                <div style="padding: 20px; overflow-y: auto; max-height: calc(90vh - 180px);">
+                    <!-- Período da Previsão (read-only) -->
+                    <div style="background: #f0fdf4; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+                        <h4 style="margin: 0 0 12px 0; color: #065f46;">Período da Previsão</h4>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+                            <div>
+                                <label style="display: block; font-size: 0.85em; color: #374151; margin-bottom: 4px;">Data Início:</label>
+                                <div id="validacao_data_inicio_display" style="padding: 10px 12px; background: #e5e7eb; border-radius: 6px; font-weight: 500; color: #374151;">-</div>
+                                <input type="hidden" id="validacao_data_inicio">
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.85em; color: #374151; margin-bottom: 4px;">Data Fim:</label>
+                                <div id="validacao_data_fim_display" style="padding: 10px 12px; background: #e5e7eb; border-radius: 6px; font-weight: 500; color: #374151;">-</div>
+                                <input type="hidden" id="validacao_data_fim">
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.85em; color: #374151; margin-bottom: 4px;">Granularidade:</label>
+                                <div id="validacao_granularidade_display" style="padding: 10px 12px; background: #e5e7eb; border-radius: 6px; font-weight: 500; color: #374151;">-</div>
+                            </div>
+                        </div>
+                        <div style="margin-top: 12px;">
+                            <label style="display: block; font-size: 0.85em; color: #374151; margin-bottom: 4px;">Observação (opcional):</label>
+                            <input type="text" id="validacao_observacao" placeholder="Ex: Validação ajustada conforme reunião S&OP" style="width: 100%; padding: 8px; border: 1px solid #d1fae5; border-radius: 6px; box-sizing: border-box;">
+                        </div>
+                    </div>
+
+                    <!-- Resumo dos Itens -->
+                    <div style="background: #f8fafc; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+                        <h4 style="margin: 0 0 12px 0; color: #374151;">Resumo da Validação</h4>
+                        <div id="resumoValidacao" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; text-align: center;">
+                            <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+                                <div style="font-size: 0.8em; color: #6b7280;">Itens</div>
+                                <div id="validacao_total_itens" style="font-size: 1.5em; font-weight: bold; color: #1f2937;">0</div>
+                            </div>
+                            <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+                                <div style="font-size: 0.8em; color: #6b7280;">Fornecedor</div>
+                                <div id="validacao_nome_fornecedor" style="font-size: 1em; font-weight: bold; color: #1f2937; word-break: break-word;">-</div>
+                            </div>
+                            <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+                                <div style="font-size: 0.8em; color: #6b7280;">Demanda Original</div>
+                                <div id="validacao_demanda_original" style="font-size: 1.2em; font-weight: bold; color: #6b7280;">0</div>
+                            </div>
+                            <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+                                <div style="font-size: 0.8em; color: #6b7280;">Demanda Ajustada</div>
+                                <div id="validacao_demanda_total" style="font-size: 1.5em; font-weight: bold; color: #10b981;">0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tabela de Itens com campo editável -->
+                    <div style="border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+                        <div style="background: #f8fafc; padding: 12px 16px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 600; color: #374151;">Itens a Validar (ajuste os valores se necessário)</span>
+                            <span id="validacao_itens_selecionados" style="font-size: 0.85em; color: #6b7280;">0 selecionados</span>
+                        </div>
+                        <div style="max-height: 350px; overflow-y: auto;">
+                            <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+                                <thead style="position: sticky; top: 0; background: #f8fafc; z-index: 1;">
+                                    <tr>
+                                        <th style="padding: 8px; text-align: left; border-bottom: 1px solid #e5e7eb; width: 40px;">
+                                            <input type="checkbox" id="validacao_selecionar_todos" onchange="toggleSelecionarTodosValidacao()" checked>
+                                        </th>
+                                        <th style="padding: 8px; text-align: left; border-bottom: 1px solid #e5e7eb;">Produto</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 1px solid #e5e7eb; width: 120px;">Demanda Prevista</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 1px solid #e5e7eb; width: 140px;">Demanda Validada</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="validacao_tabela_itens">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div style="padding: 16px 20px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+                    <button onclick="fecharModalValidacao()" style="padding: 10px 20px; background: #f3f4f6; color: #374151; border: none; border-radius: 6px; cursor: pointer;">
+                        Cancelar
+                    </button>
+                    <button onclick="salvarValidacaoDemanda()" style="padding: 10px 24px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                        Salvar Demanda Validada
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+// Função para preencher dados no modal de validação
+function preencherModalValidacao() {
+    if (!dadosPrevisaoAtual || !dadosPrevisaoAtual.relatorio_detalhado) return;
+
+    const dados = dadosPrevisaoAtual.relatorio_detalhado;
+    const modelos = dadosPrevisaoAtual.modelos || {};
+
+    // Obter datas do período da previsão (da consulta)
+    let dataInicio = '';
+    let dataFim = '';
+    let granularidade = document.getElementById('granularidade_banco')?.value || 'mensal';
+
+    // Tentar obter as datas do modelo Bottom-Up
+    if (modelos['Bottom-Up'] && modelos['Bottom-Up'].periodos) {
+        const periodos = modelos['Bottom-Up'].periodos;
+        if (periodos.length > 0) {
+            // Primeiro período
+            const primeiro = periodos[0];
+            // Último período
+            const ultimo = periodos[periodos.length - 1];
+
+            if (granularidade === 'semanal') {
+                // Formato semanal: {semana: X, ano: Y}
+                if (primeiro.semana && primeiro.ano) {
+                    // Converter semana para data (início da semana)
+                    const dataInicioSemana = getDateFromWeek(primeiro.ano, primeiro.semana);
+                    dataInicio = dataInicioSemana.toISOString().split('T')[0];
+                }
+                if (ultimo.semana && ultimo.ano) {
+                    // Fim da última semana
+                    const dataFimSemana = getDateFromWeek(ultimo.ano, ultimo.semana);
+                    dataFimSemana.setDate(dataFimSemana.getDate() + 6); // Fim da semana
+                    dataFim = dataFimSemana.toISOString().split('T')[0];
+                }
+            } else if (granularidade === 'diario') {
+                // Formato diário: string de data
+                dataInicio = typeof primeiro === 'string' ? primeiro : primeiro;
+                dataFim = typeof ultimo === 'string' ? ultimo : ultimo;
+            } else {
+                // Formato mensal: {mes: X, ano: Y}
+                if (primeiro.mes && primeiro.ano) {
+                    dataInicio = `${primeiro.ano}-${String(primeiro.mes).padStart(2, '0')}-01`;
+                }
+                if (ultimo.mes && ultimo.ano) {
+                    // Último dia do mês
+                    const ultimoDia = new Date(ultimo.ano, ultimo.mes, 0).getDate();
+                    dataFim = `${ultimo.ano}-${String(ultimo.mes).padStart(2, '0')}-${ultimoDia}`;
+                }
+            }
+        }
+    }
+
+    // Fallback: usar campos do formulário se não conseguiu extrair
+    if (!dataInicio) {
+        dataInicio = document.getElementById('data_inicio_banco')?.value || '';
+    }
+    if (!dataFim) {
+        dataFim = document.getElementById('data_fim_banco')?.value || '';
+    }
+
+    // Preencher campos read-only de data
+    document.getElementById('validacao_data_inicio').value = dataInicio;
+    document.getElementById('validacao_data_fim').value = dataFim;
+    document.getElementById('validacao_data_inicio_display').textContent = formatarDataBR(dataInicio);
+    document.getElementById('validacao_data_fim_display').textContent = formatarDataBR(dataFim);
+    document.getElementById('validacao_granularidade_display').textContent =
+        granularidade === 'semanal' ? 'Semanal' :
+        granularidade === 'diario' ? 'Diário' : 'Mensal';
+
+    // Extrair itens do relatório detalhado
+    const itens = dados.itens || [];
+    const { fornecedor } = verificarFornecedorUnico();
+
+    // Calcular demanda total
+    const demandaTotal = itens.reduce((sum, item) => {
+        const demanda = item.demanda_prevista_total || item.previsao_total || item.demanda_prevista || 0;
+        return sum + demanda;
+    }, 0);
+
+    // Preencher resumo
+    document.getElementById('validacao_total_itens').textContent = itens.length;
+    document.getElementById('validacao_nome_fornecedor').textContent = fornecedor || '-';
+    document.getElementById('validacao_demanda_original').textContent = Math.round(demandaTotal).toLocaleString('pt-BR');
+    document.getElementById('validacao_demanda_total').textContent = Math.round(demandaTotal).toLocaleString('pt-BR');
+
+    // Calcular dias do período para demanda diária
+    let diasPeriodo = 30; // Fallback
+    if (dataInicio && dataFim) {
+        const diffTime = new Date(dataFim) - new Date(dataInicio);
+        diasPeriodo = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    }
+
+    // Preencher tabela de itens com campo editável
+    const tbody = document.getElementById('validacao_tabela_itens');
+    tbody.innerHTML = '';
+
+    itens.forEach((item, index) => {
+        const demandaTotal = item.demanda_prevista_total || item.previsao_total || item.demanda_prevista || 0;
+        const demandaTotalArredondada = Math.round(demandaTotal);
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="padding: 8px; border-bottom: 1px solid #f3f4f6;">
+                <input type="checkbox" class="validacao-item-check" data-index="${index}" checked onchange="atualizarContadorValidacao(); atualizarDemandaTotalValidacao();">
+            </td>
+            <td style="padding: 8px; border-bottom: 1px solid #f3f4f6;">
+                <strong>${item.cod_produto || item.codigo}</strong>
+                <div style="font-size: 0.85em; color: #6b7280;">${(item.descricao || '').substring(0, 50)}${(item.descricao || '').length > 50 ? '...' : ''}</div>
+            </td>
+            <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; text-align: right; color: #6b7280;">
+                ${demandaTotalArredondada.toLocaleString('pt-BR')}
+            </td>
+            <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; text-align: right;">
+                <input type="number" class="validacao-demanda-input" data-index="${index}"
+                    value="${demandaTotalArredondada}"
+                    data-original="${demandaTotalArredondada}"
+                    onchange="atualizarDemandaTotalValidacao()"
+                    oninput="atualizarDemandaTotalValidacao()"
+                    style="width: 100px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; text-align: right; font-weight: 500;">
+            </td>
+        `;
+        tr.dataset.demandaTotal = demandaTotalArredondada;
+        tr.dataset.codProduto = item.cod_produto || item.codigo;
+        tr.dataset.nomeFornecedor = item.nome_fornecedor || '';
+        tr.dataset.codFornecedor = item.cod_fornecedor || '';
+        tbody.appendChild(tr);
+    });
+
+    atualizarContadorValidacao();
+    atualizarDemandaTotalValidacao();
+}
+
+// Função auxiliar para converter semana ISO em data
+function getDateFromWeek(year, week) {
+    const jan4 = new Date(year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const firstMonday = new Date(jan4);
+    firstMonday.setDate(jan4.getDate() - dayOfWeek + 1);
+    const targetDate = new Date(firstMonday);
+    targetDate.setDate(firstMonday.getDate() + (week - 1) * 7);
+    return targetDate;
+}
+
+// Função auxiliar para formatar data em PT-BR
+function formatarDataBR(dataStr) {
+    if (!dataStr) return '-';
+    try {
+        const [ano, mes, dia] = dataStr.split('-');
+        return `${dia}/${mes}/${ano}`;
+    } catch {
+        return dataStr;
+    }
+}
+
+// Função para atualizar demanda total ajustada
+function atualizarDemandaTotalValidacao() {
+    const inputs = document.querySelectorAll('.validacao-demanda-input');
+    const checkboxes = document.querySelectorAll('.validacao-item-check');
+    let total = 0;
+
+    inputs.forEach((input, index) => {
+        const checkbox = checkboxes[index];
+        if (checkbox && checkbox.checked) {
+            total += parseFloat(input.value) || 0;
+        }
+    });
+
+    document.getElementById('validacao_demanda_total').textContent = Math.round(total).toLocaleString('pt-BR');
+}
+
+// Função para toggle selecionar todos
+function toggleSelecionarTodosValidacao() {
+    const checkboxAll = document.getElementById('validacao_selecionar_todos');
+    const checkboxes = document.querySelectorAll('.validacao-item-check');
+    checkboxes.forEach(cb => cb.checked = checkboxAll.checked);
+    atualizarContadorValidacao();
+}
+
+// Função para atualizar contador de selecionados
+function atualizarContadorValidacao() {
+    const checkboxes = document.querySelectorAll('.validacao-item-check:checked');
+    document.getElementById('validacao_itens_selecionados').textContent = `${checkboxes.length} selecionados`;
+}
+
+// Função para fechar modal
+function fecharModalValidacao() {
+    const modal = document.getElementById('modalValidacaoDemanda');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Função para salvar validação de demanda
+async function salvarValidacaoDemanda() {
+    const dataInicio = document.getElementById('validacao_data_inicio').value;
+    const dataFim = document.getElementById('validacao_data_fim').value;
+    const observacao = document.getElementById('validacao_observacao').value;
+
+    // Validações com mensagens claras
+    if (!dataInicio || !dataFim) {
+        mostrarMensagemValidacao('erro', 'Período não informado', 'O período de previsão não foi identificado. Gere uma nova previsão.');
+        return;
+    }
+
+    if (new Date(dataInicio) > new Date(dataFim)) {
+        mostrarMensagemValidacao('erro', 'Período inválido', 'A data de início deve ser anterior à data de fim.');
+        return;
+    }
+
+    // Coletar itens selecionados
+    const checkboxes = document.querySelectorAll('.validacao-item-check:checked');
+    if (checkboxes.length === 0) {
+        mostrarMensagemValidacao('erro', 'Nenhum item selecionado', 'Selecione pelo menos um item para validar.');
+        return;
+    }
+
+    // Obter loja do formulário (pode ser TODAS para agregado)
+    const codLoja = document.getElementById('loja_banco').value;
+
+    // Calcular dias do período
+    const diasPeriodo = Math.ceil((new Date(dataFim) - new Date(dataInicio)) / (1000 * 60 * 60 * 24)) + 1;
+
+    // Montar array de itens com valores editados pelo usuário
+    const itens = [];
+    const inputs = document.querySelectorAll('.validacao-demanda-input');
+
+    checkboxes.forEach(cb => {
+        const index = parseInt(cb.dataset.index);
+        const tr = cb.closest('tr');
+        const input = inputs[index];
+
+        // Usar o valor editado pelo usuário
+        const demandaTotalValidada = parseFloat(input?.value) || 0;
+        const demandaDiaria = demandaTotalValidada / diasPeriodo;
+
+        itens.push({
+            cod_produto: tr.dataset.codProduto,
+            cod_loja: codLoja && codLoja !== 'TODAS' ? parseInt(codLoja) : null,
+            cod_fornecedor: tr.dataset.codFornecedor ? parseInt(tr.dataset.codFornecedor) : null,
+            data_inicio: dataInicio,
+            data_fim: dataFim,
+            demanda_diaria: demandaDiaria,
+            demanda_total_periodo: demandaTotalValidada
+        });
+    });
+
+    // Mostrar loader
+    const btnSalvar = document.querySelector('#modalValidacaoDemanda button[onclick="salvarValidacaoDemanda()"]');
+    const textoOriginal = btnSalvar.innerHTML;
+    btnSalvar.innerHTML = '<span style="display: inline-block; width: 16px; height: 16px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></span> Salvando...';
+    btnSalvar.disabled = true;
+
+    // Adicionar CSS de animação se não existir
+    if (!document.getElementById('spinnerStyle')) {
+        const style = document.createElement('style');
+        style.id = 'spinnerStyle';
+        style.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+        document.head.appendChild(style);
+    }
+
+    // Enviar para API
+    try {
+        const response = await fetch('/api/demanda_validada/salvar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                itens: itens,
+                usuario: 'usuario_sistema', // Pode ser substituído por login real
+                observacao: observacao
+            })
+        });
+
+        const resultado = await response.json();
+
+        // Restaurar botão
+        btnSalvar.innerHTML = textoOriginal;
+        btnSalvar.disabled = false;
+
+        if (resultado.success) {
+            mostrarMensagemValidacao('sucesso', 'Demanda validada com sucesso!',
+                `${resultado.itens_salvos} itens salvos para o período de ${formatarDataBR(dataInicio)} a ${formatarDataBR(dataFim)}.`);
+
+            // Fechar modal após 2 segundos
+            setTimeout(() => {
+                fecharModalValidacao();
+            }, 2000);
+        } else {
+            mostrarMensagemValidacao('erro', 'Erro ao validar demanda', resultado.erro || 'Erro desconhecido. Verifique os logs do servidor.');
+        }
+    } catch (error) {
+        // Restaurar botão
+        btnSalvar.innerHTML = textoOriginal;
+        btnSalvar.disabled = false;
+
+        console.error('Erro ao salvar validação:', error);
+        mostrarMensagemValidacao('erro', 'Erro de conexão', 'Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.');
+    }
+}
+
+// Função para mostrar mensagens de feedback no modal de validação
+function mostrarMensagemValidacao(tipo, titulo, mensagem) {
+    // Remover mensagem anterior se existir
+    const msgAnterior = document.getElementById('msgFeedbackValidacao');
+    if (msgAnterior) msgAnterior.remove();
+
+    const cores = {
+        sucesso: { bg: '#d1fae5', border: '#10b981', icon: '✓', iconColor: '#059669' },
+        erro: { bg: '#fee2e2', border: '#ef4444', icon: '✕', iconColor: '#dc2626' },
+        aviso: { bg: '#fef3c7', border: '#f59e0b', icon: '!', iconColor: '#d97706' }
+    };
+
+    const cor = cores[tipo] || cores.aviso;
+
+    const msgHtml = `
+        <div id="msgFeedbackValidacao" style="
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border-radius: 12px;
+            padding: 24px 32px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            z-index: 1100;
+            text-align: center;
+            min-width: 320px;
+            max-width: 450px;
+            animation: fadeInScale 0.3s ease;
+        ">
+            <div style="
+                width: 56px;
+                height: 56px;
+                border-radius: 50%;
+                background: ${cor.bg};
+                border: 3px solid ${cor.border};
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0 auto 16px;
+                font-size: 24px;
+                font-weight: bold;
+                color: ${cor.iconColor};
+            ">${cor.icon}</div>
+            <h3 style="margin: 0 0 8px; color: #1f2937; font-size: 1.1em;">${titulo}</h3>
+            <p style="margin: 0; color: #6b7280; font-size: 0.9em; line-height: 1.5;">${mensagem}</p>
+            ${tipo === 'erro' ? `
+                <button onclick="document.getElementById('msgFeedbackValidacao').remove(); document.getElementById('overlayFeedbackValidacao').remove();"
+                    style="margin-top: 16px; padding: 8px 24px; background: #f3f4f6; color: #374151; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;">
+                    Entendi
+                </button>
+            ` : ''}
+        </div>
+        <div id="overlayFeedbackValidacao" style="
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.3);
+            z-index: 1050;
+        " onclick="if(document.getElementById('msgFeedbackValidacao')) document.getElementById('msgFeedbackValidacao').remove(); this.remove();"></div>
+    `;
+
+    // Adicionar CSS de animação se não existir
+    if (!document.getElementById('feedbackAnimStyle')) {
+        const style = document.createElement('style');
+        style.id = 'feedbackAnimStyle';
+        style.textContent = '@keyframes fadeInScale { from { opacity: 0; transform: translate(-50%, -50%) scale(0.9); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }';
+        document.head.appendChild(style);
+    }
+
+    document.body.insertAdjacentHTML('beforeend', msgHtml);
+
+    // Auto-remover mensagem de sucesso após 3 segundos
+    if (tipo === 'sucesso') {
+        setTimeout(() => {
+            const msg = document.getElementById('msgFeedbackValidacao');
+            const overlay = document.getElementById('overlayFeedbackValidacao');
+            if (msg) msg.remove();
+            if (overlay) overlay.remove();
+        }, 3000);
+    }
+}

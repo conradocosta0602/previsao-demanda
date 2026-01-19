@@ -488,10 +488,12 @@ class TransferenciaRegional:
         """
         cur = self.conn.cursor()
 
+        # Usar LEFT JOIN para incluir transferencias MULTILOJA (que tem grupo_id = NULL)
         query = """
             SELECT
                 ot.id, ot.data_calculo, ot.sessao_pedido,
-                gt.nome as grupo_nome, gt.cd_principal,
+                COALESCE(gt.nome, 'Multi-Loja') as grupo_nome,
+                COALESCE(gt.cd_principal, ot.loja_origem) as cd_principal,
                 ot.cod_produto, ot.descricao_produto, ot.curva_abc,
                 ot.loja_origem, ot.nome_loja_origem, ot.estoque_origem,
                 ot.cobertura_origem_dias,
@@ -499,7 +501,7 @@ class TransferenciaRegional:
                 ot.cobertura_destino_dias,
                 ot.qtd_sugerida, ot.valor_estimado, ot.urgencia, ot.status
             FROM oportunidades_transferencia ot
-            JOIN grupos_transferencia gt ON ot.grupo_id = gt.id
+            LEFT JOIN grupos_transferencia gt ON ot.grupo_id = gt.id
             WHERE ot.data_calculo >= NOW() - INTERVAL '%s hours'
         """
         params = [limite_horas]
