@@ -1758,21 +1758,56 @@ def api_pedido_fornecedor_integrado():
                         deve_pedir = dados.get('deve_pedir', False)
                         qtd_pedido = dados.get('quantidade_pedido', 0) or 0
 
-                        # REGRA PRINCIPAL: Se a loja PRECISA PEDIR, ela e DESTINO (nao pode ser origem)
-                        if deve_pedir and qtd_pedido > 0:
-                            lojas_necessidade.append((loja_cod, int(qtd_pedido), dados))
-                            continue  # NAO avaliar como possivel origem
+                        # ========================================================
+                        # REGRAS CONFORME DOCUMENTACAO (TRANSFERENCIAS_ENTRE_LOJAS.md)
+                        # ========================================================
+                        # Parametros:
+                        #   COBERTURA_MINIMA_DOADOR = 10 dias (minimo que doador mantem)
+                        #   MARGEM_EXCESSO_DIAS = 7 dias (dias acima do alvo para ser doador)
+                        #   COBERTURA_ALVO_PADRAO = 21 dias
+                        #
+                        # Doadora: Cobertura > alvo + 7 dias (ou seja, > 28 dias)
+                        # Receptora: Cobertura < alvo (ou seja, < 21 dias)
+                        #
+                        # Formulas:
+                        #   excesso_doador = estoque - (demanda × 10 dias)
+                        #   necessidade_receptor = (demanda × 21 dias) - estoque
+                        #   qtd_transferir = min(excesso, necessidade)
+                        # ========================================================
 
-                        # Se NAO precisa pedir, verificar se tem excesso para ser origem
+                        COBERTURA_MINIMA_DOADOR = 10  # dias
+                        MARGEM_EXCESSO_DIAS = 7       # dias acima do alvo
+
+                        # REGRA PRINCIPAL: Se a loja PRECISA PEDIR, ela e RECEPTORA (nao pode ser doadora)
+                        if deve_pedir and qtd_pedido > 0:
+                            # Loja receptora: cobertura < alvo
+                            # Necessidade = quanto falta para atingir cobertura alvo
+                            estoque_efetivo = estoque + transito
+                            if demanda_diaria > 0:
+                                # Necessidade conforme documentacao:
+                                # necessidade_receptor = (demanda × COBERTURA_ALVO) - estoque
+                                necessidade_transf = int((demanda_diaria * cobertura_alvo) - estoque_efetivo)
+                                necessidade_transf = max(0, necessidade_transf)
+                            else:
+                                necessidade_transf = 0
+
+                            # Guardar ambos: necessidade para transferencia e qtd_pedido original
+                            lojas_necessidade.append((loja_cod, necessidade_transf, dados, qtd_pedido))
+                            continue  # NAO avaliar como possivel doadora
+
+                        # Se NAO precisa pedir, verificar se tem excesso para ser DOADORA
+                        # Doadora: cobertura > alvo + MARGEM_EXCESSO_DIAS
                         if demanda_diaria <= 0:
                             # Sem demanda = potencial doador se tem estoque significativo
-                            if estoque > 5:  # Minimo de 5 unidades para doar
+                            if estoque > 5:
                                 lojas_excesso.append((loja_cod, estoque, dados))
-                        elif cobertura_atual > cobertura_alvo * 1.5:
-                            # Tem excesso (cobertura > 150% do alvo) e NAO precisa pedir
-                            estoque_necessario = demanda_diaria * cobertura_alvo
+                        elif cobertura_atual > (cobertura_alvo + MARGEM_EXCESSO_DIAS):
+                            # Tem excesso conforme documentacao: cobertura > alvo + 7 dias
+                            # Excesso = estoque - (demanda × COBERTURA_MINIMA_DOADOR)
+                            # Doador deve manter no minimo 10 dias de cobertura
                             estoque_disponivel = estoque + transito
-                            excesso = int(estoque_disponivel - estoque_necessario)
+                            estoque_minimo_doador = demanda_diaria * COBERTURA_MINIMA_DOADOR
+                            excesso = int(estoque_disponivel - estoque_minimo_doador)
                             if excesso > 0:
                                 lojas_excesso.append((loja_cod, excesso, dados))
 
@@ -1781,14 +1816,16 @@ def api_pedido_fornecedor_integrado():
                         # DEBUG: Log para verificar classificacao
                         print(f"    [TRANSF DEBUG] Produto {cod_produto}:")
                         print(f"      Lojas EXCESSO (podem enviar): {[(l[0], l[1]) for l in lojas_excesso]}")
-                        print(f"      Lojas NECESSIDADE (precisam receber): {[(l[0], l[1]) for l in lojas_necessidade]}")
+                        print(f"      Lojas NECESSIDADE (precisam receber - transf): {[(l[0], l[1]) for l in lojas_necessidade]}")
+                        print(f"      Lojas NECESSIDADE (pedido fornecedor): {[(l[0], l[3]) for l in lojas_necessidade]}")
 
                         # Ordenar por prioridade (maior excesso primeiro, maior necessidade primeiro)
                         lojas_excesso.sort(key=lambda x: x[1], reverse=True)
                         lojas_necessidade.sort(key=lambda x: x[1], reverse=True)
 
-                        for loja_dest, necessidade, dados_dest in lojas_necessidade:
-                            qtd_restante = necessidade
+                        # lojas_necessidade agora tem 4 elementos: (loja_cod, necessidade_transf, dados, qtd_pedido)
+                        for loja_dest, necessidade_transf, dados_dest, qtd_pedido_dest in lojas_necessidade:
+                            qtd_restante = necessidade_transf
 
                             for i, (loja_orig, excesso, dados_orig) in enumerate(lojas_excesso):
                                 if qtd_restante <= 0 or excesso <= 0:
@@ -1829,6 +1866,65 @@ def api_pedido_fornecedor_integrado():
                                     qtd_restante -= qtd_transferir
 
                 print(f"  [TRANSFERENCIAS MULTILOJA] {total_oportunidades} oportunidades identificadas")
+
+                # Salvar transferencias MULTILOJA no banco de dados
+                if oportunidades_transferencia:
+                    try:
+                        cur = conn.cursor()
+                        salvos_multiloja = 0
+
+                        for t in oportunidades_transferencia:
+                            try:
+                                # Verificar se tabela existe
+                                cur.execute("""
+                                    SELECT EXISTS (
+                                        SELECT FROM information_schema.tables
+                                        WHERE table_name = 'oportunidades_transferencia'
+                                    )
+                                """)
+                                if not cur.fetchone()[0]:
+                                    print("  [TRANSFERENCIAS MULTILOJA] Tabela oportunidades_transferencia nao existe")
+                                    break
+
+                                cur.execute("""
+                                    INSERT INTO oportunidades_transferencia (
+                                        sessao_pedido, grupo_id,
+                                        cod_produto, descricao_produto, curva_abc,
+                                        loja_origem, nome_loja_origem, estoque_origem, transito_origem,
+                                        demanda_diaria_origem, cobertura_origem_dias, excesso_unidades,
+                                        loja_destino, nome_loja_destino, estoque_destino, transito_destino,
+                                        demanda_diaria_destino, cobertura_destino_dias, necessidade_unidades,
+                                        qtd_sugerida, valor_estimado, cue, urgencia
+                                    ) VALUES (
+                                        %s, %s, %s, %s, %s,
+                                        %s, %s, %s, %s, %s, %s, %s,
+                                        %s, %s, %s, %s, %s, %s, %s,
+                                        %s, %s, %s, %s
+                                    )
+                                    ON CONFLICT (sessao_pedido, cod_produto, loja_origem, loja_destino)
+                                    DO UPDATE SET
+                                        qtd_sugerida = EXCLUDED.qtd_sugerida,
+                                        valor_estimado = EXCLUDED.valor_estimado,
+                                        urgencia = EXCLUDED.urgencia,
+                                        data_calculo = NOW()
+                                """, (
+                                    sessao_pedido, None,  # grupo_id = None para MULTILOJA
+                                    t.get('cod_produto'), t.get('descricao_produto', ''), t.get('curva_abc', 'B'),
+                                    t.get('loja_origem'), t.get('nome_loja_origem', ''), t.get('estoque_origem', 0), 0,
+                                    0, t.get('cobertura_origem_dias', 0), 0,
+                                    t.get('loja_destino'), t.get('nome_loja_destino', ''), t.get('estoque_destino', 0), 0,
+                                    0, t.get('cobertura_destino_dias', 0), 0,
+                                    t.get('qtd_sugerida', 0), t.get('valor_estimado', 0), t.get('cue', 0), t.get('urgencia', 'MEDIA')
+                                ))
+                                salvos_multiloja += 1
+                            except Exception as e_item:
+                                print(f"  [TRANSFERENCIAS MULTILOJA] Erro ao salvar item: {e_item}")
+
+                        conn.commit()
+                        print(f"  [TRANSFERENCIAS MULTILOJA] {salvos_multiloja} oportunidades salvas no banco")
+                        cur.close()
+                    except Exception as e_save:
+                        print(f"  [TRANSFERENCIAS MULTILOJA] Erro ao salvar no banco: {e_save}")
 
             except Exception as e:
                 print(f"  [TRANSFERENCIAS MULTILOJA] Erro: {e}")
@@ -1998,6 +2094,68 @@ def api_pedido_fornecedor_integrado():
         itens_bloqueados = [r for r in resultados if r.get('bloqueado')]
         itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
 
+        # =====================================================================
+        # VALIDACAO DE PEDIDO MINIMO POR FORNECEDOR/LOJA
+        # =====================================================================
+        # Agregar valor total por fornecedor e loja para validar pedido minimo
+        validacao_pedido_minimo = {}  # {(cod_fornecedor, cod_loja): {'valor_total': X, 'pedido_minimo': Y, 'abaixo_minimo': bool}}
+
+        for item in itens_pedido:
+            cod_fornecedor = item.get('codigo_fornecedor', '')
+            cod_loja = item.get('cod_loja', item.get('cod_empresa', 0))
+            nome_fornecedor = item.get('nome_fornecedor', '')
+            nome_loja = item.get('nome_loja', f'Loja {cod_loja}')
+            valor_pedido = item.get('valor_pedido', 0) or 0
+            pedido_minimo = item.get('pedido_minimo_fornecedor', 0) or 0
+
+            chave = (cod_fornecedor, cod_loja)
+
+            if chave not in validacao_pedido_minimo:
+                validacao_pedido_minimo[chave] = {
+                    'cod_fornecedor': cod_fornecedor,
+                    'nome_fornecedor': nome_fornecedor,
+                    'cod_loja': cod_loja,
+                    'nome_loja': nome_loja,
+                    'valor_total': 0,
+                    'pedido_minimo': pedido_minimo,
+                    'abaixo_minimo': False,
+                    'diferenca': 0
+                }
+
+            validacao_pedido_minimo[chave]['valor_total'] += valor_pedido
+            # Atualizar pedido_minimo se ainda nao foi definido
+            if validacao_pedido_minimo[chave]['pedido_minimo'] == 0 and pedido_minimo > 0:
+                validacao_pedido_minimo[chave]['pedido_minimo'] = pedido_minimo
+
+        # Verificar quais estao abaixo do minimo
+        alertas_pedido_minimo = []
+        for chave, info in validacao_pedido_minimo.items():
+            pedido_min = info['pedido_minimo']
+            valor_total = info['valor_total']
+
+            if pedido_min > 0 and valor_total < pedido_min:
+                info['abaixo_minimo'] = True
+                info['diferenca'] = pedido_min - valor_total
+                alertas_pedido_minimo.append(info)
+                print(f"  [PEDIDO MINIMO] Alerta: {info['nome_fornecedor']} / {info['nome_loja']} - "
+                      f"Valor R$ {valor_total:,.2f} < Minimo R$ {pedido_min:,.2f}")
+
+        # Marcar itens que estao em pedidos abaixo do minimo
+        for item in itens_pedido:
+            cod_fornecedor = item.get('codigo_fornecedor', '')
+            cod_loja = item.get('cod_loja', item.get('cod_empresa', 0))
+            chave = (cod_fornecedor, cod_loja)
+
+            if chave in validacao_pedido_minimo:
+                info = validacao_pedido_minimo[chave]
+                item['pedido_abaixo_minimo'] = info['abaixo_minimo']
+                item['valor_total_pedido_loja'] = info['valor_total']
+                if info['abaixo_minimo']:
+                    item['critica_pedido_minimo'] = f"Abaixo do pedido mínimo (R$ {info['valor_total']:,.2f} < R$ {info['pedido_minimo']:,.2f})"
+
+        if alertas_pedido_minimo:
+            print(f"  [PEDIDO MINIMO] {len(alertas_pedido_minimo)} fornecedor/loja(s) abaixo do minimo")
+
         # DEBUG: Contar por fornecedor nos resultados finais (apenas FAME)
         print(f"\n  [DEBUG] ====== FAME - DISTRIBUIÇÃO POR CATEGORIA ======")
         fame_pedido = len([r for r in itens_pedido if 'FAME' in str(r.get('nome_fornecedor', '')).upper()])
@@ -2097,7 +2255,21 @@ def api_pedido_fornecedor_integrado():
                     }
                     for t in oportunidades_transferencia
                 ]
-            }
+            },
+            # Alertas de pedido minimo por fornecedor/loja
+            'alertas_pedido_minimo': [
+                {
+                    'cod_fornecedor': a['cod_fornecedor'],
+                    'nome_fornecedor': a['nome_fornecedor'],
+                    'cod_loja': a['cod_loja'],
+                    'nome_loja': a['nome_loja'],
+                    'valor_total': round(a['valor_total'], 2),
+                    'pedido_minimo': round(a['pedido_minimo'], 2),
+                    'diferenca': round(a['diferenca'], 2)
+                }
+                for a in alertas_pedido_minimo
+            ],
+            'tem_alertas_pedido_minimo': len(alertas_pedido_minimo) > 0
         })
 
         return jsonify(resposta)
@@ -2207,11 +2379,15 @@ def api_pedido_fornecedor_integrado_exportar():
         # =====================================================================
         ws_itens = wb.create_sheet('Itens Pedido')
 
-        # Headers na estrutura solicitada
+        # Headers na estrutura solicitada (com coluna Critica)
         headers = [
             'Cod Filial', 'Nome Filial', 'Cod Item', 'Descricao Item',
-            'CNPJ Fornecedor', 'Nome Fornecedor', 'Qtd Pedido', 'CUE'
+            'CNPJ Fornecedor', 'Nome Fornecedor', 'Qtd Pedido', 'CUE', 'Critica'
         ]
+
+        # Estilo para celulas com critica (amarelo)
+        critica_fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
+        critica_font = Font(color='B45309')
 
         for col, header in enumerate(headers, start=1):
             cell = ws_itens.cell(row=1, column=col, value=header)
@@ -2257,8 +2433,16 @@ def api_pedido_fornecedor_integrado_exportar():
             ws_itens.cell(row=row_idx, column=8, value=cue).border = border
             ws_itens.cell(row=row_idx, column=8).number_format = '#,##0.00'
 
+            # Critica - Pedido abaixo do minimo
+            critica = item.get('critica_pedido_minimo', '')
+            cell_critica = ws_itens.cell(row=row_idx, column=9, value=critica)
+            cell_critica.border = border
+            if critica:
+                cell_critica.fill = critica_fill
+                cell_critica.font = critica_font
+
         # Ajustar largura das colunas
-        col_widths = [12, 25, 12, 50, 18, 30, 12, 12]
+        col_widths = [12, 25, 12, 50, 18, 30, 12, 12, 45]
         for i, width in enumerate(col_widths, start=1):
             ws_itens.column_dimensions[chr(64 + i)].width = width
 
@@ -3057,14 +3241,13 @@ def kpis_dados():
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-# Configuração do banco
 # Configuração do banco de dados via variáveis de ambiente
 # Para usar localmente, defina as variáveis ou crie um arquivo .env
 DB_CONFIG = {
     'host': os.environ.get('DB_HOST', 'localhost'),
     'database': os.environ.get('DB_NAME', 'previsao_demanda'),
     'user': os.environ.get('DB_USER', 'postgres'),
-    'password': os.environ.get('DB_PASSWORD', 'sua_senha_aqui'),
+    'password': os.environ.get('DB_PASSWORD', 'FerreiraCost@01'),
     'port': int(os.environ.get('DB_PORT', 5432))
 }
 
@@ -3101,7 +3284,7 @@ def api_lojas():
 
         # Adicionar opção "Todas"
         resultado = [{'cod_empresa': 'TODAS', 'nome_loja': 'TODAS - Todas as Lojas (Agregado)', 'regiao': None, 'tipo': None}]
-        resultado.extend(lojas)
+        resultado.extend([dict(row) for row in lojas])
 
         return jsonify(resultado)
 
@@ -5158,8 +5341,11 @@ def api_gerar_previsao_banco_v2_interno():
             meses_previsao = (int(ano_fim) - int(ano_inicio)) * 12 + (int(mes_fim) - int(mes_inicio)) + 1
         elif granularidade == 'semanal' and semana_inicio and ano_semana_inicio and semana_fim and ano_semana_fim:
             # Calcular semanas entre as datas
+            # S27 até S29 = 3 semanas (27, 28, 29)
             semanas = (int(ano_semana_fim) - int(ano_semana_inicio)) * 52 + (int(semana_fim) - int(semana_inicio)) + 1
-            meses_previsao = semanas  # Será convertido depois
+            meses_previsao = semanas
+            print(f"DEBUG SEMANAL: semana_inicio={semana_inicio}, semana_fim={semana_fim}, ano_inicio={ano_semana_inicio}, ano_fim={ano_semana_fim}", flush=True)
+            print(f"DEBUG SEMANAL: semanas calculadas = {semanas}", flush=True)
         elif granularidade == 'diario' and data_inicio and data_fim:
             # Calcular dias entre as datas
             from datetime import datetime
@@ -5429,19 +5615,33 @@ def api_gerar_previsao_banco_v2_interno():
                 data_prev = f"{ano_atual:04d}-{mes_atual:02d}-01"
                 datas_previsao.append(data_prev)
         elif granularidade == 'semanal' and semana_inicio and ano_semana_inicio:
-            # Calcular data inicial da semana
+            # Calcular data inicial da semana usando formato ISO correto
             from datetime import datetime
             ano_base = int(ano_semana_inicio)
             semana_base = int(semana_inicio)
-            # Primeiro dia do ano + semanas
-            data_base = datetime(ano_base, 1, 1)
-            # Ajustar para primeira segunda-feira
-            dias_ate_segunda = (7 - data_base.weekday()) % 7
-            data_base = data_base + timedelta(days=dias_ate_segunda)
-            data_base = data_base + timedelta(weeks=semana_base - 1)
+
+            # Usar formato ISO para obter a segunda-feira da semana correta
+            # %G = ano ISO, %V = semana ISO, %u = dia da semana (1=segunda)
+            try:
+                data_base = datetime.strptime(f'{ano_base}-W{semana_base:02d}-1', '%G-W%V-%u')
+            except ValueError:
+                # Fallback para semanas que podem não existir em alguns anos
+                print(f"  AVISO: Semana {semana_base}/{ano_base} pode ser inválida, ajustando...", flush=True)
+                data_base = datetime(ano_base, 1, 1)
+                data_base = data_base + timedelta(weeks=semana_base - 1)
+
+            print(f"  Semana inicial: S{semana_base}/{ano_base} = {data_base.strftime('%Y-%m-%d')}", flush=True)
+            print(f"  Períodos a gerar: {periodos_previsao}", flush=True)
+
             for i in range(periodos_previsao):
                 data_prev = data_base + timedelta(weeks=i)
-                datas_previsao.append(data_prev.strftime('%Y-%m-%d'))
+                # Usar formato YYYY-Www para melhor identificação de semanas
+                semana_atual = data_prev.isocalendar()[1]
+                ano_atual = data_prev.isocalendar()[0]
+                # Armazenar como string no formato que será exibido
+                data_formatada = f"{ano_atual}-S{semana_atual:02d}"
+                datas_previsao.append(data_formatada)
+                print(f"    Período {i+1}: {data_formatada} (data: {data_prev.strftime('%Y-%m-%d')})", flush=True)
         elif granularidade == 'diario' and data_inicio:
             from datetime import datetime
             data_base = datetime.strptime(data_inicio, '%Y-%m-%d')
@@ -5454,11 +5654,15 @@ def api_gerar_previsao_banco_v2_interno():
                 if granularidade == 'mensal':
                     data_prev = ultima_data_historico + pd.DateOffset(months=i+1)
                     data_prev = data_prev.replace(day=1)
+                    datas_previsao.append(data_prev.strftime('%Y-%m-%d'))
                 elif granularidade == 'semanal':
                     data_prev = ultima_data_historico + timedelta(weeks=i+1)
+                    semana_atual = data_prev.isocalendar()[1]
+                    ano_atual = data_prev.isocalendar()[0]
+                    datas_previsao.append(f"{ano_atual}-S{semana_atual:02d}")
                 else:  # diario
                     data_prev = ultima_data_historico + timedelta(days=i+1)
-                datas_previsao.append(data_prev.strftime('%Y-%m-%d'))
+                    datas_previsao.append(data_prev.strftime('%Y-%m-%d'))
 
         print(f"  Datas de previsão geradas: {datas_previsao[:3]}...{datas_previsao[-1] if len(datas_previsao) > 3 else ''}", flush=True)
 
@@ -5470,8 +5674,20 @@ def api_gerar_previsao_banco_v2_interno():
         # Buscar período do ano anterior para comparação
         if datas_previsao:
             from datetime import datetime as dt
-            data_inicio_prev = dt.strptime(datas_previsao[0], '%Y-%m-%d')
-            data_fim_prev = dt.strptime(datas_previsao[-1], '%Y-%m-%d')
+            # Parsear primeira e última data (pode ser formato YYYY-MM-DD ou YYYY-SWW)
+            primeira_data = datas_previsao[0]
+            ultima_data = datas_previsao[-1]
+
+            if '-S' in primeira_data:
+                # Formato semanal: YYYY-SWW
+                ano_ini, sem_ini = primeira_data.split('-S')
+                ano_fim, sem_fim = ultima_data.split('-S')
+                data_inicio_prev = dt.strptime(f'{ano_ini}-W{sem_ini}-1', '%G-W%V-%u')
+                data_fim_prev = dt.strptime(f'{ano_fim}-W{sem_fim}-7', '%G-W%V-%u')
+            else:
+                # Formato normal: YYYY-MM-DD
+                data_inicio_prev = dt.strptime(primeira_data, '%Y-%m-%d')
+                data_fim_prev = dt.strptime(ultima_data, '%Y-%m-%d')
             data_inicio_aa = (data_inicio_prev - pd.DateOffset(years=1)).strftime('%Y-%m-%d')
             data_fim_aa = (data_fim_prev - pd.DateOffset(years=1)).strftime('%Y-%m-%d')
         else:
@@ -5811,9 +6027,15 @@ def api_gerar_previsao_banco_v2_interno():
                         elif granularidade == 'semanal':
                             if data_prev_str:
                                 from datetime import datetime as dt_parse
-                                data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
-                                chave = data_prev_obj.isocalendar()[1]
-                                ano_prev = data_prev_obj.year
+                                # Suportar formato YYYY-SWW (ex: 2026-S27) ou YYYY-MM-DD
+                                if '-S' in data_prev_str:
+                                    ano_str, sem_str = data_prev_str.split('-S')
+                                    chave = int(sem_str)
+                                    ano_prev = int(ano_str)
+                                else:
+                                    data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
+                                    chave = data_prev_obj.isocalendar()[1]
+                                    ano_prev = data_prev_obj.year
                             else:
                                 data_prev_obj = ultima_data_historico + timedelta(weeks=i+1)
                                 chave = data_prev_obj.isocalendar()[1]
@@ -5865,7 +6087,7 @@ def api_gerar_previsao_banco_v2_interno():
 
                 # ESTRATÉGIA 2: Sem sazonalidade forte → testar modelos e aplicar fator sazonal individual
                 else:
-                    # Dividir série: 70% treino, 30% teste
+                    # Dividir série: 70% treino, 30% teste para selecionar melhor modelo
                     tamanho_treino = max(3, int(len(serie_item) * 0.7))
                     tamanho_teste = len(serie_item) - tamanho_treino
 
@@ -5919,8 +6141,13 @@ def api_gerar_previsao_banco_v2_interno():
                                 elif granularidade == 'semanal':
                                     if data_prev_str:
                                         from datetime import datetime as dt_parse
-                                        data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
-                                        chave = data_prev_obj.isocalendar()[1]
+                                        # Suportar formato YYYY-SWW (ex: 2026-S27) ou YYYY-MM-DD
+                                        if '-S' in data_prev_str:
+                                            ano_str, sem_str = data_prev_str.split('-S')
+                                            chave = int(sem_str)
+                                        else:
+                                            data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
+                                            chave = data_prev_obj.isocalendar()[1]
                                     else:
                                         data_prev_obj = ultima_data_historico + timedelta(weeks=i+1)
                                         chave = data_prev_obj.isocalendar()[1]
@@ -6032,6 +6259,123 @@ def api_gerar_previsao_banco_v2_interno():
         serie_historica_agregada = serie_agregada
         datas_historicas = datas_ordenadas
 
+        # Dividir série histórica em BASE (75%) e TESTE (25%) para exibição no gráfico
+        split_index = int(len(datas_historicas) * 0.75)
+        datas_base = datas_historicas[:split_index]
+        valores_base = serie_historica_agregada[:split_index]
+        datas_teste = datas_historicas[split_index:]
+        valores_teste = serie_historica_agregada[split_index:]
+
+        print(f"  Série dividida: Base={len(datas_base)} períodos, Teste={len(datas_teste)} períodos", flush=True)
+
+        # =====================================================
+        # CÁLCULO DO BACKTEST - USAR MESMO MÉTODO DO HISTÓRICO
+        # =====================================================
+        # O backtest mais preciso é usar os valores do mesmo período do ano anterior
+        # ajustado pela tendência observada. Isso é mais realista do que recalcular
+        # os modelos porque mostra como o histórico se comportou.
+        #
+        # Abordagem: Para cada mês de teste, buscar o mesmo mês do ano anterior
+        # na base e aplicar fator de crescimento/tendência observado.
+
+        previsao_teste = []
+
+        if len(datas_teste) > 0 and len(valores_base) >= 3:
+            print(f"  Calculando backtest para {len(datas_teste)} períodos...", flush=True)
+
+            # Criar índice de vendas agregadas por período para lookup rápido
+            vendas_por_data = {d: v for d, v in zip(datas_historicas, serie_historica_agregada)}
+
+            # Calcular tendência geral (primeira metade vs segunda metade da base)
+            meio_base = len(valores_base) // 2
+            if meio_base > 0:
+                media_primeira_metade = sum(valores_base[:meio_base]) / meio_base
+                media_segunda_metade = sum(valores_base[meio_base:]) / (len(valores_base) - meio_base)
+                if media_primeira_metade > 0:
+                    fator_tendencia_geral = media_segunda_metade / media_primeira_metade
+                    # Limitar entre 0.7 e 1.5
+                    fator_tendencia_geral = max(0.7, min(1.5, fator_tendencia_geral))
+                else:
+                    fator_tendencia_geral = 1.0
+            else:
+                fator_tendencia_geral = 1.0
+
+            print(f"    Fator de tendência geral: {fator_tendencia_geral:.2f}", flush=True)
+
+            for i, data_teste_str in enumerate(datas_teste):
+                previsao_periodo = 0
+
+                try:
+                    from datetime import datetime as dt_parse
+                    from dateutil.relativedelta import relativedelta
+
+                    # Determinar chave sazonal e buscar período correspondente na base
+                    if '-S' in data_teste_str:
+                        ano_str, sem_str = data_teste_str.split('-S')
+                        chave_teste = int(sem_str)
+                        ano_teste = int(ano_str)
+                        # Para semanal: buscar mesma semana do ano anterior
+                        ano_anterior = ano_teste - 1
+                        data_aa_str = f"{ano_anterior}-S{chave_teste:02d}"
+                    else:
+                        data_obj = dt_parse.strptime(data_teste_str, '%Y-%m-%d')
+                        if granularidade == 'mensal':
+                            chave_teste = data_obj.month
+                            # Buscar mesmo mês do ano anterior
+                            data_aa = data_obj - relativedelta(years=1)
+                            data_aa_str = data_aa.strftime('%Y-%m-%d')
+                        elif granularidade == 'semanal':
+                            chave_teste = data_obj.isocalendar()[1]
+                            # Buscar mesma semana do ano anterior
+                            data_aa = data_obj - relativedelta(years=1)
+                            data_aa_str = data_aa.strftime('%Y-%m-%d')
+                        else:
+                            chave_teste = data_obj.weekday()
+                            data_aa = data_obj - relativedelta(years=1)
+                            data_aa_str = data_aa.strftime('%Y-%m-%d')
+
+                    # Tentar encontrar valor do ano anterior na base
+                    valor_aa = vendas_por_data.get(data_aa_str, 0)
+
+                    if valor_aa > 0:
+                        # Usar valor do ano anterior com ajuste de tendência
+                        previsao_periodo = valor_aa * fator_tendencia_geral
+                    else:
+                        # Fallback: usar fator sazonal agregado
+                        media_base = sum(valores_base) / len(valores_base)
+                        fator = fatores_sazonais.get(chave_teste, 1.0)
+                        previsao_periodo = media_base * fator
+
+                except Exception as e:
+                    # Fallback simples
+                    media_base = sum(valores_base) / len(valores_base)
+                    previsao_periodo = media_base
+
+                previsao_teste.append(round(previsao_periodo, 2))
+
+            print(f"  Backtest calculado: {len(previsao_teste)} períodos", flush=True)
+
+            # Calcular erro do backtest para diagnóstico
+            if previsao_teste and valores_teste:
+                erros_bt = []
+                for i in range(min(len(previsao_teste), len(valores_teste))):
+                    if valores_teste[i] > 0:
+                        erro_pct = abs(previsao_teste[i] - valores_teste[i]) / valores_teste[i] * 100
+                        erros_bt.append(erro_pct)
+                if erros_bt:
+                    wmape_bt = sum(erros_bt) / len(erros_bt)
+                    print(f"  WMAPE do backtest: {wmape_bt:.1f}%", flush=True)
+                    # Mostrar comparação período a período
+                    print(f"    Comparação período a período:", flush=True)
+                    for i in range(min(3, len(previsao_teste), len(valores_teste))):
+                        print(f"      {datas_teste[i]}: Real={valores_teste[i]:,.0f}, Prev={previsao_teste[i]:,.0f}", flush=True)
+
+        # Fallback: usar média simples se não conseguiu calcular
+        if not previsao_teste and len(valores_base) >= 3 and len(datas_teste) > 0:
+            media_base = sum(valores_base) / len(valores_base)
+            previsao_teste = [round(media_base, 2)] * len(datas_teste)
+            print(f"  Previsão backtest (fallback média): {len(previsao_teste)} períodos", flush=True)
+
         # Série de previsão agregada (soma dos itens)
         previsao_agregada = [previsoes_agregadas_por_periodo[d] for d in datas_previsao]
 
@@ -6133,20 +6477,30 @@ def api_gerar_previsao_banco_v2_interno():
         periodos_formatados = []
         for data_str in datas_previsao:
             try:
-                data_obj = dt.strptime(data_str, '%Y-%m-%d')
-                if granularidade == 'mensal':
+                if '-S' in data_str:
+                    # Formato semanal: YYYY-SWW
+                    ano_str, sem_str = data_str.split('-S')
                     periodos_formatados.append({
-                        'mes': data_obj.month,
-                        'ano': data_obj.year
-                    })
-                elif granularidade == 'semanal':
-                    periodos_formatados.append({
-                        'semana': data_obj.isocalendar()[1],
-                        'ano': data_obj.isocalendar()[0]
+                        'semana': int(sem_str),
+                        'ano': int(ano_str)
                     })
                 else:
-                    periodos_formatados.append(data_str)
-            except:
+                    # Formato data: YYYY-MM-DD
+                    data_obj = dt.strptime(data_str, '%Y-%m-%d')
+                    if granularidade == 'mensal':
+                        periodos_formatados.append({
+                            'mes': data_obj.month,
+                            'ano': data_obj.year
+                        })
+                    elif granularidade == 'semanal':
+                        periodos_formatados.append({
+                            'semana': data_obj.isocalendar()[1],
+                            'ano': data_obj.isocalendar()[0]
+                        })
+                    else:
+                        periodos_formatados.append(data_str)
+            except Exception as e:
+                print(f"  AVISO: Erro ao formatar período {data_str}: {e}", flush=True)
                 periodos_formatados.append(data_str)
 
         # Calcular métricas (comparando previsão com ano anterior)
@@ -6184,12 +6538,25 @@ def api_gerar_previsao_banco_v2_interno():
                 'datas': datas_historicas,
                 'valores': serie_historica_agregada
             },
+            # Dados divididos para gráfico (compatibilidade com frontend)
+            'historico_base': {
+                'datas': datas_base,
+                'valores': valores_base
+            },
+            'historico_teste': {
+                'datas': datas_teste,
+                'valores': valores_teste
+            },
             'melhor_modelo': 'Bottom-Up (Individual por Item)',
             'modelos': {
                 'Bottom-Up (Individual por Item)': {
                     'metricas': {
                         'wmape': round(wmape_geral, 2),
                         'bias': round(bias_geral, 2)
+                    },
+                    'teste': {
+                        'datas': datas_teste,
+                        'valores': previsao_teste  # Previsão do modelo para o período de teste (linha verde tracejada)
                     },
                     'futuro': {
                         'datas': datas_previsao,
@@ -6469,6 +6836,610 @@ def api_parametros_fornecedor_por_produto():
 
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
+
+
+# ============================================================================
+# APIS DE DEMANDA VALIDADA E PEDIDO PLANEJADO (v6.0)
+# ============================================================================
+
+@app.route('/api/demanda_validada/salvar', methods=['POST'])
+def api_salvar_demanda_validada():
+    """
+    Salva demanda validada pelo usuario para um periodo especifico.
+
+    Request JSON:
+    {
+        "itens": [
+            {
+                "cod_produto": "123456",
+                "cod_loja": 1,
+                "cod_fornecedor": 100,
+                "data_inicio": "2026-07-01",
+                "data_fim": "2026-07-31",
+                "demanda_diaria": 10.5,
+                "demanda_total_periodo": 325.5
+            }
+        ],
+        "usuario": "nome_usuario",
+        "observacao": "Validacao para julho 2026"
+    }
+    """
+    try:
+        dados = request.get_json()
+
+        itens = dados.get('itens', [])
+        usuario = dados.get('usuario', 'sistema')
+        observacao = dados.get('observacao', '')
+
+        if not itens:
+            return jsonify({'success': False, 'erro': 'Nenhum item para salvar'}), 400
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Verificar se tabela existe, criar se necessario
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'demanda_validada'
+            )
+        """)
+        if not cursor.fetchone()[0]:
+            # Criar tabela se nao existir
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS demanda_validada (
+                    id SERIAL PRIMARY KEY,
+                    cod_produto VARCHAR(20) NOT NULL,
+                    cod_loja INTEGER NOT NULL,
+                    cod_fornecedor INTEGER,
+                    data_inicio DATE NOT NULL,
+                    data_fim DATE NOT NULL,
+                    semana_ano VARCHAR(10),
+                    demanda_diaria NUMERIC(12,4),
+                    demanda_total_periodo NUMERIC(12,2),
+                    data_validacao TIMESTAMP DEFAULT NOW(),
+                    usuario_validacao VARCHAR(100),
+                    versao INTEGER DEFAULT 1,
+                    status VARCHAR(20) DEFAULT 'validado',
+                    ativo BOOLEAN DEFAULT TRUE,
+                    observacao TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+
+        itens_salvos = 0
+        for item in itens:
+            cod_produto = str(item.get('cod_produto'))
+            cod_loja = int(item.get('cod_loja'))
+            cod_fornecedor = item.get('cod_fornecedor')
+            data_inicio = item.get('data_inicio')
+            data_fim = item.get('data_fim')
+            demanda_diaria = float(item.get('demanda_diaria', 0))
+            demanda_total = float(item.get('demanda_total_periodo', 0))
+
+            # Calcular semana_ano (formato: YYYY-SWW)
+            from datetime import datetime as dt
+            data_ini = dt.strptime(data_inicio, '%Y-%m-%d')
+            semana_ano = f"{data_ini.year}-S{data_ini.isocalendar()[1]:02d}"
+
+            # Desativar validacoes anteriores que se sobrepoem
+            cursor.execute("""
+                UPDATE demanda_validada
+                SET ativo = FALSE, updated_at = NOW()
+                WHERE cod_produto = %s
+                  AND cod_loja = %s
+                  AND ativo = TRUE
+                  AND (
+                      (data_inicio <= %s AND data_fim >= %s)
+                      OR (data_inicio >= %s AND data_inicio <= %s)
+                      OR (data_fim >= %s AND data_fim <= %s)
+                  )
+            """, [cod_produto, cod_loja, data_inicio, data_fim,
+                  data_inicio, data_fim, data_inicio, data_fim])
+
+            # Inserir nova validacao
+            cursor.execute("""
+                INSERT INTO demanda_validada
+                (cod_produto, cod_loja, cod_fornecedor, data_inicio, data_fim,
+                 semana_ano, demanda_diaria, demanda_total_periodo,
+                 usuario_validacao, observacao)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, [cod_produto, cod_loja, cod_fornecedor, data_inicio, data_fim,
+                  semana_ano, demanda_diaria, demanda_total, usuario, observacao])
+
+            itens_salvos += 1
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'itens_salvos': itens_salvos,
+            'mensagem': f'{itens_salvos} itens validados com sucesso'
+        })
+
+    except Exception as e:
+        print(f"[ERRO] api_salvar_demanda_validada: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/api/demanda_validada/listar', methods=['GET'])
+def api_listar_demanda_validada():
+    """
+    Lista demandas validadas com filtros opcionais.
+
+    Query params:
+        cod_produto: filtrar por produto
+        cod_loja: filtrar por loja
+        cod_fornecedor: filtrar por fornecedor
+        data_inicio: filtrar por periodo (inicio)
+        data_fim: filtrar por periodo (fim)
+        apenas_ativos: true/false (default: true)
+    """
+    try:
+        cod_produto = request.args.get('cod_produto')
+        cod_loja = request.args.get('cod_loja')
+        cod_fornecedor = request.args.get('cod_fornecedor')
+        data_inicio = request.args.get('data_inicio')
+        data_fim = request.args.get('data_fim')
+        apenas_ativos = request.args.get('apenas_ativos', 'true').lower() == 'true'
+
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Verificar se tabela existe
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'demanda_validada'
+            )
+        """)
+        if not cursor.fetchone()['exists']:
+            conn.close()
+            return jsonify([])
+
+        # Construir query com filtros
+        where_conditions = []
+        params = []
+
+        if apenas_ativos:
+            where_conditions.append("ativo = TRUE")
+
+        if cod_produto:
+            where_conditions.append("cod_produto = %s")
+            params.append(str(cod_produto))
+
+        if cod_loja:
+            where_conditions.append("cod_loja = %s")
+            params.append(int(cod_loja))
+
+        if cod_fornecedor:
+            where_conditions.append("cod_fornecedor = %s")
+            params.append(int(cod_fornecedor))
+
+        if data_inicio:
+            where_conditions.append("data_fim >= %s")
+            params.append(data_inicio)
+
+        if data_fim:
+            where_conditions.append("data_inicio <= %s")
+            params.append(data_fim)
+
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+
+        cursor.execute(f"""
+            SELECT id, cod_produto, cod_loja, cod_fornecedor,
+                   data_inicio, data_fim, semana_ano,
+                   demanda_diaria, demanda_total_periodo,
+                   data_validacao, usuario_validacao,
+                   versao, status, observacao
+            FROM demanda_validada
+            WHERE {where_clause}
+            ORDER BY data_validacao DESC
+            LIMIT 1000
+        """, params)
+
+        resultados = cursor.fetchall()
+        conn.close()
+
+        # Converter datas para string
+        for r in resultados:
+            if r.get('data_inicio'):
+                r['data_inicio'] = str(r['data_inicio'])
+            if r.get('data_fim'):
+                r['data_fim'] = str(r['data_fim'])
+            if r.get('data_validacao'):
+                r['data_validacao'] = str(r['data_validacao'])
+
+        return jsonify(resultados)
+
+    except Exception as e:
+        print(f"[ERRO] api_listar_demanda_validada: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/demanda_validada/buscar_para_periodo', methods=['GET'])
+def api_buscar_demanda_validada_periodo():
+    """
+    Busca demanda validada para um periodo especifico (usado no pedido planejado).
+
+    Query params:
+        cod_loja: codigo da loja (obrigatorio)
+        data_inicio: inicio do periodo (obrigatorio)
+        data_fim: fim do periodo (obrigatorio)
+        cod_fornecedor: filtrar por fornecedor (opcional)
+    """
+    try:
+        cod_loja = request.args.get('cod_loja')
+        data_inicio = request.args.get('data_inicio')
+        data_fim = request.args.get('data_fim')
+        cod_fornecedor = request.args.get('cod_fornecedor')
+
+        if not cod_loja or not data_inicio or not data_fim:
+            return jsonify({'erro': 'Parametros obrigatorios: cod_loja, data_inicio, data_fim'}), 400
+
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Verificar se tabela existe
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'demanda_validada'
+            )
+        """)
+        if not cursor.fetchone()['exists']:
+            conn.close()
+            return jsonify({'itens': [], 'tem_validacao': False})
+
+        # Buscar validacoes que cobrem o periodo
+        params = [int(cod_loja), data_inicio, data_fim]
+        fornecedor_filter = ""
+        if cod_fornecedor:
+            fornecedor_filter = " AND cod_fornecedor = %s"
+            params.append(int(cod_fornecedor))
+
+        cursor.execute(f"""
+            SELECT cod_produto, cod_loja, cod_fornecedor,
+                   data_inicio, data_fim,
+                   demanda_diaria, demanda_total_periodo,
+                   data_validacao, usuario_validacao
+            FROM demanda_validada
+            WHERE cod_loja = %s
+              AND ativo = TRUE
+              AND status = 'validado'
+              AND data_inicio <= %s
+              AND data_fim >= %s
+              {fornecedor_filter}
+            ORDER BY data_validacao DESC
+        """, params)
+
+        resultados = cursor.fetchall()
+        conn.close()
+
+        # Converter para dict indexado por produto
+        itens_dict = {}
+        for r in resultados:
+            cod = str(r['cod_produto'])
+            if cod not in itens_dict:  # Manter apenas a mais recente
+                itens_dict[cod] = {
+                    'cod_produto': cod,
+                    'demanda_diaria': float(r['demanda_diaria']) if r['demanda_diaria'] else 0,
+                    'demanda_total_periodo': float(r['demanda_total_periodo']) if r['demanda_total_periodo'] else 0,
+                    'data_validacao': str(r['data_validacao']),
+                    'usuario_validacao': r['usuario_validacao']
+                }
+
+        return jsonify({
+            'itens': list(itens_dict.values()),
+            'tem_validacao': len(itens_dict) > 0,
+            'total_itens': len(itens_dict)
+        })
+
+    except Exception as e:
+        print(f"[ERRO] api_buscar_demanda_validada_periodo: {e}")
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/pedido_planejado', methods=['POST'])
+def api_pedido_planejado():
+    """
+    Gera pedido planejado para um periodo futuro.
+
+    Diferenca do pedido normal (reabastecimento):
+    - Usa demanda validada para o periodo especificado
+    - Calcula data de emissao com offset de lead time
+    - Nao considera estoque atual (assume que sera consumido ate la)
+
+    Request JSON:
+    {
+        "destino_tipo": "Loja" ou "CD",
+        "cod_empresa": codigo ou lista de codigos ou "TODAS",
+        "fornecedor": nome ou lista de nomes ou "TODOS",
+        "linha1": categoria ou lista ou "TODAS",
+        "linha3": sublinha ou lista ou "TODAS",
+        "periodo_inicio": "2026-07-01",
+        "periodo_fim": "2026-07-31",
+        "usar_demanda_validada": true/false (default: true)
+    }
+    """
+    try:
+        from core.pedido_fornecedor_integrado import (
+            PedidoFornecedorIntegrado,
+            agregar_por_fornecedor
+        )
+        from datetime import datetime as dt, timedelta
+
+        dados = request.get_json()
+
+        # Parametros de filtro (igual ao pedido normal)
+        fornecedor_filtro = dados.get('fornecedor', 'TODOS')
+        linha1_filtro = dados.get('linha1', 'TODAS')
+        linha3_filtro = dados.get('linha3', 'TODAS')
+        destino_tipo = dados.get('destino_tipo', 'LOJA')
+        cod_empresa = dados.get('cod_empresa', 'TODAS')
+
+        # Parametros especificos do pedido planejado
+        periodo_inicio = dados.get('periodo_inicio')
+        periodo_fim = dados.get('periodo_fim')
+        usar_demanda_validada = dados.get('usar_demanda_validada', True)
+
+        if not periodo_inicio or not periodo_fim:
+            return jsonify({'erro': 'Parametros obrigatorios: periodo_inicio, periodo_fim'}), 400
+
+        print(f"\n{'='*60}")
+        print("PEDIDO PLANEJADO")
+        print(f"{'='*60}")
+        print(f"  Periodo: {periodo_inicio} ate {periodo_fim}")
+        print(f"  Fornecedor: {fornecedor_filtro}")
+        print(f"  Destino: {destino_tipo}")
+        print(f"  Empresa: {cod_empresa}")
+        print(f"  Usar demanda validada: {usar_demanda_validada}")
+
+        conn = get_db_connection()
+
+        # Normalizar cod_empresa
+        lojas_selecionadas = []
+        if isinstance(cod_empresa, list):
+            lojas_selecionadas = [int(x) for x in cod_empresa]
+        elif cod_empresa != 'TODAS':
+            lojas_selecionadas = [int(cod_empresa)]
+
+        # Buscar lojas se nao especificadas
+        if not lojas_selecionadas:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            tipo_filtro = 'Loja' if destino_tipo.upper() == 'LOJA' else 'CD'
+            cursor.execute("""
+                SELECT cod_empresa FROM cadastro_lojas
+                WHERE tipo = %s AND ativo = TRUE
+            """, [tipo_filtro])
+            lojas_selecionadas = [r['cod_empresa'] for r in cursor.fetchall()]
+
+        # Calcular dias do periodo
+        data_ini = dt.strptime(periodo_inicio, '%Y-%m-%d')
+        data_fim_dt = dt.strptime(periodo_fim, '%Y-%m-%d')
+        dias_periodo = (data_fim_dt - data_ini).days + 1
+
+        print(f"  Dias no periodo: {dias_periodo}")
+        print(f"  Lojas: {lojas_selecionadas}")
+
+        # Buscar demanda validada se solicitado
+        demanda_validada_dict = {}
+        if usar_demanda_validada:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            for loja in lojas_selecionadas:
+                cursor.execute("""
+                    SELECT cod_produto, demanda_diaria
+                    FROM demanda_validada
+                    WHERE cod_loja = %s
+                      AND ativo = TRUE
+                      AND status = 'validado'
+                      AND data_inicio <= %s
+                      AND data_fim >= %s
+                """, [loja, periodo_inicio, periodo_fim])
+
+                for r in cursor.fetchall():
+                    key = (str(r['cod_produto']), loja)
+                    demanda_validada_dict[key] = float(r['demanda_diaria']) if r['demanda_diaria'] else 0
+
+            print(f"  Demanda validada encontrada: {len(demanda_validada_dict)} itens")
+
+        # Instanciar processador de pedidos
+        processador = PedidoFornecedorIntegrado(conn)
+        processador.carregar_regras_sit_compra()
+
+        # Normalizar filtros (mesmo codigo do pedido normal)
+        fornecedores_lista = None
+        if isinstance(fornecedor_filtro, list):
+            fornecedores_lista = fornecedor_filtro
+        elif fornecedor_filtro and fornecedor_filtro != 'TODOS':
+            fornecedores_lista = [fornecedor_filtro]
+
+        linhas1_lista = None
+        if isinstance(linha1_filtro, list):
+            linhas1_lista = linha1_filtro
+        elif linha1_filtro and linha1_filtro != 'TODAS':
+            linhas1_lista = [linha1_filtro]
+
+        linhas3_lista = None
+        if isinstance(linha3_filtro, list):
+            linhas3_lista = linha3_filtro
+        elif linha3_filtro and linha3_filtro != 'TODAS':
+            linhas3_lista = [linha3_filtro]
+
+        # Buscar produtos
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        where_conditions = ["1=1"]
+        params = []
+
+        if fornecedores_lista:
+            placeholders = ','.join(['%s'] * len(fornecedores_lista))
+            where_conditions.append(f"p.nome_fornecedor IN ({placeholders})")
+            params.extend(fornecedores_lista)
+
+        if linhas1_lista:
+            placeholders = ','.join(['%s'] * len(linhas1_lista))
+            where_conditions.append(f"p.linha IN ({placeholders})")
+            params.extend(linhas1_lista)
+
+        if linhas3_lista:
+            placeholders = ','.join(['%s'] * len(linhas3_lista))
+            where_conditions.append(f"p.codigo_linha IN ({placeholders})")
+            params.extend(linhas3_lista)
+
+        where_clause = " AND ".join(where_conditions)
+
+        cursor.execute(f"""
+            SELECT DISTINCT
+                p.cod_produto as codigo,
+                p.descricao,
+                p.nome_fornecedor,
+                p.cnpj_fornecedor,
+                p.linha,
+                p.codigo_linha,
+                p.curva_abc,
+                p.custo_unitario
+            FROM cadastro_produtos_completo p
+            WHERE {where_clause}
+        """, params)
+
+        produtos = cursor.fetchall()
+        print(f"  Produtos encontrados: {len(produtos)}")
+
+        # Processar itens
+        itens_pedido = []
+        itens_bloqueados = []
+
+        for loja in lojas_selecionadas:
+            # Buscar nome da loja
+            cursor.execute("""
+                SELECT nome_loja FROM cadastro_lojas WHERE cod_empresa = %s
+            """, [loja])
+            nome_loja_row = cursor.fetchone()
+            nome_loja = nome_loja_row['nome_loja'] if nome_loja_row else f'Loja {loja}'
+
+            # Buscar lead time do fornecedor para esta loja
+            lead_times = {}
+            cursor.execute("""
+                SELECT cnpj_fornecedor, lead_time_dias
+                FROM parametros_fornecedor
+                WHERE cod_empresa = %s AND ativo = TRUE
+            """, [loja])
+            for r in cursor.fetchall():
+                lead_times[r['cnpj_fornecedor']] = r['lead_time_dias']
+
+            for produto in produtos:
+                codigo = str(produto['codigo'])
+
+                # Verificar situacao de compra
+                bloqueado, motivo = processador.verificar_situacao_compra(codigo, loja)
+                if bloqueado:
+                    itens_bloqueados.append({
+                        'codigo': codigo,
+                        'descricao': produto['descricao'],
+                        'nome_fornecedor': produto['nome_fornecedor'],
+                        'cod_loja': loja,
+                        'nome_loja': nome_loja,
+                        'motivo_bloqueio': motivo,
+                        'curva_abc': produto.get('curva_abc', 'B')
+                    })
+                    continue
+
+                # Buscar demanda
+                key = (codigo, loja)
+                if key in demanda_validada_dict:
+                    demanda_diaria = demanda_validada_dict[key]
+                else:
+                    # Calcular demanda com base no historico (media ultimos 90 dias)
+                    cursor.execute("""
+                        SELECT AVG(qtd_venda) as media_diaria
+                        FROM historico_vendas_diario
+                        WHERE codigo = %s::integer
+                          AND cod_empresa = %s
+                          AND data >= CURRENT_DATE - INTERVAL '90 days'
+                    """, [codigo, loja])
+                    row = cursor.fetchone()
+                    demanda_diaria = float(row['media_diaria']) if row and row['media_diaria'] else 0
+
+                if demanda_diaria <= 0:
+                    continue  # Sem demanda, pular
+
+                demanda_periodo = demanda_diaria * dias_periodo
+
+                # Calcular lead time
+                cnpj = produto.get('cnpj_fornecedor')
+                lead_time = lead_times.get(cnpj, 15)  # Default 15 dias
+
+                # Calcular data de emissao (periodo_inicio - lead_time)
+                data_emissao = data_ini - timedelta(days=lead_time)
+
+                # Custo unitario
+                custo = float(produto.get('custo_unitario', 0)) if produto.get('custo_unitario') else 0
+                valor_pedido = demanda_periodo * custo
+
+                itens_pedido.append({
+                    'codigo': codigo,
+                    'descricao': produto['descricao'],
+                    'nome_fornecedor': produto['nome_fornecedor'],
+                    'cnpj_fornecedor': cnpj,
+                    'cod_loja': loja,
+                    'nome_loja': nome_loja,
+                    'curva_abc': produto.get('curva_abc', 'B'),
+                    'demanda_diaria': round(demanda_diaria, 2),
+                    'demanda_periodo': round(demanda_periodo, 0),
+                    'quantidade_pedido': round(demanda_periodo, 0),
+                    'valor_pedido': round(valor_pedido, 2),
+                    'lead_time': lead_time,
+                    'data_emissao_sugerida': data_emissao.strftime('%Y-%m-%d'),
+                    'periodo_inicio': periodo_inicio,
+                    'periodo_fim': periodo_fim,
+                    'dias_periodo': dias_periodo,
+                    'usa_demanda_validada': key in demanda_validada_dict
+                })
+
+        conn.close()
+
+        # Agregar por fornecedor
+        agregado = agregar_por_fornecedor(itens_pedido)
+
+        # Calcular resumo
+        total_itens = len(itens_pedido)
+        total_valor = sum(i.get('valor_pedido', 0) for i in itens_pedido)
+        total_fornecedores = len(agregado)
+
+        # Verificar se e multi-loja
+        lojas_unicas = set(i.get('cod_loja') for i in itens_pedido)
+        is_multiloja = len(lojas_unicas) > 1
+
+        return jsonify({
+            'success': True,
+            'tipo_pedido': 'planejado',
+            'periodo': {
+                'inicio': periodo_inicio,
+                'fim': periodo_fim,
+                'dias': dias_periodo
+            },
+            'resumo': {
+                'total_itens': total_itens,
+                'total_valor': round(total_valor, 2),
+                'total_fornecedores': total_fornecedores,
+                'itens_com_demanda_validada': sum(1 for i in itens_pedido if i.get('usa_demanda_validada')),
+                'itens_bloqueados': len(itens_bloqueados)
+            },
+            'itens_pedido': itens_pedido,
+            'itens_bloqueados': itens_bloqueados,
+            'agregado_fornecedor': agregado,
+            'is_pedido_multiloja': is_multiloja
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"[ERRO] api_pedido_planejado: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
 
 
 if __name__ == '__main__':

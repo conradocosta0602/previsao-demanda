@@ -638,6 +638,18 @@
             border-radius: 4px;
         }
 
+        /* Alerta de pedido minimo */
+        .alerta-pedido-minimo {
+            color: #b45309;
+            font-size: 0.75em;
+            font-weight: 500;
+            background: #fef3c7;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-left: 8px;
+            cursor: help;
+        }
+
         /* Badge de transferencia no header do fornecedor */
         .fornecedor-section-header .stat-transf {
             color: #1e40af;
@@ -745,6 +757,31 @@
             <!-- Sidebar -->
             <aside class="sidebar">
                 <h3>Parametros</h3>
+
+                <!-- TIPO DE PEDIDO (v6.0) -->
+                <div class="filtro-grupo">
+                    <label>Tipo de Pedido</label>
+                    <select id="tipo_pedido" onchange="toggleCamposPlanejado()">
+                        <option value="reabastecimento">Reabastecimento</option>
+                        <option value="planejado">Planejado</option>
+                    </select>
+                </div>
+
+                <!-- CAMPOS PARA PEDIDO PLANEJADO (v6.0) -->
+                <div id="campos_planejado" style="display: none; background: #f0fdf4; border-radius: 8px; padding: 12px; margin-bottom: 14px; border: 1px solid #d1fae5;">
+                    <label style="display: block; font-size: 0.8em; color: #065f46; margin-bottom: 8px; font-weight: 600;">Periodo da Demanda</label>
+                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                        <div style="flex: 1;">
+                            <label style="font-size: 0.7em; color: #6b7280;">Inicio:</label>
+                            <input type="date" id="periodo_inicio" style="width: 100%; padding: 6px; border: 1px solid #d1fae5; border-radius: 4px; font-size: 0.85em;">
+                        </div>
+                        <div style="flex: 1;">
+                            <label style="font-size: 0.7em; color: #6b7280;">Fim:</label>
+                            <input type="date" id="periodo_fim" style="width: 100%; padding: 6px; border: 1px solid #d1fae5; border-radius: 4px; font-size: 0.85em;">
+                        </div>
+                    </div>
+                    <div id="info_emissao" style="font-size: 0.75em; color: #059669; margin-top: 4px;"></div>
+                </div>
 
                 <div class="filtro-grupo">
                     <label>Destino</label>
@@ -907,25 +944,29 @@
 
                 // Linha 1 (categoria)
                 const selectLinha1 = document.getElementById('linha1');
-                linhas1.forEach(l => {
-                    if (l.linha && l.linha !== 'TODAS') {
-                        const opt = document.createElement('option');
-                        opt.value = l.linha;
-                        opt.textContent = l.linha;
-                        selectLinha1.appendChild(opt);
-                    }
-                });
+                if (Array.isArray(linhas1)) {
+                    linhas1.forEach(l => {
+                        if (l.linha && l.linha !== 'TODAS') {
+                            const opt = document.createElement('option');
+                            opt.value = l.linha;
+                            opt.textContent = l.linha;
+                            selectLinha1.appendChild(opt);
+                        }
+                    });
+                }
 
                 // Linha 3 (sublinha)
                 const selectLinha3 = document.getElementById('linha3');
-                linhas3.forEach(l => {
-                    if (l.codigo_linha && l.codigo_linha !== 'TODAS') {
-                        const opt = document.createElement('option');
-                        opt.value = l.codigo_linha;
-                        opt.textContent = `${l.codigo_linha} - ${l.descricao_linha}`;
-                        selectLinha3.appendChild(opt);
-                    }
-                });
+                if (Array.isArray(linhas3)) {
+                    linhas3.forEach(l => {
+                        if (l.codigo_linha && l.codigo_linha !== 'TODAS') {
+                            const opt = document.createElement('option');
+                            opt.value = l.codigo_linha;
+                            opt.textContent = `${l.codigo_linha} - ${l.descricao_linha}`;
+                            selectLinha3.appendChild(opt);
+                        }
+                    });
+                }
             } catch (e) {
                 console.error('Erro ao carregar filtros:', e);
             }
@@ -938,6 +979,53 @@
             // Se nenhum selecionado, retorna array vazio (API tratara como "todos")
             return selected;
         }
+
+        // Toggle campos de pedido planejado (v6.0)
+        function toggleCamposPlanejado() {
+            const tipoPedido = document.getElementById('tipo_pedido').value;
+            const camposPlanejado = document.getElementById('campos_planejado');
+            const coberturaGrupo = document.getElementById('cobertura_dias').closest('.filtro-grupo');
+
+            if (tipoPedido === 'planejado') {
+                camposPlanejado.style.display = 'block';
+                coberturaGrupo.style.display = 'none';  // Esconder cobertura no planejado
+
+                // Definir datas padrao (proximo mes)
+                const hoje = new Date();
+                const proximoMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1);
+                const fimProximoMes = new Date(hoje.getFullYear(), hoje.getMonth() + 2, 0);
+
+                document.getElementById('periodo_inicio').value = proximoMes.toISOString().split('T')[0];
+                document.getElementById('periodo_fim').value = fimProximoMes.toISOString().split('T')[0];
+
+                atualizarInfoEmissao();
+            } else {
+                camposPlanejado.style.display = 'none';
+                coberturaGrupo.style.display = 'block';
+            }
+        }
+
+        // Atualizar info de data de emissao
+        function atualizarInfoEmissao() {
+            const periodoInicio = document.getElementById('periodo_inicio').value;
+            if (!periodoInicio) return;
+
+            const dataInicio = new Date(periodoInicio);
+            const leadTimeEstimado = 15;  // Lead time padrao
+            const dataEmissao = new Date(dataInicio);
+            dataEmissao.setDate(dataEmissao.getDate() - leadTimeEstimado);
+
+            const infoDiv = document.getElementById('info_emissao');
+            infoDiv.innerHTML = `<strong>Data sugerida de emissao:</strong> ${dataEmissao.toLocaleDateString('pt-BR')} (${leadTimeEstimado} dias antes)`;
+        }
+
+        // Listeners para atualizar info de emissao
+        document.addEventListener('DOMContentLoaded', function() {
+            const periodoInicio = document.getElementById('periodo_inicio');
+            if (periodoInicio) {
+                periodoInicio.addEventListener('change', atualizarInfoEmissao);
+            }
+        });
 
         async function gerarPedido() {
             const btn = document.getElementById('btnGerar');
@@ -959,24 +1047,48 @@
             }, 300);
 
             try {
+                const tipoPedido = document.getElementById('tipo_pedido').value;
                 const cobertura = document.getElementById('cobertura_dias').value;
                 const empresasSelecionadas = getSelectedValues('cod_empresa');
                 const fornecedoresSelecionados = getSelectedValues('fornecedor');
                 const linha1Selecionadas = getSelectedValues('linha1');
                 const linha3Selecionadas = getSelectedValues('linha3');
 
-                const response = await fetch('/api/pedido_fornecedor_integrado', {
+                let endpoint = '/api/pedido_fornecedor_integrado';
+                let requestBody = {
+                    destino_tipo: document.getElementById('destino_tipo').value,
+                    cod_empresa: empresasSelecionadas.length === 1 ? empresasSelecionadas[0] : (empresasSelecionadas.length > 0 ? empresasSelecionadas : 'TODAS'),
+                    fornecedor: fornecedoresSelecionados.length === 1 ? fornecedoresSelecionados[0] : (fornecedoresSelecionados.length > 0 ? fornecedoresSelecionados : 'TODOS'),
+                    linha1: linha1Selecionadas.length === 1 ? linha1Selecionadas[0] : (linha1Selecionadas.length > 0 ? linha1Selecionadas : 'TODAS'),
+                    linha3: linha3Selecionadas.length === 1 ? linha3Selecionadas[0] : (linha3Selecionadas.length > 0 ? linha3Selecionadas : 'TODAS'),
+                };
+
+                // Se for pedido planejado, usar endpoint diferente e adicionar periodo
+                if (tipoPedido === 'planejado') {
+                    endpoint = '/api/pedido_planejado';
+                    const periodoInicio = document.getElementById('periodo_inicio').value;
+                    const periodoFim = document.getElementById('periodo_fim').value;
+
+                    if (!periodoInicio || !periodoFim) {
+                        throw new Error('Selecione o periodo para o pedido planejado');
+                    }
+
+                    if (new Date(periodoInicio) > new Date(periodoFim)) {
+                        throw new Error('A data de inicio deve ser anterior a data de fim');
+                    }
+
+                    requestBody.periodo_inicio = periodoInicio;
+                    requestBody.periodo_fim = periodoFim;
+                    requestBody.usar_demanda_validada = true;
+                } else {
+                    // Pedido de reabastecimento normal
+                    requestBody.cobertura_dias = cobertura ? parseInt(cobertura) : null;
+                }
+
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        destino_tipo: document.getElementById('destino_tipo').value,
-                        // Suporta array ou valor unico para compatibilidade
-                        cod_empresa: empresasSelecionadas.length === 1 ? empresasSelecionadas[0] : (empresasSelecionadas.length > 0 ? empresasSelecionadas : 'TODAS'),
-                        fornecedor: fornecedoresSelecionados.length === 1 ? fornecedoresSelecionados[0] : (fornecedoresSelecionados.length > 0 ? fornecedoresSelecionados : 'TODOS'),
-                        linha1: linha1Selecionadas.length === 1 ? linha1Selecionadas[0] : (linha1Selecionadas.length > 0 ? linha1Selecionadas : 'TODAS'),
-                        linha3: linha3Selecionadas.length === 1 ? linha3Selecionadas[0] : (linha3Selecionadas.length > 0 ? linha3Selecionadas : 'TODAS'),
-                        cobertura_dias: cobertura ? parseInt(cobertura) : null
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 clearInterval(interval);
@@ -987,7 +1099,7 @@
                 setTimeout(() => {
                     document.getElementById('progressCard').style.display = 'none';
                     if (data.success) {
-                        exibirResultados(data);
+                        exibirResultados(data, tipoPedido);
                     } else {
                         document.getElementById('errorCard').style.display = 'block';
                         document.getElementById('errorMessage').textContent = data.erro || 'Erro desconhecido';
@@ -998,49 +1110,116 @@
                 clearInterval(interval);
                 document.getElementById('progressCard').style.display = 'none';
                 document.getElementById('errorCard').style.display = 'block';
-                document.getElementById('errorMessage').textContent = 'Erro de conexao: ' + e.message;
+                document.getElementById('errorMessage').textContent = 'Erro: ' + e.message;
             }
 
             btn.disabled = false;
             btn.textContent = 'Gerar Pedido';
         }
 
-        function exibirResultados(data) {
+        function exibirResultados(data, tipoPedido = 'reabastecimento') {
             dadosPedidoAtual = data;
             document.getElementById('results').style.display = 'block';
 
-            const stats = data.estatisticas;
-            const agregacao = data.agregacao_fornecedor;
+            // Verificar se e pedido planejado (v6.0)
+            const isPlanejado = tipoPedido === 'planejado' || data.tipo_pedido === 'planejado';
+
+            // Dados para pedido planejado vs reabastecimento
+            let stats, agregacao, totalBloqueados;
+
+            if (isPlanejado) {
+                // Dados do pedido planejado
+                const resumo = data.resumo || {};
+                stats = {
+                    total_itens_analisados: resumo.total_itens || 0,
+                    total_itens_pedido: resumo.total_itens || 0,
+                    itens_ruptura_iminente: 0,
+                    valor_total_pedido: resumo.total_valor || 0
+                };
+                agregacao = {
+                    total_fornecedores: resumo.total_fornecedores || 0,
+                    total_itens_bloqueados: resumo.itens_bloqueados || 0,
+                    fornecedores: data.agregado_fornecedor || []
+                };
+                totalBloqueados = resumo.itens_bloqueados || 0;
+            } else {
+                // Dados do pedido de reabastecimento normal
+                stats = data.estatisticas;
+                agregacao = data.agregacao_fornecedor;
+                totalBloqueados = agregacao.total_itens_bloqueados || 0;
+            }
+
+            // Alertas de pedido minimo (por fornecedor/loja)
+            const alertasPedidoMinimo = data.alertas_pedido_minimo || [];
+            const temAlertasPedidoMinimo = data.tem_alertas_pedido_minimo || false;
+
+            // Criar mapa de alertas para lookup rapido: chave = "cod_fornecedor|cod_loja"
+            const mapaAlertasMinimo = {};
+            alertasPedidoMinimo.forEach(alerta => {
+                const chave = `${alerta.cod_fornecedor}|${alerta.cod_loja}`;
+                mapaAlertasMinimo[chave] = alerta;
+            });
+
             const fornecedor = document.getElementById('fornecedor').value;
 
             // Resumo Header
-            document.getElementById('resumoTitulo').textContent =
-                fornecedor !== 'TODOS' ? fornecedor : `${agregacao.total_fornecedores} Fornecedores`;
+            let tituloResumo = fornecedor !== 'TODOS' ? fornecedor : `${agregacao.total_fornecedores} Fornecedores`;
+            if (isPlanejado && data.periodo) {
+                const dataIni = new Date(data.periodo.inicio + 'T00:00:00');
+                const dataFim = new Date(data.periodo.fim + 'T00:00:00');
+                tituloResumo = `PLANEJADO: ${dataIni.toLocaleDateString('pt-BR')} a ${dataFim.toLocaleDateString('pt-BR')} (${data.periodo.dias} dias)`;
+            }
+            document.getElementById('resumoTitulo').textContent = tituloResumo;
 
-            const totalBloqueados = agregacao.total_itens_bloqueados || 0;
-
-            document.getElementById('resumoMetricas').innerHTML = `
-                <div class="metrica">
-                    <div class="valor">${stats.total_itens_analisados}</div>
-                    <div class="label">Total Itens</div>
-                </div>
-                <div class="metrica">
-                    <div class="valor">${stats.total_itens_pedido}</div>
-                    <div class="label">Itens Pedidos</div>
-                </div>
-                <div class="metrica">
-                    <div class="valor">${totalBloqueados}</div>
-                    <div class="label">Bloqueados</div>
-                </div>
-                <div class="metrica">
-                    <div class="valor">${stats.itens_ruptura_iminente}</div>
-                    <div class="label">Em Ruptura</div>
-                </div>
-                <div class="metrica">
-                    <div class="valor">R$ ${(stats.valor_total_pedido/1000).toFixed(1)}k</div>
-                    <div class="label">Valor Total</div>
-                </div>
-            `;
+            // Metricas diferentes para pedido planejado
+            if (isPlanejado) {
+                const itensValidados = data.resumo?.itens_com_demanda_validada || 0;
+                document.getElementById('resumoMetricas').innerHTML = `
+                    <div class="metrica">
+                        <div class="valor">${stats.total_itens_pedido}</div>
+                        <div class="label">Total Itens</div>
+                    </div>
+                    <div class="metrica">
+                        <div class="valor">${itensValidados}</div>
+                        <div class="label">C/ Demanda Validada</div>
+                    </div>
+                    <div class="metrica">
+                        <div class="valor">${totalBloqueados}</div>
+                        <div class="label">Bloqueados</div>
+                    </div>
+                    <div class="metrica">
+                        <div class="valor">${data.periodo?.dias || 0}d</div>
+                        <div class="label">Periodo</div>
+                    </div>
+                    <div class="metrica">
+                        <div class="valor">R$ ${(stats.valor_total_pedido/1000).toFixed(1)}k</div>
+                        <div class="label">Valor Total</div>
+                    </div>
+                `;
+            } else {
+                document.getElementById('resumoMetricas').innerHTML = `
+                    <div class="metrica">
+                        <div class="valor">${stats.total_itens_analisados}</div>
+                        <div class="label">Total Itens</div>
+                    </div>
+                    <div class="metrica">
+                        <div class="valor">${stats.total_itens_pedido}</div>
+                        <div class="label">Itens Pedidos</div>
+                    </div>
+                    <div class="metrica">
+                        <div class="valor">${totalBloqueados}</div>
+                        <div class="label">Bloqueados</div>
+                    </div>
+                    <div class="metrica">
+                        <div class="valor">${stats.itens_ruptura_iminente}</div>
+                        <div class="label">Em Ruptura</div>
+                    </div>
+                    <div class="metrica">
+                        <div class="valor">R$ ${(stats.valor_total_pedido/1000).toFixed(1)}k</div>
+                        <div class="label">Valor Total</div>
+                    </div>
+                `;
+            }
 
             // Criar mapa de transferencias por produto (converter para string para comparacao consistente)
             const setProdutosTransf = new Set(
@@ -1059,22 +1238,24 @@
             const itensPedido = data.itens_pedido || [];
             const itensBloqueados = data.itens_bloqueados || [];
 
-            // Contar itens DO PEDIDO que tem transferencia (para o botao)
-            let itensComTransfNoPedido = 0;
+            // Contar SKUs UNICOS do pedido que tem transferencia (para o botao)
+            // Usar Set para contar apenas SKUs unicos, nao linhas
+            const skusComTransfNoPedido = new Set();
             itensPedido.forEach(item => {
                 const codigoStr = String(item.codigo);
                 if (setProdutosTransf.has(codigoStr)) {
-                    itensComTransfNoPedido++;
+                    skusComTransfNoPedido.add(codigoStr);
                 }
             });
+            const qtdSkusComTransf = skusComTransfNoPedido.size;
 
             // Fornecedores
             let fornHtml = '';
             if (agregacao.fornecedores?.length) {
                 agregacao.fornecedores.forEach((f, idx) => {
-                    const btnTransfHtml = itensComTransfNoPedido > 0 ? `
+                    const btnTransfHtml = qtdSkusComTransf > 0 ? `
                         <a href="/transferencias" class="btn-sm btn-transf-forn">
-                            ${itensComTransfNoPedido} itens c/ transf.
+                            ${qtdSkusComTransf} SKUs c/ transf.
                         </a>
                     ` : '';
 
@@ -1205,6 +1386,20 @@
                 const qtdPedido = item._status === 'bloqueado' ? 0 : (item.quantidade_pedido || 0);
                 const valorPedido = item._status === 'bloqueado' ? 0 : (item.valor_pedido || 0);
 
+                // Verificar se o pedido foi ajustado por transferencia
+                const pedidoAjustado = item.pedido_ajustado_transferencia || false;
+                const qtdPedidoOriginal = item.quantidade_pedido_original || 0;
+                const qtdReceber = item.qtd_transferencia_receber || 0;
+
+                // Formatar coluna de pedido (mostrar original riscado se ajustado)
+                let pedidoCell = '';
+                if (pedidoAjustado && qtdPedidoOriginal > qtdPedido) {
+                    // Pedido foi reduzido por transferencia - mostrar original riscado
+                    pedidoCell = `<span style="text-decoration: line-through; color: #9ca3af; font-size: 0.85em;">${qtdPedidoOriginal.toLocaleString('pt-BR')}</span> <span style="font-weight: 600; color: #10b981;">${qtdPedido.toLocaleString('pt-BR')}</span>`;
+                } else {
+                    pedidoCell = `<span style="font-weight: 600;">${qtdPedido.toLocaleString('pt-BR')}</span>`;
+                }
+
                 return `
                     <tr class="${rowClass}">
                         <td>${item.codigo}${transfBadge}</td>
@@ -1215,7 +1410,7 @@
                         <td class="col-num">${trans > 0 ? trans.toLocaleString('pt-BR') : '-'}</td>
                         <td><span class="cobertura-info"><span class="atual">${cobAtual}d</span><span class="seta">→</span><span class="pos">${cobPos}d</span></span></td>
                         <td class="col-num">${dem.toLocaleString('pt-BR')}</td>
-                        <td class="col-num" style="font-weight: 600;">${qtdPedido.toLocaleString('pt-BR')}</td>
+                        <td class="col-num">${pedidoCell}</td>
                         <td class="col-valor">${valorPedido > 0 ? 'R$ ' + valorPedido.toLocaleString('pt-BR', {minimumFractionDigits: 0}) : '-'}</td>
                     </tr>
                 `;
@@ -1338,11 +1533,25 @@
                             transfLojaHtml = transfParts.join(' ');
                         }
 
+                        // Verificar se esta loja esta abaixo do pedido minimo
+                        const primeiroItemLoja = itensLoja[0] || {};
+                        const codLojaAtual = primeiroItemLoja.cod_loja || primeiroItemLoja.cod_empresa || 0;
+                        const codFornecedorAtual = primeiroItemLoja.codigo_fornecedor || '';
+                        const chaveAlerta = `${codFornecedorAtual}|${codLojaAtual}`;
+                        const alertaMinimo = mapaAlertasMinimo[chaveAlerta];
+
+                        let alertaPedidoMinimoHtml = '';
+                        if (alertaMinimo) {
+                            const falta = alertaMinimo.diferenca.toLocaleString('pt-BR', {minimumFractionDigits: 2});
+                            const minimo = alertaMinimo.pedido_minimo.toLocaleString('pt-BR', {minimumFractionDigits: 2});
+                            alertaPedidoMinimoHtml = `<span class="alerta-pedido-minimo" title="Valor atual: R$ ${valorTotalLoja.toLocaleString('pt-BR', {minimumFractionDigits: 2})} | Mínimo: R$ ${minimo} | Faltam: R$ ${falta}">⚠️ Abaixo do pedido mínimo</span>`;
+                        }
+
                         // Header da LOJA: mostra detalhes de SKUs
                         lojasHtml += `
                             <div class="loja-section">
                                 <div class="loja-section-header">
-                                    <h5>${nomeLoja}</h5>
+                                    <h5>${nomeLoja} ${alertaPedidoMinimoHtml}</h5>
                                     <div class="stats">
                                         <span>${totalItensLoja} SKUs</span>
                                         <span class="stat-pedir">${itensPedidoLoja} pedir</span>
