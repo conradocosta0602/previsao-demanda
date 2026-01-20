@@ -1651,6 +1651,10 @@
                 return;
             }
 
+            // Verificar se é pedido planejado
+            const tipoPedido = document.getElementById('tipo_pedido')?.value || 'reabastecimento';
+            const isPlanejado = tipoPedido === 'planejado' || dadosPedidoAtual.tipo_pedido === 'planejado';
+
             // Criar dados filtrados
             const dadosFiltrados = {
                 ...dadosPedidoAtual,
@@ -1662,8 +1666,13 @@
                 }
             };
 
+            // Escolher endpoint correto baseado no tipo de pedido
+            const endpoint = isPlanejado
+                ? '/api/pedido_planejado/exportar'
+                : '/api/pedido_fornecedor_integrado/exportar';
+
             try {
-                const response = await fetch('/api/pedido_fornecedor_integrado/exportar', {
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(dadosFiltrados)
@@ -1675,7 +1684,8 @@
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `pedido_${nomeFornecedor.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0,10)}.xlsx`;
+                const tipoNome = isPlanejado ? 'planejado' : 'pedido';
+                a.download = `${tipoNome}_${nomeFornecedor.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0,10)}.xlsx`;
                 a.click();
                 window.URL.revokeObjectURL(url);
             } catch (e) {

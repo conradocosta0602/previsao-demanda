@@ -7898,6 +7898,236 @@ def api_pedido_planejado():
         return jsonify({'success': False, 'erro': str(e)}), 500
 
 
+@app.route('/api/pedido_planejado/exportar', methods=['POST'])
+def api_pedido_planejado_exportar():
+    """Exporta o pedido planejado para Excel."""
+    try:
+        import io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+        dados = request.get_json()
+
+        if not dados:
+            return jsonify({'success': False, 'erro': 'Dados não fornecidos'}), 400
+
+        itens_pedido = dados.get('itens_pedido', [])
+        estatisticas = dados.get('estatisticas', {})
+        agregacao = dados.get('agregado_fornecedor', {})
+        alertas_pedido_minimo = dados.get('alertas_pedido_minimo', [])
+        transferencias = dados.get('transferencias', {})
+
+        if not itens_pedido:
+            return jsonify({'success': False, 'erro': 'Nenhum item para exportar'}), 400
+
+        # Criar workbook
+        wb = Workbook()
+
+        # Estilos
+        header_font = Font(bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='667EEA', end_color='764BA2', fill_type='solid')
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        critica_fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
+        critica_font = Font(color='B45309')
+
+        # =====================================================================
+        # ABA 1: RESUMO
+        # =====================================================================
+        ws_resumo = wb.active
+        ws_resumo.title = 'Resumo'
+
+        ws_resumo['A1'] = 'PEDIDO PLANEJADO - RESUMO'
+        ws_resumo['A1'].font = Font(bold=True, size=14)
+        ws_resumo.merge_cells('A1:D1')
+
+        ws_resumo['A2'] = f'Data: {datetime.now().strftime("%d/%m/%Y %H:%M")}'
+
+        # Periodo do pedido
+        if itens_pedido:
+            periodo_inicio = itens_pedido[0].get('periodo_inicio', '')
+            periodo_fim = itens_pedido[0].get('periodo_fim', '')
+            ws_resumo['A3'] = f'Período: {periodo_inicio} até {periodo_fim}'
+
+        ws_resumo['A5'] = 'Estatísticas'
+        ws_resumo['A5'].font = Font(bold=True)
+
+        stats_data = [
+            ('Total de Itens', estatisticas.get('total_itens', len(itens_pedido))),
+            ('Valor Total do Pedido', f"R$ {estatisticas.get('valor_total', sum(i.get('valor_pedido', 0) for i in itens_pedido)):,.2f}"),
+            ('Lojas Processadas', estatisticas.get('lojas_processadas', len(set(i.get('cod_loja') for i in itens_pedido)))),
+            ('Fornecedores', estatisticas.get('fornecedores_unicos', len(set(i.get('nome_fornecedor') for i in itens_pedido)))),
+            ('Itens com Demanda Validada', estatisticas.get('itens_com_demanda_validada', 0)),
+        ]
+
+        for i, (label, valor) in enumerate(stats_data, start=6):
+            ws_resumo[f'A{i}'] = label
+            ws_resumo[f'B{i}'] = valor
+
+        # Alertas de pedido minimo
+        if alertas_pedido_minimo:
+            row_alerta = 13
+            ws_resumo[f'A{row_alerta}'] = 'Alertas de Pedido Mínimo'
+            ws_resumo[f'A{row_alerta}'].font = Font(bold=True, color='B45309')
+            row_alerta += 1
+
+            headers_alerta = ['Fornecedor', 'Loja', 'Valor Pedido', 'Mínimo', 'Diferença']
+            for col, header in enumerate(headers_alerta, start=1):
+                cell = ws_resumo.cell(row=row_alerta, column=col, value=header)
+                cell.font = header_font
+                cell.fill = PatternFill(start_color='F59E0B', end_color='F59E0B', fill_type='solid')
+                cell.border = border
+            row_alerta += 1
+
+            for alerta in alertas_pedido_minimo:
+                ws_resumo.cell(row=row_alerta, column=1, value=alerta.get('nome_fornecedor', '')).border = border
+                ws_resumo.cell(row=row_alerta, column=2, value=alerta.get('nome_loja', '')).border = border
+                ws_resumo.cell(row=row_alerta, column=3, value=alerta.get('valor_total', 0)).border = border
+                ws_resumo.cell(row=row_alerta, column=3).number_format = '#,##0.00'
+                ws_resumo.cell(row=row_alerta, column=4, value=alerta.get('pedido_minimo', 0)).border = border
+                ws_resumo.cell(row=row_alerta, column=4).number_format = '#,##0.00'
+                ws_resumo.cell(row=row_alerta, column=5, value=alerta.get('diferenca', 0)).border = border
+                ws_resumo.cell(row=row_alerta, column=5).number_format = '#,##0.00'
+                row_alerta += 1
+
+        ws_resumo.column_dimensions['A'].width = 30
+        ws_resumo.column_dimensions['B'].width = 20
+        ws_resumo.column_dimensions['C'].width = 15
+        ws_resumo.column_dimensions['D'].width = 15
+        ws_resumo.column_dimensions['E'].width = 15
+
+        # =====================================================================
+        # ABA 2: ITENS DO PEDIDO
+        # =====================================================================
+        ws_itens = wb.create_sheet('Itens Pedido')
+
+        headers = [
+            'Cod Filial', 'Nome Filial', 'Cod Item', 'Descrição Item',
+            'CNPJ Fornecedor', 'Nome Fornecedor', 'Demanda Diária', 'Demanda Período',
+            'Qtd Pedido', 'CUE', 'Valor Pedido', 'Estoque Atual', 'Estoque Trânsito',
+            'Cobertura Atual', 'Cobertura c/ Trânsito', 'Data Emissão', 'Origem Demanda', 'Crítica'
+        ]
+
+        for col, header in enumerate(headers, start=1):
+            cell = ws_itens.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center')
+
+        # Ordenar itens por Codigo Filial e CNPJ Fornecedor
+        itens_ordenados = sorted(itens_pedido, key=lambda x: (
+            x.get('cod_loja', 0) or 0,
+            x.get('cnpj_fornecedor', '') or ''
+        ))
+
+        for row_idx, item in enumerate(itens_ordenados, start=2):
+            ws_itens.cell(row=row_idx, column=1, value=item.get('cod_loja', '')).border = border
+            ws_itens.cell(row=row_idx, column=2, value=item.get('nome_loja', '')).border = border
+            ws_itens.cell(row=row_idx, column=3, value=item.get('codigo', '')).border = border
+            ws_itens.cell(row=row_idx, column=4, value=item.get('descricao', '')[:60]).border = border
+            ws_itens.cell(row=row_idx, column=5, value=item.get('cnpj_fornecedor', '')).border = border
+            ws_itens.cell(row=row_idx, column=6, value=item.get('nome_fornecedor', '')).border = border
+
+            ws_itens.cell(row=row_idx, column=7, value=item.get('demanda_diaria', 0)).border = border
+            ws_itens.cell(row=row_idx, column=7).number_format = '#,##0.00'
+
+            ws_itens.cell(row=row_idx, column=8, value=item.get('demanda_periodo', 0)).border = border
+            ws_itens.cell(row=row_idx, column=8).number_format = '#,##0'
+
+            ws_itens.cell(row=row_idx, column=9, value=item.get('quantidade_pedido', 0)).border = border
+            ws_itens.cell(row=row_idx, column=9).number_format = '#,##0'
+
+            ws_itens.cell(row=row_idx, column=10, value=item.get('cue', item.get('custo_unitario', 0))).border = border
+            ws_itens.cell(row=row_idx, column=10).number_format = '#,##0.00'
+
+            ws_itens.cell(row=row_idx, column=11, value=item.get('valor_pedido', 0)).border = border
+            ws_itens.cell(row=row_idx, column=11).number_format = '#,##0.00'
+
+            ws_itens.cell(row=row_idx, column=12, value=item.get('estoque_atual', 0)).border = border
+            ws_itens.cell(row=row_idx, column=12).number_format = '#,##0'
+
+            ws_itens.cell(row=row_idx, column=13, value=item.get('estoque_transito', 0)).border = border
+            ws_itens.cell(row=row_idx, column=13).number_format = '#,##0'
+
+            ws_itens.cell(row=row_idx, column=14, value=item.get('cobertura_atual_dias', 0)).border = border
+            ws_itens.cell(row=row_idx, column=14).number_format = '#,##0.0'
+
+            ws_itens.cell(row=row_idx, column=15, value=item.get('cobertura_com_transito_dias', 0)).border = border
+            ws_itens.cell(row=row_idx, column=15).number_format = '#,##0.0'
+
+            ws_itens.cell(row=row_idx, column=16, value=item.get('data_emissao_sugerida', '')).border = border
+            ws_itens.cell(row=row_idx, column=17, value=item.get('origem_demanda', '')).border = border
+
+            critica = item.get('critica_pedido_minimo', '')
+            cell_critica = ws_itens.cell(row=row_idx, column=18, value=critica)
+            cell_critica.border = border
+            if critica:
+                cell_critica.fill = critica_fill
+                cell_critica.font = critica_font
+
+        col_widths = [10, 20, 10, 40, 18, 25, 12, 12, 10, 10, 12, 10, 10, 10, 12, 12, 15, 40]
+        for i, width in enumerate(col_widths, start=1):
+            ws_itens.column_dimensions[chr(64 + i) if i <= 26 else 'A' + chr(64 + i - 26)].width = width
+
+        ws_itens.freeze_panes = 'A2'
+
+        # =====================================================================
+        # ABA 3: TRANSFERÊNCIAS (se houver)
+        # =====================================================================
+        detalhes_transf = transferencias.get('detalhes', [])
+        if detalhes_transf:
+            ws_transf = wb.create_sheet('Transferências')
+
+            headers_transf = [
+                'Código Produto', 'Loja Origem', 'Loja Destino', 'Qtd Sugerida', 'Urgência'
+            ]
+
+            for col, header in enumerate(headers_transf, start=1):
+                cell = ws_transf.cell(row=1, column=col, value=header)
+                cell.font = header_font
+                cell.fill = PatternFill(start_color='10B981', end_color='10B981', fill_type='solid')
+                cell.border = border
+
+            for row_idx, transf in enumerate(detalhes_transf, start=2):
+                ws_transf.cell(row=row_idx, column=1, value=transf.get('cod_produto', '')).border = border
+                ws_transf.cell(row=row_idx, column=2, value=transf.get('loja_origem', '')).border = border
+                ws_transf.cell(row=row_idx, column=3, value=transf.get('loja_destino', '')).border = border
+                ws_transf.cell(row=row_idx, column=4, value=transf.get('qtd_sugerida', 0)).border = border
+                ws_transf.cell(row=row_idx, column=5, value=transf.get('urgencia', '')).border = border
+
+            ws_transf.column_dimensions['A'].width = 15
+            ws_transf.column_dimensions['B'].width = 25
+            ws_transf.column_dimensions['C'].width = 25
+            ws_transf.column_dimensions['D'].width = 15
+            ws_transf.column_dimensions['E'].width = 12
+
+        # Salvar
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'pedido_planejado_{timestamp}.xlsx'
+
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        import traceback
+        print(f"[ERRO] api_pedido_planejado_exportar: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
 if __name__ == '__main__':
     # Criar pastas necessárias
     os.makedirs('uploads', exist_ok=True)
