@@ -7229,8 +7229,13 @@ def api_pedido_planejado():
 
         # Buscar demanda validada se solicitado
         demanda_validada_dict = {}
+        demanda_agregada_dict = {}  # Demanda com cod_loja=0 (agregada)
+        proporcao_vendas_loja = {}  # Proporção histórica de vendas por loja/produto
+
         if usar_demanda_validada:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            # 1. Buscar demanda específica por loja
             for loja in lojas_selecionadas:
                 cursor.execute("""
                     SELECT cod_produto, demanda_diaria
@@ -7246,7 +7251,84 @@ def api_pedido_planejado():
                     key = (str(r['cod_produto']), loja)
                     demanda_validada_dict[key] = float(r['demanda_diaria']) if r['demanda_diaria'] else 0
 
-            print(f"  Demanda validada encontrada: {len(demanda_validada_dict)} itens")
+            print(f"  Demanda validada por loja: {len(demanda_validada_dict)} itens")
+
+            # 2. Buscar demanda agregada (cod_loja=0) para fallback
+            cursor.execute("""
+                SELECT cod_produto, demanda_diaria
+                FROM demanda_validada
+                WHERE cod_loja = 0
+                  AND ativo = TRUE
+                  AND status = 'validado'
+                  AND data_inicio <= %s
+                  AND data_fim >= %s
+            """, [periodo_inicio, periodo_fim])
+
+            for r in cursor.fetchall():
+                cod_produto = str(r['cod_produto'])
+                demanda_agregada_dict[cod_produto] = float(r['demanda_diaria']) if r['demanda_diaria'] else 0
+
+            print(f"  Demanda validada agregada (fallback): {len(demanda_agregada_dict)} itens")
+
+            # 3. Calcular proporção histórica de vendas por loja para cada produto agregado
+            if demanda_agregada_dict and len(lojas_selecionadas) > 1:
+                produtos_agregados = list(demanda_agregada_dict.keys())
+                placeholders = ','.join(['%s'] * len(produtos_agregados))
+                lojas_placeholders = ','.join(['%s'] * len(lojas_selecionadas))
+
+                # Buscar vendas históricas por loja para calcular proporção
+                cursor.execute(f"""
+                    SELECT
+                        codigo::text as cod_produto,
+                        cod_empresa as cod_loja,
+                        COALESCE(SUM(qtd_venda), 0) as total_vendas
+                    FROM historico_vendas_diario
+                    WHERE codigo::text IN ({placeholders})
+                      AND cod_empresa IN ({lojas_placeholders})
+                      AND data >= CURRENT_DATE - INTERVAL '365 days'
+                    GROUP BY codigo, cod_empresa
+                """, produtos_agregados + lojas_selecionadas)
+
+                # Calcular total por produto e proporção por loja
+                vendas_por_produto = {}
+                for r in cursor.fetchall():
+                    cod = str(r['cod_produto'])
+                    loja = r['cod_loja']
+                    vendas = float(r['total_vendas']) if r['total_vendas'] else 0
+
+                    if cod not in vendas_por_produto:
+                        vendas_por_produto[cod] = {}
+                    vendas_por_produto[cod][loja] = vendas
+
+                # Calcular proporção para cada produto/loja
+                for cod_produto, vendas_lojas in vendas_por_produto.items():
+                    total_vendas = sum(vendas_lojas.values())
+                    if total_vendas > 0:
+                        # Calcular proporção para lojas com vendas
+                        for loja_v, vendas in vendas_lojas.items():
+                            proporcao = vendas / total_vendas
+                            proporcao_vendas_loja[(cod_produto, loja_v)] = proporcao
+
+                        # Lojas sem vendas deste produto recebem proporção 0
+                        # (a demanda será distribuída apenas para quem vende)
+                        for loja_s in lojas_selecionadas:
+                            if loja_s not in vendas_lojas:
+                                proporcao_vendas_loja[(cod_produto, loja_s)] = 0.0
+                    else:
+                        # Se não houver histórico, distribuir igualmente
+                        proporcao_igual = 1.0 / len(lojas_selecionadas)
+                        for loja_s in lojas_selecionadas:
+                            proporcao_vendas_loja[(cod_produto, loja_s)] = proporcao_igual
+
+                # Garantir que produtos sem histórico em alguma loja tenham proporção
+                for cod_produto in produtos_agregados:
+                    if cod_produto not in vendas_por_produto:
+                        # Produto sem histórico em nenhuma loja - distribuir igualmente
+                        proporcao_igual = 1.0 / len(lojas_selecionadas)
+                        for loja_s in lojas_selecionadas:
+                            proporcao_vendas_loja[(cod_produto, loja_s)] = proporcao_igual
+
+                print(f"  Proporções calculadas para distribuição: {len(proporcao_vendas_loja)} combinações produto/loja")
 
         # Instanciar processador de pedidos
         processador = PedidoFornecedorIntegrado(conn)
@@ -7352,12 +7434,36 @@ def api_pedido_planejado():
                     })
                     continue
 
-                # Buscar demanda
+                # Buscar demanda (com fallback para demanda agregada)
                 key = (codigo, loja)
+                usa_demanda_validada_loja = False
+                usa_demanda_agregada = False
+
                 if key in demanda_validada_dict:
+                    # 1. Prioridade: demanda validada específica da loja
                     demanda_diaria = demanda_validada_dict[key]
-                else:
-                    # Calcular demanda com base no historico (media ultimos 90 dias)
+                    usa_demanda_validada_loja = True
+                elif codigo in demanda_agregada_dict:
+                    # 2. Fallback: demanda agregada distribuída proporcionalmente
+                    demanda_agregada_total = demanda_agregada_dict[codigo]
+                    proporcao_key = (codigo, loja)
+
+                    if proporcao_key in proporcao_vendas_loja:
+                        proporcao = proporcao_vendas_loja[proporcao_key]
+                        if proporcao > 0:
+                            # Distribuir proporcionalmente ao histórico de vendas da loja
+                            demanda_diaria = demanda_agregada_total * proporcao
+                            usa_demanda_agregada = True
+                        else:
+                            # Loja não vende este produto - usar histórico próprio
+                            demanda_diaria = 0  # Será calculado abaixo
+                    else:
+                        # Se não tiver proporção calculada, distribuir igualmente
+                        demanda_diaria = demanda_agregada_total / len(lojas_selecionadas)
+                        usa_demanda_agregada = True
+
+                if not usa_demanda_validada_loja and not usa_demanda_agregada:
+                    # 3. Último recurso: calcular demanda com base no histórico (média últimos 90 dias)
                     cursor.execute("""
                         SELECT AVG(qtd_venda) as media_diaria
                         FROM historico_vendas_diario
@@ -7407,7 +7513,9 @@ def api_pedido_planejado():
                     'periodo_inicio': periodo_inicio,
                     'periodo_fim': periodo_fim,
                     'dias_periodo': dias_periodo,
-                    'usa_demanda_validada': key in demanda_validada_dict,
+                    'usa_demanda_validada': usa_demanda_validada_loja,
+                    'usa_demanda_agregada': usa_demanda_agregada,
+                    'origem_demanda': 'validada_loja' if usa_demanda_validada_loja else ('agregada_proporcional' if usa_demanda_agregada else 'historico'),
                     'deve_pedir': True,  # Pedido planejado sempre deve pedir
                     'bloqueado': False
                 })
@@ -7438,7 +7546,10 @@ def api_pedido_planejado():
                 'total_itens': total_itens,
                 'total_valor': round(total_valor, 2),
                 'total_fornecedores': total_fornecedores,
-                'itens_com_demanda_validada': sum(1 for i in itens_pedido if i.get('usa_demanda_validada')),
+                'itens_demanda_validada_loja': sum(1 for i in itens_pedido if i.get('usa_demanda_validada')),
+                'itens_demanda_agregada_proporcional': sum(1 for i in itens_pedido if i.get('usa_demanda_agregada')),
+                'itens_demanda_historico': sum(1 for i in itens_pedido if i.get('origem_demanda') == 'historico'),
+                'itens_com_demanda_validada': sum(1 for i in itens_pedido if i.get('usa_demanda_validada') or i.get('usa_demanda_agregada')),
                 'itens_bloqueados': len(itens_bloqueados)
             },
             'itens_pedido': itens_pedido,

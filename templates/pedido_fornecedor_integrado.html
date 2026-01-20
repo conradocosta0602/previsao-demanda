@@ -1173,15 +1173,23 @@
 
             // Metricas diferentes para pedido planejado
             if (isPlanejado) {
-                const itensValidados = data.resumo?.itens_com_demanda_validada || 0;
+                const itensValidadosLoja = data.resumo?.itens_demanda_validada_loja || 0;
+                const itensAgregadoProporcional = data.resumo?.itens_demanda_agregada_proporcional || 0;
+                const itensHistorico = data.resumo?.itens_demanda_historico || 0;
+                const itensValidadosTotal = data.resumo?.itens_com_demanda_validada || 0;
+
+                // Tooltip com detalhes da origem da demanda
+                let tooltipDemanda = `Validada por loja: ${itensValidadosLoja}\nAgregada proporcional: ${itensAgregadoProporcional}\nHistorico: ${itensHistorico}`;
+
                 document.getElementById('resumoMetricas').innerHTML = `
                     <div class="metrica">
                         <div class="valor">${stats.total_itens_pedido}</div>
                         <div class="label">Total Itens</div>
                     </div>
-                    <div class="metrica">
-                        <div class="valor">${itensValidados}</div>
+                    <div class="metrica" title="${tooltipDemanda}" style="cursor: help;">
+                        <div class="valor">${itensValidadosTotal}</div>
                         <div class="label">C/ Demanda Validada</div>
+                        ${itensAgregadoProporcional > 0 ? `<div class="sublabel" style="font-size: 10px; color: #888;">(${itensAgregadoProporcional} proporcional)</div>` : ''}
                     </div>
                     <div class="metrica">
                         <div class="valor">${totalBloqueados}</div>
