@@ -7534,6 +7534,7 @@ def api_pedido_planejado():
                 qtd_pedido = round(demanda_periodo, 0)
                 numero_caixas = int(qtd_pedido)  # 1 unidade = 1 caixa por padrao
 
+                # Campos compatíveis com lógica de transferências do pedido CD
                 itens_pedido.append({
                     'codigo': codigo,
                     'descricao': produto['descricao'],
@@ -7543,12 +7544,15 @@ def api_pedido_planejado():
                     'cod_loja': loja,
                     'nome_loja': nome_loja,
                     'curva_abc': produto.get('curva_abc', 'B'),
+                    # Campos de demanda (compatíveis com pedido CD)
                     'demanda_diaria': round(demanda_diaria, 2),
+                    'demanda_prevista_diaria': round(demanda_diaria, 2),  # Alias para compatibilidade
                     'demanda_periodo': round(demanda_periodo, 0),
                     'quantidade_pedido': qtd_pedido,
                     'numero_caixas': numero_caixas,
                     'valor_pedido': round(valor_pedido, 2),
                     'custo_unitario': round(custo_unitario, 2),
+                    'cue': round(custo_unitario, 2),  # Alias para compatibilidade
                     'estoque_atual': round(estoque_disponivel, 0),
                     'estoque_transito': round(estoque_transito, 0),
                     'cobertura_atual_dias': round(cobertura_atual, 1),
@@ -7564,6 +7568,8 @@ def api_pedido_planejado():
                     'usa_demanda_agregada': usa_demanda_agregada,
                     'origem_demanda': 'validada_loja' if usa_demanda_validada_loja else ('agregada_proporcional' if usa_demanda_agregada else 'historico'),
                     'deve_pedir': True,  # Pedido planejado sempre deve pedir
+                    'ruptura_iminente': cobertura_atual <= 3,  # Para cálculo de urgência
+                    'risco_ruptura': cobertura_atual <= 7,
                     'bloqueado': False
                 })
 
@@ -7724,30 +7730,38 @@ def api_pedido_planejado():
                                 pode_doar = config_loja.get('pode_doar', False)
                                 pode_receber = config_loja.get('pode_receber', False)
 
-                                demanda_diaria = dados.get('demanda_diaria', 0) or 0
+                                # Usar mesmos campos do pedido CD
+                                demanda_diaria = dados.get('demanda_prevista_diaria', 0) or dados.get('demanda_diaria', 0) or 0
                                 estoque = dados.get('estoque_atual', 0) or 0
                                 transito = dados.get('estoque_transito', 0) or 0
                                 cobertura_atual = dados.get('cobertura_atual_dias', 0) or 0
+                                deve_pedir = dados.get('deve_pedir', False)
                                 qtd_pedido = dados.get('quantidade_pedido', 0) or 0
 
-                                # Se precisa pedir E pode receber, e RECEPTORA
-                                if pode_receber and qtd_pedido > 0 and cobertura_atual < cobertura_alvo:
+                                # REGRA PRINCIPAL: Se a loja PRECISA PEDIR E pode receber, ela e RECEPTORA
+                                if pode_receber and deve_pedir and qtd_pedido > 0:
                                     estoque_efetivo = estoque + transito
                                     if demanda_diaria > 0:
+                                        # Necessidade conforme documentação:
+                                        # necessidade_receptor = (demanda × COBERTURA_ALVO) - estoque
                                         necessidade_transf = int((demanda_diaria * cobertura_alvo) - estoque_efetivo)
                                         necessidade_transf = max(0, necessidade_transf)
                                     else:
                                         necessidade_transf = 0
                                     prioridade = config_loja.get('prioridade', 99)
+                                    # Guardar: (loja, necessidade_transf, dados, qtd_pedido_original, prioridade)
                                     lojas_necessidade.append((loja_cod, necessidade_transf, dados, qtd_pedido, prioridade))
-                                    continue
+                                    continue  # NAO avaliar como possivel doadora
 
-                                # Se pode doar E tem excesso, e DOADORA
+                                # Se NAO precisa pedir E pode doar, verificar se tem excesso para ser DOADORA
                                 if pode_doar:
                                     if demanda_diaria <= 0:
+                                        # Sem demanda = potencial doador se tem estoque significativo
                                         if estoque > 5:
                                             lojas_excesso.append((loja_cod, estoque, dados))
                                     elif cobertura_atual > (cobertura_alvo + MARGEM_EXCESSO_DIAS):
+                                        # Tem excesso conforme documentação: cobertura > alvo + 7 dias
+                                        # Excesso = estoque - (demanda × COBERTURA_MINIMA_DOADOR)
                                         estoque_disponivel = estoque + transito
                                         estoque_minimo_doador = demanda_diaria * COBERTURA_MINIMA_DOADOR
                                         excesso = int(estoque_disponivel - estoque_minimo_doador)
@@ -7770,26 +7784,36 @@ def api_pedido_planejado():
                                         qtd_transferir = min(qtd_restante, excesso)
 
                                         if qtd_transferir > 0:
-                                            custo_unit = dados_dest.get('custo_unitario', 0) or 0
+                                            # Criar oportunidade de transferência (mesmos campos do pedido CD)
+                                            cue = dados_orig.get('cue', 0) or dados_dest.get('cue', 0) or dados_orig.get('custo_unitario', 0) or 0
+                                            valor_estimado = qtd_transferir * cue
+
                                             transferencia = {
                                                 'cod_produto': cod_produto,
-                                                'descricao': dados_dest.get('descricao', ''),
-                                                'cod_loja_origem': loja_orig,
-                                                'loja_origem': dados_orig.get('nome_loja', f'Loja {loja_orig}'),
-                                                'cod_loja_destino': loja_dest,
-                                                'loja_destino': dados_dest.get('nome_loja', f'Loja {loja_dest}'),
+                                                'descricao_produto': dados_orig.get('descricao', ''),
+                                                'curva_abc': dados_orig.get('curva_abc', 'B'),
+                                                # Origem
+                                                'loja_origem': loja_orig,
+                                                'nome_loja_origem': dados_orig.get('nome_loja', f'Loja {loja_orig}'),
+                                                'estoque_origem': dados_orig.get('estoque_atual', 0),
+                                                'cobertura_origem_dias': dados_orig.get('cobertura_atual_dias', 0),
+                                                # Destino
+                                                'loja_destino': loja_dest,
+                                                'nome_loja_destino': dados_dest.get('nome_loja', f'Loja {loja_dest}'),
+                                                'estoque_destino': dados_dest.get('estoque_atual', 0),
+                                                'cobertura_destino_dias': dados_dest.get('cobertura_atual_dias', 0),
+                                                # Valores
                                                 'qtd_sugerida': qtd_transferir,
-                                                'valor_estimado': round(qtd_transferir * custo_unit, 2),
-                                                'urgencia': 'CRITICA' if dados_dest.get('cobertura_atual_dias', 0) == 0 else (
-                                                    'ALTA' if dados_dest.get('cobertura_atual_dias', 0) <= 3 else (
-                                                        'MEDIA' if dados_dest.get('cobertura_atual_dias', 0) <= 7 else 'BAIXA'
-                                                    )
-                                                ),
+                                                'valor_estimado': round(valor_estimado, 2),
+                                                'cue': cue,
+                                                'urgencia': 'ALTA' if dados_dest.get('ruptura_iminente') else 'MEDIA',
+                                                'tipo': 'MULTILOJA',
                                                 'grupo_id': grupo_id,
                                                 'sessao_pedido': sessao_pedido
                                             }
                                             oportunidades_transferencia.append(transferencia)
 
+                                            # Atualizar excesso restante
                                             lojas_excesso[i] = (loja_orig, excesso - qtd_transferir, dados_orig)
                                             qtd_restante -= qtd_transferir
 
@@ -7844,23 +7868,22 @@ def api_pedido_planejado():
                 for a in alertas_pedido_minimo
             ],
             'tem_alertas_pedido_minimo': len(alertas_pedido_minimo) > 0,
-            # Transferencias entre lojas (respeitando grupos regionais)
+            # Transferencias entre lojas (mesma estrutura do pedido CD)
             'transferencias': {
                 'total': len(oportunidades_transferencia),
+                'sessao_pedido': oportunidades_transferencia[0].get('sessao_pedido') if oportunidades_transferencia else None,
                 'tem_oportunidades': len(oportunidades_transferencia) > 0,
                 'produtos_com_transferencia': list(set(t.get('cod_produto') for t in oportunidades_transferencia)),
-                'grupos_envolvidos': list(set(t.get('grupo_id') for t in oportunidades_transferencia if t.get('grupo_id'))),
-                'oportunidades': [
+                'detalhes': [
                     {
                         'cod_produto': t.get('cod_produto'),
-                        'descricao': t.get('descricao', ''),
-                        'loja_origem': t.get('loja_origem'),
-                        'cod_loja_origem': t.get('cod_loja_origem'),
-                        'loja_destino': t.get('loja_destino'),
-                        'cod_loja_destino': t.get('cod_loja_destino'),
-                        'qtd_sugerida': t.get('qtd_sugerida', 0),
-                        'valor_estimado': t.get('valor_estimado', 0),
-                        'urgencia': t.get('urgencia', 'BAIXA'),
+                        'qtd_sugerida': t.get('qtd_sugerida'),
+                        'loja_origem': t.get('nome_loja_origem'),
+                        'loja_destino': t.get('nome_loja_destino'),
+                        'cod_loja_origem': t.get('loja_origem'),  # Codigo numerico
+                        'cod_loja_destino': t.get('loja_destino'),  # Codigo numerico
+                        'urgencia': t.get('urgencia'),
+                        'tipo': t.get('tipo', 'MULTILOJA'),
                         'grupo_id': t.get('grupo_id')
                     }
                     for t in oportunidades_transferencia
