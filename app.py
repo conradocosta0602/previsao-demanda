@@ -7173,6 +7173,7 @@ def api_pedido_planejado():
             agregar_por_fornecedor
         )
         from datetime import datetime as dt, timedelta
+        import math
 
         dados = request.get_json()
 
@@ -7531,7 +7532,8 @@ def api_pedido_planejado():
                     cobertura_pos_pedido = 999
 
                 # Calcular numero de caixas (assumindo multiplo 1 se nao tiver parametro)
-                qtd_pedido = round(demanda_periodo, 0)
+                # Usar ceil para garantir que demandas pequenas não fiquem zeradas
+                qtd_pedido = max(1, math.ceil(demanda_periodo)) if demanda_periodo > 0 else 0
                 numero_caixas = int(qtd_pedido)  # 1 unidade = 1 caixa por padrao
 
                 # Campos compatíveis com lógica de transferências do pedido CD
@@ -7547,7 +7549,7 @@ def api_pedido_planejado():
                     # Campos de demanda (compatíveis com pedido CD)
                     'demanda_diaria': round(demanda_diaria, 2),
                     'demanda_prevista_diaria': round(demanda_diaria, 2),  # Alias para compatibilidade
-                    'demanda_periodo': round(demanda_periodo, 0),
+                    'demanda_periodo': math.ceil(demanda_periodo) if demanda_periodo > 0 else 0,
                     'quantidade_pedido': qtd_pedido,
                     'numero_caixas': numero_caixas,
                     'valor_pedido': round(valor_pedido, 2),
