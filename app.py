@@ -7630,7 +7630,7 @@ def api_pedido_planejado():
             print(f"  [PEDIDO MINIMO] {len(alertas_pedido_minimo)} fornecedor/loja(s) abaixo do minimo")
 
         # =====================================================================
-        # CALCULO DE TRANSFERENCIAS ENTRE LOJAS (quando multi-loja)
+        # CALCULO DE TRANSFERENCIAS ENTRE LOJAS (respeitando grupos regionais)
         # =====================================================================
         oportunidades_transferencia = []
         lojas_unicas = set(i.get('cod_loja') for i in itens_pedido)
@@ -7640,95 +7640,158 @@ def api_pedido_planejado():
             try:
                 print(f"\n  [TRANSFERENCIAS] Analisando oportunidades entre {len(lojas_unicas)} lojas...")
 
-                import uuid
-                sessao_pedido = f"PL_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+                # Reconectar ao banco para buscar grupos de transferencia
+                conn_transf = get_db_connection()
+                cursor_transf = conn_transf.cursor(cursor_factory=RealDictCursor)
 
-                # Agrupar itens por produto
-                itens_por_produto = {}
-                for item in itens_pedido:
-                    cod = item['codigo']
-                    if cod not in itens_por_produto:
-                        itens_por_produto[cod] = {}
-                    loja_cod = item.get('cod_loja')
-                    if loja_cod:
-                        itens_por_produto[cod][loja_cod] = item
+                # Buscar grupos de transferencia ativos
+                cursor_transf.execute("""
+                    SELECT id, nome, cd_principal
+                    FROM grupos_transferencia
+                    WHERE ativo = TRUE
+                """)
+                grupos = cursor_transf.fetchall()
 
-                cobertura_alvo = 21  # dias
-                COBERTURA_MINIMA_DOADOR = 10  # dias
-                MARGEM_EXCESSO_DIAS = 7  # dias acima do alvo
+                # Buscar lojas por grupo
+                grupos_lojas = {}  # {grupo_id: {cod_loja: {pode_doar, pode_receber, nome_loja}}}
+                loja_para_grupo = {}  # {cod_loja: grupo_id}
 
-                for cod_produto, lojas_data in itens_por_produto.items():
-                    if len(lojas_data) < 2:
-                        continue
+                for grupo in grupos:
+                    grupo_id = grupo['id']
+                    cursor_transf.execute("""
+                        SELECT cod_empresa, nome_loja, pode_doar, pode_receber, prioridade_recebimento
+                        FROM lojas_grupo_transferencia
+                        WHERE grupo_id = %s AND ativo = TRUE
+                    """, [grupo_id])
+                    lojas_grupo = cursor_transf.fetchall()
 
-                    lojas_excesso = []
-                    lojas_necessidade = []
+                    grupos_lojas[grupo_id] = {}
+                    for loja in lojas_grupo:
+                        cod = loja['cod_empresa']
+                        grupos_lojas[grupo_id][cod] = {
+                            'pode_doar': loja['pode_doar'],
+                            'pode_receber': loja['pode_receber'],
+                            'nome_loja': loja['nome_loja'],
+                            'prioridade': loja['prioridade_recebimento']
+                        }
+                        loja_para_grupo[cod] = grupo_id
 
-                    for loja_cod, dados in lojas_data.items():
-                        demanda_diaria = dados.get('demanda_diaria', 0) or 0
-                        estoque = dados.get('estoque_atual', 0) or 0
-                        transito = dados.get('estoque_transito', 0) or 0
-                        cobertura_atual = dados.get('cobertura_atual_dias', 0) or 0
-                        qtd_pedido = dados.get('quantidade_pedido', 0) or 0
+                conn_transf.close()
 
-                        # Se precisa pedir, e RECEPTORA
-                        if qtd_pedido > 0 and cobertura_atual < cobertura_alvo:
-                            estoque_efetivo = estoque + transito
-                            if demanda_diaria > 0:
-                                necessidade_transf = int((demanda_diaria * cobertura_alvo) - estoque_efetivo)
-                                necessidade_transf = max(0, necessidade_transf)
-                            else:
-                                necessidade_transf = 0
-                            lojas_necessidade.append((loja_cod, necessidade_transf, dados, qtd_pedido))
+                if not grupos_lojas:
+                    print(f"  [TRANSFERENCIAS] Nenhum grupo de transferencia configurado")
+                else:
+                    print(f"  [TRANSFERENCIAS] {len(grupos_lojas)} grupos de transferencia encontrados")
+
+                    import uuid
+                    sessao_pedido = f"PL_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+                    # Agrupar itens por produto
+                    itens_por_produto = {}
+                    for item in itens_pedido:
+                        cod = item['codigo']
+                        if cod not in itens_por_produto:
+                            itens_por_produto[cod] = {}
+                        loja_cod = item.get('cod_loja')
+                        if loja_cod:
+                            itens_por_produto[cod][loja_cod] = item
+
+                    cobertura_alvo = 21  # dias
+                    COBERTURA_MINIMA_DOADOR = 10  # dias
+                    MARGEM_EXCESSO_DIAS = 7  # dias acima do alvo
+
+                    for cod_produto, lojas_data in itens_por_produto.items():
+                        if len(lojas_data) < 2:
                             continue
 
-                        # Se nao precisa pedir e tem excesso, e DOADORA
-                        if demanda_diaria <= 0:
-                            if estoque > 5:
-                                lojas_excesso.append((loja_cod, estoque, dados))
-                        elif cobertura_atual > (cobertura_alvo + MARGEM_EXCESSO_DIAS):
-                            estoque_disponivel = estoque + transito
-                            estoque_minimo_doador = demanda_diaria * COBERTURA_MINIMA_DOADOR
-                            excesso = int(estoque_disponivel - estoque_minimo_doador)
-                            if excesso > 0:
-                                lojas_excesso.append((loja_cod, excesso, dados))
+                        # Processar por grupo regional (apenas lojas do mesmo grupo podem transferir)
+                        for grupo_id, lojas_config in grupos_lojas.items():
+                            # Filtrar apenas lojas deste grupo que estao no pedido
+                            lojas_no_grupo = {
+                                loja_cod: dados
+                                for loja_cod, dados in lojas_data.items()
+                                if loja_cod in lojas_config
+                            }
 
-                    # Se tem lojas com excesso e necessidade, criar transferencias
-                    if lojas_excesso and lojas_necessidade:
-                        lojas_excesso.sort(key=lambda x: x[1], reverse=True)
-                        lojas_necessidade.sort(key=lambda x: x[1], reverse=True)
+                            if len(lojas_no_grupo) < 2:
+                                continue
 
-                        for loja_dest, necessidade_transf, dados_dest, qtd_pedido_dest in lojas_necessidade:
-                            qtd_restante = necessidade_transf
+                            lojas_excesso = []
+                            lojas_necessidade = []
 
-                            for i, (loja_orig, excesso, dados_orig) in enumerate(lojas_excesso):
-                                if qtd_restante <= 0 or excesso <= 0:
+                            for loja_cod, dados in lojas_no_grupo.items():
+                                config_loja = lojas_config.get(loja_cod, {})
+                                pode_doar = config_loja.get('pode_doar', False)
+                                pode_receber = config_loja.get('pode_receber', False)
+
+                                demanda_diaria = dados.get('demanda_diaria', 0) or 0
+                                estoque = dados.get('estoque_atual', 0) or 0
+                                transito = dados.get('estoque_transito', 0) or 0
+                                cobertura_atual = dados.get('cobertura_atual_dias', 0) or 0
+                                qtd_pedido = dados.get('quantidade_pedido', 0) or 0
+
+                                # Se precisa pedir E pode receber, e RECEPTORA
+                                if pode_receber and qtd_pedido > 0 and cobertura_atual < cobertura_alvo:
+                                    estoque_efetivo = estoque + transito
+                                    if demanda_diaria > 0:
+                                        necessidade_transf = int((demanda_diaria * cobertura_alvo) - estoque_efetivo)
+                                        necessidade_transf = max(0, necessidade_transf)
+                                    else:
+                                        necessidade_transf = 0
+                                    prioridade = config_loja.get('prioridade', 99)
+                                    lojas_necessidade.append((loja_cod, necessidade_transf, dados, qtd_pedido, prioridade))
                                     continue
 
-                                qtd_transferir = min(qtd_restante, excesso)
+                                # Se pode doar E tem excesso, e DOADORA
+                                if pode_doar:
+                                    if demanda_diaria <= 0:
+                                        if estoque > 5:
+                                            lojas_excesso.append((loja_cod, estoque, dados))
+                                    elif cobertura_atual > (cobertura_alvo + MARGEM_EXCESSO_DIAS):
+                                        estoque_disponivel = estoque + transito
+                                        estoque_minimo_doador = demanda_diaria * COBERTURA_MINIMA_DOADOR
+                                        excesso = int(estoque_disponivel - estoque_minimo_doador)
+                                        if excesso > 0:
+                                            lojas_excesso.append((loja_cod, excesso, dados))
 
-                                if qtd_transferir > 0:
-                                    custo_unit = dados_dest.get('custo_unitario', 0) or 0
-                                    transferencia = {
-                                        'cod_produto': cod_produto,
-                                        'descricao': dados_dest.get('descricao', ''),
-                                        'cod_loja_origem': loja_orig,
-                                        'loja_origem': dados_orig.get('nome_loja', f'Loja {loja_orig}'),
-                                        'cod_loja_destino': loja_dest,
-                                        'loja_destino': dados_dest.get('nome_loja', f'Loja {loja_dest}'),
-                                        'qtd_sugerida': qtd_transferir,
-                                        'valor_estimado': round(qtd_transferir * custo_unit, 2),
-                                        'urgencia': 'CRITICA' if dados_dest.get('cobertura_atual_dias', 0) == 0 else (
-                                            'ALTA' if dados_dest.get('cobertura_atual_dias', 0) <= 3 else (
-                                                'MEDIA' if dados_dest.get('cobertura_atual_dias', 0) <= 7 else 'BAIXA'
-                                            )
-                                        ),
-                                        'sessao_pedido': sessao_pedido
-                                    }
-                                    oportunidades_transferencia.append(transferencia)
+                            # Se tem lojas com excesso e necessidade no MESMO GRUPO, criar transferencias
+                            if lojas_excesso and lojas_necessidade:
+                                lojas_excesso.sort(key=lambda x: x[1], reverse=True)
+                                # Ordenar por prioridade de recebimento (menor = mais prioritario)
+                                lojas_necessidade.sort(key=lambda x: (x[4], -x[1]))
 
-                                    lojas_excesso[i] = (loja_orig, excesso - qtd_transferir, dados_orig)
-                                    qtd_restante -= qtd_transferir
+                                for loja_dest, necessidade_transf, dados_dest, qtd_pedido_dest, _ in lojas_necessidade:
+                                    qtd_restante = necessidade_transf
+
+                                    for i, (loja_orig, excesso, dados_orig) in enumerate(lojas_excesso):
+                                        if qtd_restante <= 0 or excesso <= 0:
+                                            continue
+
+                                        qtd_transferir = min(qtd_restante, excesso)
+
+                                        if qtd_transferir > 0:
+                                            custo_unit = dados_dest.get('custo_unitario', 0) or 0
+                                            transferencia = {
+                                                'cod_produto': cod_produto,
+                                                'descricao': dados_dest.get('descricao', ''),
+                                                'cod_loja_origem': loja_orig,
+                                                'loja_origem': dados_orig.get('nome_loja', f'Loja {loja_orig}'),
+                                                'cod_loja_destino': loja_dest,
+                                                'loja_destino': dados_dest.get('nome_loja', f'Loja {loja_dest}'),
+                                                'qtd_sugerida': qtd_transferir,
+                                                'valor_estimado': round(qtd_transferir * custo_unit, 2),
+                                                'urgencia': 'CRITICA' if dados_dest.get('cobertura_atual_dias', 0) == 0 else (
+                                                    'ALTA' if dados_dest.get('cobertura_atual_dias', 0) <= 3 else (
+                                                        'MEDIA' if dados_dest.get('cobertura_atual_dias', 0) <= 7 else 'BAIXA'
+                                                    )
+                                                ),
+                                                'grupo_id': grupo_id,
+                                                'sessao_pedido': sessao_pedido
+                                            }
+                                            oportunidades_transferencia.append(transferencia)
+
+                                            lojas_excesso[i] = (loja_orig, excesso - qtd_transferir, dados_orig)
+                                            qtd_restante -= qtd_transferir
 
                 print(f"  [TRANSFERENCIAS] {len(oportunidades_transferencia)} oportunidades identificadas")
 
@@ -7781,11 +7844,12 @@ def api_pedido_planejado():
                 for a in alertas_pedido_minimo
             ],
             'tem_alertas_pedido_minimo': len(alertas_pedido_minimo) > 0,
-            # Transferencias entre lojas
+            # Transferencias entre lojas (respeitando grupos regionais)
             'transferencias': {
                 'total': len(oportunidades_transferencia),
                 'tem_oportunidades': len(oportunidades_transferencia) > 0,
                 'produtos_com_transferencia': list(set(t.get('cod_produto') for t in oportunidades_transferencia)),
+                'grupos_envolvidos': list(set(t.get('grupo_id') for t in oportunidades_transferencia if t.get('grupo_id'))),
                 'oportunidades': [
                     {
                         'cod_produto': t.get('cod_produto'),
@@ -7796,7 +7860,8 @@ def api_pedido_planejado():
                         'cod_loja_destino': t.get('cod_loja_destino'),
                         'qtd_sugerida': t.get('qtd_sugerida', 0),
                         'valor_estimado': t.get('valor_estimado', 0),
-                        'urgencia': t.get('urgencia', 'BAIXA')
+                        'urgencia': t.get('urgencia', 'BAIXA'),
+                        'grupo_id': t.get('grupo_id')
                     }
                     for t in oportunidades_transferencia
                 ]
