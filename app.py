@@ -7406,15 +7406,17 @@ def api_pedido_planejado():
             nome_loja_row = cursor.fetchone()
             nome_loja = nome_loja_row['nome_loja'] if nome_loja_row else f'Loja {loja}'
 
-            # Buscar lead time do fornecedor para esta loja
+            # Buscar lead time e pedido minimo do fornecedor para esta loja
             lead_times = {}
+            pedidos_minimos = {}
             cursor.execute("""
-                SELECT cnpj_fornecedor, lead_time_dias
+                SELECT cnpj_fornecedor, lead_time_dias, COALESCE(pedido_minimo_valor, 0) as pedido_minimo_valor
                 FROM parametros_fornecedor
                 WHERE cod_empresa = %s AND ativo = TRUE
             """, [loja])
             for r in cursor.fetchall():
                 lead_times[r['cnpj_fornecedor']] = r['lead_time_dias']
+                pedidos_minimos[r['cnpj_fornecedor']] = float(r['pedido_minimo_valor'])
 
             for produto in produtos:
                 codigo = str(produto['codigo'])
@@ -7510,9 +7512,10 @@ def api_pedido_planejado():
                     cobertura_atual = 999
                     cobertura_com_transito = 999
 
-                # Calcular lead time
+                # Calcular lead time e obter pedido minimo
                 cnpj = produto.get('cnpj_fornecedor')
                 lead_time = lead_times.get(cnpj, 15)  # Default 15 dias
+                pedido_minimo = pedidos_minimos.get(cnpj, 0)  # Default 0
 
                 # Calcular data de emissao (periodo_inicio - lead_time)
                 data_emissao = data_ini - timedelta(days=lead_time)
@@ -7552,6 +7555,7 @@ def api_pedido_planejado():
                     'cobertura_com_transito_dias': round(cobertura_com_transito, 1),
                     'cobertura_pos_pedido_dias': round(cobertura_pos_pedido, 1),
                     'lead_time': lead_time,
+                    'pedido_minimo_fornecedor': pedido_minimo,
                     'data_emissao_sugerida': data_emissao.strftime('%Y-%m-%d'),
                     'periodo_inicio': periodo_inicio,
                     'periodo_fim': periodo_fim,
@@ -7565,6 +7569,174 @@ def api_pedido_planejado():
 
         conn.close()
 
+        # =====================================================================
+        # VALIDACAO DE PEDIDO MINIMO POR FORNECEDOR/LOJA
+        # =====================================================================
+        validacao_pedido_minimo = {}
+
+        for item in itens_pedido:
+            cod_fornecedor = item.get('codigo_fornecedor', '')
+            cod_loja = item.get('cod_loja', 0)
+            nome_fornecedor = item.get('nome_fornecedor', '')
+            nome_loja = item.get('nome_loja', f'Loja {cod_loja}')
+            valor_pedido = item.get('valor_pedido', 0) or 0
+            pedido_min = item.get('pedido_minimo_fornecedor', 0) or 0
+
+            chave = (cod_fornecedor, cod_loja)
+
+            if chave not in validacao_pedido_minimo:
+                validacao_pedido_minimo[chave] = {
+                    'cod_fornecedor': cod_fornecedor,
+                    'nome_fornecedor': nome_fornecedor,
+                    'cod_loja': cod_loja,
+                    'nome_loja': nome_loja,
+                    'valor_total': 0,
+                    'pedido_minimo': pedido_min,
+                    'abaixo_minimo': False,
+                    'diferenca': 0
+                }
+
+            validacao_pedido_minimo[chave]['valor_total'] += valor_pedido
+            if validacao_pedido_minimo[chave]['pedido_minimo'] == 0 and pedido_min > 0:
+                validacao_pedido_minimo[chave]['pedido_minimo'] = pedido_min
+
+        # Verificar quais estao abaixo do minimo
+        alertas_pedido_minimo = []
+        for chave, info in validacao_pedido_minimo.items():
+            pedido_min = info['pedido_minimo']
+            valor_total = info['valor_total']
+
+            if pedido_min > 0 and valor_total < pedido_min:
+                info['abaixo_minimo'] = True
+                info['diferenca'] = pedido_min - valor_total
+                alertas_pedido_minimo.append(info)
+                print(f"  [PEDIDO MINIMO] Alerta: {info['nome_fornecedor']} / {info['nome_loja']} - "
+                      f"Valor R$ {valor_total:,.2f} < Minimo R$ {pedido_min:,.2f}")
+
+        # Adicionar flag nos itens que estao abaixo do minimo
+        for item in itens_pedido:
+            cod_fornecedor = item.get('codigo_fornecedor', '')
+            cod_loja = item.get('cod_loja', 0)
+            chave = (cod_fornecedor, cod_loja)
+
+            if chave in validacao_pedido_minimo:
+                info = validacao_pedido_minimo[chave]
+                item['pedido_abaixo_minimo'] = info['abaixo_minimo']
+                item['valor_total_pedido_loja'] = info['valor_total']
+                if info['abaixo_minimo']:
+                    item['critica_pedido_minimo'] = f"Abaixo do pedido mínimo (R$ {info['valor_total']:,.2f} < R$ {info['pedido_minimo']:,.2f})"
+
+        if alertas_pedido_minimo:
+            print(f"  [PEDIDO MINIMO] {len(alertas_pedido_minimo)} fornecedor/loja(s) abaixo do minimo")
+
+        # =====================================================================
+        # CALCULO DE TRANSFERENCIAS ENTRE LOJAS (quando multi-loja)
+        # =====================================================================
+        oportunidades_transferencia = []
+        lojas_unicas = set(i.get('cod_loja') for i in itens_pedido)
+        is_multiloja = len(lojas_unicas) > 1
+
+        if is_multiloja and itens_pedido:
+            try:
+                print(f"\n  [TRANSFERENCIAS] Analisando oportunidades entre {len(lojas_unicas)} lojas...")
+
+                import uuid
+                sessao_pedido = f"PL_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+                # Agrupar itens por produto
+                itens_por_produto = {}
+                for item in itens_pedido:
+                    cod = item['codigo']
+                    if cod not in itens_por_produto:
+                        itens_por_produto[cod] = {}
+                    loja_cod = item.get('cod_loja')
+                    if loja_cod:
+                        itens_por_produto[cod][loja_cod] = item
+
+                cobertura_alvo = 21  # dias
+                COBERTURA_MINIMA_DOADOR = 10  # dias
+                MARGEM_EXCESSO_DIAS = 7  # dias acima do alvo
+
+                for cod_produto, lojas_data in itens_por_produto.items():
+                    if len(lojas_data) < 2:
+                        continue
+
+                    lojas_excesso = []
+                    lojas_necessidade = []
+
+                    for loja_cod, dados in lojas_data.items():
+                        demanda_diaria = dados.get('demanda_diaria', 0) or 0
+                        estoque = dados.get('estoque_atual', 0) or 0
+                        transito = dados.get('estoque_transito', 0) or 0
+                        cobertura_atual = dados.get('cobertura_atual_dias', 0) or 0
+                        qtd_pedido = dados.get('quantidade_pedido', 0) or 0
+
+                        # Se precisa pedir, e RECEPTORA
+                        if qtd_pedido > 0 and cobertura_atual < cobertura_alvo:
+                            estoque_efetivo = estoque + transito
+                            if demanda_diaria > 0:
+                                necessidade_transf = int((demanda_diaria * cobertura_alvo) - estoque_efetivo)
+                                necessidade_transf = max(0, necessidade_transf)
+                            else:
+                                necessidade_transf = 0
+                            lojas_necessidade.append((loja_cod, necessidade_transf, dados, qtd_pedido))
+                            continue
+
+                        # Se nao precisa pedir e tem excesso, e DOADORA
+                        if demanda_diaria <= 0:
+                            if estoque > 5:
+                                lojas_excesso.append((loja_cod, estoque, dados))
+                        elif cobertura_atual > (cobertura_alvo + MARGEM_EXCESSO_DIAS):
+                            estoque_disponivel = estoque + transito
+                            estoque_minimo_doador = demanda_diaria * COBERTURA_MINIMA_DOADOR
+                            excesso = int(estoque_disponivel - estoque_minimo_doador)
+                            if excesso > 0:
+                                lojas_excesso.append((loja_cod, excesso, dados))
+
+                    # Se tem lojas com excesso e necessidade, criar transferencias
+                    if lojas_excesso and lojas_necessidade:
+                        lojas_excesso.sort(key=lambda x: x[1], reverse=True)
+                        lojas_necessidade.sort(key=lambda x: x[1], reverse=True)
+
+                        for loja_dest, necessidade_transf, dados_dest, qtd_pedido_dest in lojas_necessidade:
+                            qtd_restante = necessidade_transf
+
+                            for i, (loja_orig, excesso, dados_orig) in enumerate(lojas_excesso):
+                                if qtd_restante <= 0 or excesso <= 0:
+                                    continue
+
+                                qtd_transferir = min(qtd_restante, excesso)
+
+                                if qtd_transferir > 0:
+                                    custo_unit = dados_dest.get('custo_unitario', 0) or 0
+                                    transferencia = {
+                                        'cod_produto': cod_produto,
+                                        'descricao': dados_dest.get('descricao', ''),
+                                        'cod_loja_origem': loja_orig,
+                                        'loja_origem': dados_orig.get('nome_loja', f'Loja {loja_orig}'),
+                                        'cod_loja_destino': loja_dest,
+                                        'loja_destino': dados_dest.get('nome_loja', f'Loja {loja_dest}'),
+                                        'qtd_sugerida': qtd_transferir,
+                                        'valor_estimado': round(qtd_transferir * custo_unit, 2),
+                                        'urgencia': 'CRITICA' if dados_dest.get('cobertura_atual_dias', 0) == 0 else (
+                                            'ALTA' if dados_dest.get('cobertura_atual_dias', 0) <= 3 else (
+                                                'MEDIA' if dados_dest.get('cobertura_atual_dias', 0) <= 7 else 'BAIXA'
+                                            )
+                                        ),
+                                        'sessao_pedido': sessao_pedido
+                                    }
+                                    oportunidades_transferencia.append(transferencia)
+
+                                    lojas_excesso[i] = (loja_orig, excesso - qtd_transferir, dados_orig)
+                                    qtd_restante -= qtd_transferir
+
+                print(f"  [TRANSFERENCIAS] {len(oportunidades_transferencia)} oportunidades identificadas")
+
+            except Exception as e:
+                print(f"  [TRANSFERENCIAS] Erro: {e}")
+                import traceback
+                traceback.print_exc()
+
         # Agregar por fornecedor
         agregado = agregar_por_fornecedor(itens_pedido)
 
@@ -7572,10 +7744,6 @@ def api_pedido_planejado():
         total_itens = len(itens_pedido)
         total_valor = sum(i.get('valor_pedido', 0) for i in itens_pedido)
         total_fornecedores = len(agregado)
-
-        # Verificar se e multi-loja
-        lojas_unicas = set(i.get('cod_loja') for i in itens_pedido)
-        is_multiloja = len(lojas_unicas) > 1
 
         return jsonify({
             'success': True,
@@ -7598,7 +7766,41 @@ def api_pedido_planejado():
             'itens_pedido': itens_pedido,
             'itens_bloqueados': itens_bloqueados,
             'agregado_fornecedor': agregado,
-            'is_pedido_multiloja': is_multiloja
+            'is_pedido_multiloja': is_multiloja,
+            # Alertas de pedido minimo por fornecedor/loja
+            'alertas_pedido_minimo': [
+                {
+                    'cod_fornecedor': a['cod_fornecedor'],
+                    'nome_fornecedor': a['nome_fornecedor'],
+                    'cod_loja': a['cod_loja'],
+                    'nome_loja': a['nome_loja'],
+                    'valor_total': round(a['valor_total'], 2),
+                    'pedido_minimo': round(a['pedido_minimo'], 2),
+                    'diferenca': round(a['diferenca'], 2)
+                }
+                for a in alertas_pedido_minimo
+            ],
+            'tem_alertas_pedido_minimo': len(alertas_pedido_minimo) > 0,
+            # Transferencias entre lojas
+            'transferencias': {
+                'total': len(oportunidades_transferencia),
+                'tem_oportunidades': len(oportunidades_transferencia) > 0,
+                'produtos_com_transferencia': list(set(t.get('cod_produto') for t in oportunidades_transferencia)),
+                'oportunidades': [
+                    {
+                        'cod_produto': t.get('cod_produto'),
+                        'descricao': t.get('descricao', ''),
+                        'loja_origem': t.get('loja_origem'),
+                        'cod_loja_origem': t.get('cod_loja_origem'),
+                        'loja_destino': t.get('loja_destino'),
+                        'cod_loja_destino': t.get('cod_loja_destino'),
+                        'qtd_sugerida': t.get('qtd_sugerida', 0),
+                        'valor_estimado': t.get('valor_estimado', 0),
+                        'urgencia': t.get('urgencia', 'BAIXA')
+                    }
+                    for t in oportunidades_transferencia
+                ]
+            }
         })
 
     except Exception as e:
