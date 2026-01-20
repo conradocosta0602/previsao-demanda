@@ -46,13 +46,21 @@ Gera um pedido consolidado para o Centro de Distribuicao, agregando a demanda de
 
 ### Cobertura por Curva ABC
 
-Se nenhuma cobertura for informada, o sistema usa valores automaticos:
+Se nenhuma cobertura for informada, o sistema calcula automaticamente usando a formula:
 
-| Curva | Cobertura Padrao |
-|-------|------------------|
-| A | 15 dias |
-| B | 21 dias |
-| C | 30 dias |
+```
+Cobertura = Lead Time + Ciclo de Pedido (7d) + Seguranca ABC
+```
+
+Onde Seguranca ABC varia conforme a curva:
+
+| Curva | Seguranca ABC | Exemplo (LT=15d) |
+|-------|---------------|------------------|
+| A | +2 dias | 15 + 7 + 2 = **24 dias** |
+| B | +4 dias | 15 + 7 + 4 = **26 dias** |
+| C | +6 dias | 15 + 7 + 6 = **28 dias** |
+
+**Nota:** A cobertura e dinamica e depende do Lead Time do fornecedor cadastrado.
 
 ## Layout Multi-Loja
 

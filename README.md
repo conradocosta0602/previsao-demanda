@@ -49,7 +49,7 @@ O sistema utiliza uma abordagem **Bottom-Up** que analisa cada produto individua
 
 **Diferenciais:**
 - Selecao automatica do melhor metodo por SKU
-- Limitadores de tendencia (queda >40% ignorada, alta >50% limitada)
+- Limitadores de tendencia (queda >40% limitada a -40%, alta >50% limitada a +50%)
 - Sazonalidade anual (12 meses ou 52 semanas)
 - Deteccao automatica de outliers (IQR + Z-Score)
 
@@ -180,7 +180,7 @@ Todas as telas do sistema estao disponiveis nas seguintes URLs (servidor rodando
 
 | Endpoint | Metodo | Descricao |
 |----------|--------|-----------|
-| `/api/previsao_v2` | POST | Gera previsao de demanda |
+| `/api/gerar_previsao_banco` | POST | Gera previsao de demanda (Bottom-Up V2) |
 | `/api/pedido_fornecedor_integrado` | POST | Calcula pedido ao fornecedor |
 | `/api/transferencias/oportunidades` | GET | Lista oportunidades de transferencia |
 | `/api/transferencias/grupos` | GET | Lista grupos de transferencia |
@@ -246,13 +246,13 @@ Para evitar previsoes irrealistas:
 
 | Tipo | Limite | Acao |
 |------|--------|------|
-| Queda | > 40% | Tendencia ignorada |
-| Alta | > 50% | Limitada a 50% |
+| Queda | > 40% | Limitada a -40% |
+| Alta | > 50% | Limitada a +50% |
 
 **Exemplo:**
 - Historico: 100 un/mes
 - Tendencia detectada: -60% (queda)
-- Resultado: Tendencia ignorada, previsao mantem 100 un/mes
+- Resultado: Tendencia limitada a -40%, previsao ajustada para 60 un/mes
 
 ### Granularidades Suportadas
 
@@ -569,7 +569,7 @@ R:
 R: Diferencas de 5-15% sao normais devido a janelas adaptativas, agregacao e fatores sazonais distintos. Consulte a documentacao de granularidade para detalhes.
 
 **P: O que significam os limitadores de tendencia?**
-R: Quedas >40% sao ignoradas (protecao contra dados anomalos). Altas >50% sao limitadas a 50% (protecao contra otimismo excessivo).
+R: Quedas >40% sao limitadas a -40% (protecao contra dados anomalos). Altas >50% sao limitadas a +50% (protecao contra otimismo excessivo).
 
 ### Pedido ao Fornecedor
 
