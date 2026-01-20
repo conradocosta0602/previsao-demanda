@@ -5798,23 +5798,20 @@ def api_gerar_previsao_banco_v2_interno():
                 # - Queda extrema (< -40%): Ignora tendência (possível anomalia)
                 # - Alta extrema (> +50%): Limita a +50% (evita projeções irrealistas)
                 # =====================================================
+                # CORREÇÃO: Aplicar AMBOS os limites independentemente
                 if tendencias_brutas:
                     media_tendencia = sum(tendencias_brutas) / len(tendencias_brutas)
 
-                    # Se a média das tendências é muito negativa (< -40%), considerar anomalia
-                    if media_tendencia < -0.40:
-                        tendencia_anomala = True
-                        # Zerar tendências para usar apenas sazonalidade
-                        for mes in tendencia_por_mes_item:
-                            tendencia_por_mes_item[mes] = 0
-
-                    # Se a média das tendências é muito positiva (> +50%), limitar
-                    elif media_tendencia > 0.50:
-                        tendencia_limitada = True
-                        # Limitar cada tendência individual a +50%
-                        for mes in tendencia_por_mes_item:
-                            if tendencia_por_mes_item[mes] > 0.50:
-                                tendencia_por_mes_item[mes] = 0.50
+                    # Aplicar limites individuais a cada período (independente da média)
+                    for mes in tendencia_por_mes_item:
+                        # Limitar tendências muito negativas a -40%
+                        if tendencia_por_mes_item[mes] < -0.40:
+                            tendencia_por_mes_item[mes] = -0.40
+                            tendencia_anomala = True
+                        # Limitar tendências muito positivas a +50%
+                        elif tendencia_por_mes_item[mes] > 0.50:
+                            tendencia_por_mes_item[mes] = 0.50
+                            tendencia_limitada = True
 
                 # Detectar força da sazonalidade (coeficiente de variação dos fatores)
                 if fatores_sazonais_item:
@@ -5880,17 +5877,18 @@ def api_gerar_previsao_banco_v2_interno():
                         tendencia_por_mes_item[semana] = 0
 
                 # Aplicar limitadores de tendência para semanal
+                # CORREÇÃO: Aplicar AMBOS os limites independentemente
                 if tendencias_brutas_semana:
-                    media_tendencia = sum(tendencias_brutas_semana) / len(tendencias_brutas_semana)
-                    if media_tendencia < -0.40:
-                        tendencia_anomala = True
-                        for semana in tendencia_por_mes_item:
-                            tendencia_por_mes_item[semana] = 0
-                    elif media_tendencia > 0.50:
-                        tendencia_limitada = True
-                        for semana in tendencia_por_mes_item:
-                            if tendencia_por_mes_item[semana] > 0.50:
-                                tendencia_por_mes_item[semana] = 0.50
+                    # Aplicar limites individuais a cada semana (independente da média)
+                    for semana in tendencia_por_mes_item:
+                        # Limitar tendências muito negativas a -40%
+                        if tendencia_por_mes_item[semana] < -0.40:
+                            tendencia_por_mes_item[semana] = -0.40
+                            tendencia_anomala = True
+                        # Limitar tendências muito positivas a +50%
+                        elif tendencia_por_mes_item[semana] > 0.50:
+                            tendencia_por_mes_item[semana] = 0.50
+                            tendencia_limitada = True
 
                 if fatores_sazonais_item:
                     valores_fatores = list(fatores_sazonais_item.values())
@@ -5958,17 +5956,18 @@ def api_gerar_previsao_banco_v2_interno():
                         tendencia_por_mes_item[dia] = 0
 
                 # Aplicar limitadores de tendência para diário
+                # CORREÇÃO: Aplicar AMBOS os limites independentemente
                 if tendencias_brutas_dia:
-                    media_tendencia = sum(tendencias_brutas_dia) / len(tendencias_brutas_dia)
-                    if media_tendencia < -0.40:
-                        tendencia_anomala = True
-                        for dia in tendencia_por_mes_item:
-                            tendencia_por_mes_item[dia] = 0
-                    elif media_tendencia > 0.50:
-                        tendencia_limitada = True
-                        for dia in tendencia_por_mes_item:
-                            if tendencia_por_mes_item[dia] > 0.50:
-                                tendencia_por_mes_item[dia] = 0.50
+                    # Aplicar limites individuais a cada dia (independente da média)
+                    for dia in tendencia_por_mes_item:
+                        # Limitar tendências muito negativas a -40%
+                        if tendencia_por_mes_item[dia] < -0.40:
+                            tendencia_por_mes_item[dia] = -0.40
+                            tendencia_anomala = True
+                        # Limitar tendências muito positivas a +50%
+                        elif tendencia_por_mes_item[dia] > 0.50:
+                            tendencia_por_mes_item[dia] = 0.50
+                            tendencia_limitada = True
 
                 if fatores_sazonais_item:
                     valores_fatores = list(fatores_sazonais_item.values())
@@ -6071,9 +6070,10 @@ def api_gerar_previsao_banco_v2_interno():
                         previsao_item_periodos.append(previsao_periodo)
 
                     # Montar descrição do modelo com info de tendência
-                    if tendencia_anomala:
-                        # Tendência foi ignorada por ser anomalia (queda < -40%)
-                        melhor_modelo_item = f"Sazonal (força={forca_sazonalidade:.2f}) [tend.ignorada: queda>40%]"
+                    if tendencia_anomala and tendencias_aplicadas:
+                        # Tendência foi limitada a -40% por ser queda extrema
+                        tendencia_media = sum(tendencias_aplicadas) / len(tendencias_aplicadas)
+                        melhor_modelo_item = f"Sazonal+Tendência (força={forca_sazonalidade:.2f}, tend={tendencia_media:+.1%}) [limitada:-40%]"
                     elif tendencia_limitada and tendencias_aplicadas and any(t != 0 for t in tendencias_aplicadas):
                         # Tendência foi limitada (alta > +50%)
                         tendencia_media = sum(tendencias_aplicadas) / len(tendencias_aplicadas)

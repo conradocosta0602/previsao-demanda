@@ -6,11 +6,31 @@
 // JavaScript interpreta "YYYY-MM-DD" como UTC midnight,
 // o que em fusos horários negativos (ex: Brasil GMT-3)
 // mostra o dia anterior. Esta função corrige isso.
+// Também suporta formato semanal YYYY-SWW (ex: 2026-S05)
 function parseLocalDate(dateStr) {
     if (!dateStr) return null;
     // Se já é um objeto Date, retornar
     if (dateStr instanceof Date) return dateStr;
-    // Parsear manualmente para evitar problema de timezone
+
+    // Verificar se é formato semanal YYYY-SWW (ex: 2026-S05)
+    const semanalMatch = dateStr.match(/^(\d{4})-S(\d{2})$/);
+    if (semanalMatch) {
+        const ano = parseInt(semanalMatch[1]);
+        const semana = parseInt(semanalMatch[2]);
+        // Calcular a data da segunda-feira da semana ISO
+        // Fórmula: encontrar 4 de janeiro (sempre na semana 1) e ajustar
+        const jan4 = new Date(ano, 0, 4);
+        const diaSemanaJan4 = jan4.getDay() || 7; // Domingo = 7
+        // Segunda-feira da semana 1
+        const seg1 = new Date(jan4);
+        seg1.setDate(jan4.getDate() - diaSemanaJan4 + 1);
+        // Segunda-feira da semana desejada
+        const resultado = new Date(seg1);
+        resultado.setDate(seg1.getDate() + (semana - 1) * 7);
+        return resultado;
+    }
+
+    // Parsear manualmente formato YYYY-MM-DD para evitar problema de timezone
     const parts = dateStr.split('-');
     if (parts.length === 3) {
         // new Date(year, monthIndex, day) usa timezone LOCAL
@@ -1450,10 +1470,11 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     function formatarPeriodo(dataStr, gran, incluirAno = false) {
         if (!dataStr) return '';
         const data = parseLocalDate(dataStr);
+        if (!data || isNaN(data.getTime())) return dataStr; // Retornar string original se parsing falhar
         if (gran === 'semanal') {
             const semanaAno = getWeekNumber(data);
             const anoISO = getISOWeekYear(data);
-            return `S${semanaAno}/${anoISO}`;
+            return `S${semanaAno}/${anoISO.toString().slice(-2)}`;
         } else if (gran === 'diario' || gran === 'diaria') {
             // Formato: DD/MM ou DD/MM/AA se incluirAno=true
             const dia = data.getDate().toString().padStart(2, '0');
@@ -1610,6 +1631,10 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
     // Formatar labels baseado na granularidade
     const labels = todasDatas.map(dataStr => {
         const data = parseLocalDate(dataStr);
+        // Verificar se o parsing foi bem sucedido
+        if (!data || isNaN(data.getTime())) {
+            return dataStr; // Retornar string original se parsing falhar
+        }
         if (granularidade === 'semanal') {
             // Para semanal, mostrar "Sem XX" (número da semana no ano) com ano ISO
             const semanaAno = getWeekNumber(data);
