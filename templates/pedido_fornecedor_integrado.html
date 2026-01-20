@@ -1130,18 +1130,19 @@
             if (isPlanejado) {
                 // Dados do pedido planejado
                 const resumo = data.resumo || {};
+                const agregadoForn = data.agregado_fornecedor || {};
                 stats = {
                     total_itens_analisados: resumo.total_itens || 0,
                     total_itens_pedido: resumo.total_itens || 0,
                     itens_ruptura_iminente: 0,
-                    valor_total_pedido: resumo.total_valor || 0
+                    valor_total_pedido: resumo.total_valor || agregadoForn.valor_total || 0
                 };
                 agregacao = {
-                    total_fornecedores: resumo.total_fornecedores || 0,
-                    total_itens_bloqueados: resumo.itens_bloqueados || 0,
-                    fornecedores: data.agregado_fornecedor || []
+                    total_fornecedores: agregadoForn.total_fornecedores || resumo.total_fornecedores || 0,
+                    total_itens_bloqueados: agregadoForn.total_itens_bloqueados || resumo.itens_bloqueados || 0,
+                    fornecedores: agregadoForn.fornecedores || []
                 };
-                totalBloqueados = resumo.itens_bloqueados || 0;
+                totalBloqueados = agregadoForn.total_itens_bloqueados || resumo.itens_bloqueados || 0;
             } else {
                 // Dados do pedido de reabastecimento normal
                 stats = data.estatisticas;
