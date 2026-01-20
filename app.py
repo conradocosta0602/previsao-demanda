@@ -7384,9 +7384,14 @@ def api_pedido_planejado():
                 custo = float(produto.get('custo_unitario', 0)) if produto.get('custo_unitario') else 0
                 valor_pedido = demanda_periodo * custo
 
+                # Calcular numero de caixas (assumindo multiplo 1 se nao tiver parametro)
+                qtd_pedido = round(demanda_periodo, 0)
+                numero_caixas = int(qtd_pedido)  # 1 unidade = 1 caixa por padrao
+
                 itens_pedido.append({
                     'codigo': codigo,
                     'descricao': produto['descricao'],
+                    'codigo_fornecedor': cnpj,  # Usado para agregacao
                     'nome_fornecedor': produto['nome_fornecedor'],
                     'cnpj_fornecedor': cnpj,
                     'cod_loja': loja,
@@ -7394,14 +7399,17 @@ def api_pedido_planejado():
                     'curva_abc': produto.get('curva_abc', 'B'),
                     'demanda_diaria': round(demanda_diaria, 2),
                     'demanda_periodo': round(demanda_periodo, 0),
-                    'quantidade_pedido': round(demanda_periodo, 0),
+                    'quantidade_pedido': qtd_pedido,
+                    'numero_caixas': numero_caixas,
                     'valor_pedido': round(valor_pedido, 2),
                     'lead_time': lead_time,
                     'data_emissao_sugerida': data_emissao.strftime('%Y-%m-%d'),
                     'periodo_inicio': periodo_inicio,
                     'periodo_fim': periodo_fim,
                     'dias_periodo': dias_periodo,
-                    'usa_demanda_validada': key in demanda_validada_dict
+                    'usa_demanda_validada': key in demanda_validada_dict,
+                    'deve_pedir': True,  # Pedido planejado sempre deve pedir
+                    'bloqueado': False
                 })
 
         conn.close()
