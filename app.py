@@ -7479,6 +7479,37 @@ def api_pedido_planejado():
 
                 demanda_periodo = demanda_diaria * dias_periodo
 
+                # Buscar estoque atual e custo da tabela estoque_posicao_atual
+                cursor.execute("""
+                    SELECT
+                        COALESCE(estoque, 0) as estoque_disponivel,
+                        COALESCE(qtd_pendente, 0) as qtd_pendente,
+                        COALESCE(qtd_pend_transf, 0) as qtd_pend_transf,
+                        COALESCE(cue, 0) as custo_unitario
+                    FROM estoque_posicao_atual
+                    WHERE codigo = %s::integer AND cod_empresa = %s
+                """, [codigo, loja])
+                estoque_row = cursor.fetchone()
+
+                if estoque_row:
+                    estoque_disponivel = float(estoque_row['estoque_disponivel'])
+                    qtd_pendente = float(estoque_row['qtd_pendente'])
+                    qtd_pend_transf = float(estoque_row['qtd_pend_transf'])
+                    custo_unitario = float(estoque_row['custo_unitario'])
+                    estoque_transito = qtd_pendente + qtd_pend_transf
+                else:
+                    estoque_disponivel = 0
+                    estoque_transito = 0
+                    custo_unitario = 0
+
+                # Calcular cobertura atual (em dias)
+                if demanda_diaria > 0:
+                    cobertura_atual = estoque_disponivel / demanda_diaria
+                    cobertura_com_transito = (estoque_disponivel + estoque_transito) / demanda_diaria
+                else:
+                    cobertura_atual = 999
+                    cobertura_com_transito = 999
+
                 # Calcular lead time
                 cnpj = produto.get('cnpj_fornecedor')
                 lead_time = lead_times.get(cnpj, 15)  # Default 15 dias
@@ -7486,9 +7517,15 @@ def api_pedido_planejado():
                 # Calcular data de emissao (periodo_inicio - lead_time)
                 data_emissao = data_ini - timedelta(days=lead_time)
 
-                # Custo unitario
-                custo = float(produto.get('custo_unitario', 0)) if produto.get('custo_unitario') else 0
-                valor_pedido = demanda_periodo * custo
+                # Calcular valor do pedido
+                valor_pedido = demanda_periodo * custo_unitario
+
+                # Calcular cobertura pós-pedido
+                estoque_pos_pedido = estoque_disponivel + estoque_transito + demanda_periodo
+                if demanda_diaria > 0:
+                    cobertura_pos_pedido = estoque_pos_pedido / demanda_diaria
+                else:
+                    cobertura_pos_pedido = 999
 
                 # Calcular numero de caixas (assumindo multiplo 1 se nao tiver parametro)
                 qtd_pedido = round(demanda_periodo, 0)
@@ -7508,6 +7545,12 @@ def api_pedido_planejado():
                     'quantidade_pedido': qtd_pedido,
                     'numero_caixas': numero_caixas,
                     'valor_pedido': round(valor_pedido, 2),
+                    'custo_unitario': round(custo_unitario, 2),
+                    'estoque_atual': round(estoque_disponivel, 0),
+                    'estoque_transito': round(estoque_transito, 0),
+                    'cobertura_atual_dias': round(cobertura_atual, 1),
+                    'cobertura_com_transito_dias': round(cobertura_com_transito, 1),
+                    'cobertura_pos_pedido_dias': round(cobertura_pos_pedido, 1),
                     'lead_time': lead_time,
                     'data_emissao_sugerida': data_emissao.strftime('%Y-%m-%d'),
                     'periodo_inicio': periodo_inicio,
