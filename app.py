@@ -6948,6 +6948,329 @@ def api_parametros_fornecedor_por_produto():
 
 
 # ============================================================================
+# CENTRAL DE PARAMETROS DE FORNECEDOR - Consulta e Edicao
+# ============================================================================
+
+@app.route('/central-parametros-fornecedor')
+def pagina_central_parametros_fornecedor():
+    """Pagina da Central de Parametros de Fornecedor."""
+    return render_template('central_parametros_fornecedor.html')
+
+
+@app.route('/api/central-parametros/buscar', methods=['GET'])
+def api_central_parametros_buscar():
+    """
+    Busca fornecedor e seus produtos para consulta de parametros.
+    Params: codigo (produto), cnpj, nome (fornecedor), cod_empresa (loja)
+    """
+    conn = None
+    try:
+        codigo = request.args.get('codigo', '').strip()
+        cnpj = request.args.get('cnpj', '').strip()
+        nome = request.args.get('nome', '').strip()
+        cod_empresa = request.args.get('cod_empresa', '').strip()
+
+        conn = psycopg2.connect(**DB_CONFIG)
+        conn.autocommit = True  # Evita problemas de transacao abortada
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cnpj_fornecedor = None
+        nome_fornecedor = None
+
+        # Se busca por codigo de produto, primeiro encontrar o fornecedor
+        if codigo:
+            cursor.execute("""
+                SELECT cnpj_fornecedor, nome_fornecedor
+                FROM cadastro_produtos_completo
+                WHERE cod_produto = %s
+                LIMIT 1
+            """, [codigo])
+            produto = cursor.fetchone()
+
+            # Se nao encontrou por codigo exato, buscar por LIKE
+            if not produto:
+                cursor.execute("""
+                    SELECT cnpj_fornecedor, nome_fornecedor
+                    FROM cadastro_produtos_completo
+                    WHERE cod_produto LIKE %s
+                    LIMIT 1
+                """, [f"%{codigo}%"])
+                produto = cursor.fetchone()
+
+            if produto:
+                cnpj_fornecedor = produto['cnpj_fornecedor']
+                nome_fornecedor = produto['nome_fornecedor']
+
+        # Se busca por CNPJ
+        elif cnpj:
+            # Normalizar CNPJ (remover formatacao e adicionar zeros)
+            cnpj_limpo = cnpj.replace('.', '').replace('/', '').replace('-', '').strip()
+            if len(cnpj_limpo) < 14:
+                cnpj_limpo = cnpj_limpo.zfill(14)
+            cnpj_fornecedor = cnpj_limpo
+
+            # Buscar nome do fornecedor
+            cursor.execute("""
+                SELECT DISTINCT nome_fornecedor
+                FROM cadastro_produtos_completo
+                WHERE cnpj_fornecedor = %s
+                LIMIT 1
+            """, [cnpj_fornecedor])
+            forn = cursor.fetchone()
+            if forn:
+                nome_fornecedor = forn['nome_fornecedor']
+
+        # Se busca por nome
+        elif nome:
+            cursor.execute("""
+                SELECT DISTINCT cnpj_fornecedor, nome_fornecedor
+                FROM cadastro_produtos_completo
+                WHERE UPPER(nome_fornecedor) LIKE UPPER(%s)
+                AND cnpj_fornecedor IS NOT NULL
+                LIMIT 1
+            """, [f"%{nome}%"])
+            forn = cursor.fetchone()
+            if forn:
+                cnpj_fornecedor = forn['cnpj_fornecedor']
+                nome_fornecedor = forn['nome_fornecedor']
+
+        if not cnpj_fornecedor:
+            if conn:
+                conn.close()
+            return jsonify({
+                'success': False,
+                'mensagem': 'Fornecedor nao encontrado com os filtros informados'
+            })
+
+        # Buscar parametros do fornecedor
+        fornecedor_params = None
+        parametros_cadastrados = False
+
+        # Verificar se tabela de parametros existe
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'parametros_fornecedor'
+            )
+        """)
+        tabela_params_existe = cursor.fetchone()['exists']
+
+        if tabela_params_existe:
+            query_params = """
+                SELECT cnpj_fornecedor, nome_fornecedor, cod_empresa, tipo_destino,
+                       lead_time_dias, ciclo_pedido_dias, pedido_minimo_valor
+                FROM parametros_fornecedor
+                WHERE cnpj_fornecedor = %s AND ativo = TRUE
+            """
+            params_list = [cnpj_fornecedor]
+
+            if cod_empresa:
+                query_params += " AND cod_empresa = %s"
+                params_list.append(int(cod_empresa))
+
+            query_params += " ORDER BY cod_empresa LIMIT 1"
+            cursor.execute(query_params, params_list)
+            fornecedor_params = cursor.fetchone()
+            parametros_cadastrados = fornecedor_params is not None
+
+        # Montar dados do fornecedor
+        fornecedor = {
+            'cnpj_fornecedor': cnpj_fornecedor,
+            'nome_fornecedor': nome_fornecedor,
+            'cod_empresa': int(cod_empresa) if cod_empresa else (fornecedor_params['cod_empresa'] if fornecedor_params else None),
+            'tipo_destino': fornecedor_params['tipo_destino'] if fornecedor_params else 'LOJA',
+            'lead_time_dias': fornecedor_params['lead_time_dias'] if fornecedor_params else 15,
+            'ciclo_pedido_dias': fornecedor_params['ciclo_pedido_dias'] if fornecedor_params else 7,
+            'pedido_minimo_valor': float(fornecedor_params['pedido_minimo_valor']) if fornecedor_params and fornecedor_params['pedido_minimo_valor'] else 0,
+            'parametros_cadastrados': parametros_cadastrados
+        }
+
+        # Buscar produtos do fornecedor - query simplificada e robusta
+        cod_empresa_filter = int(cod_empresa) if cod_empresa else None
+
+        # Verificar quais tabelas existem para montar query dinamicamente
+        cursor.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_name IN ('cadastro_produtos', 'estoque_posicao_atual', 'situacao_compra_itens')
+        """)
+        tabelas_existentes = [row['table_name'] for row in cursor.fetchall()]
+
+        # Query base - sempre funciona
+        produtos = []
+        cursor.execute("""
+            SELECT cod_produto, descricao, categoria, codigo_linha, descricao_linha
+            FROM cadastro_produtos_completo
+            WHERE cnpj_fornecedor = %s AND ativo = TRUE
+            ORDER BY descricao
+            LIMIT 500
+        """, [cnpj_fornecedor])
+        produtos_base = cursor.fetchall()
+
+        # Enriquecer com dados adicionais se as tabelas existirem
+        for p in produtos_base:
+            produto = dict(p)
+            produto['curva_abc'] = None
+            produto['preco_custo'] = None
+            produto['sit_compra'] = None
+
+            # Buscar curva ABC
+            if 'cadastro_produtos' in tabelas_existentes:
+                try:
+                    cursor.execute("""
+                        SELECT curva_abc FROM cadastro_produtos
+                        WHERE codigo::text = %s
+                        LIMIT 1
+                    """, [produto['cod_produto']])
+                    abc = cursor.fetchone()
+                    if abc:
+                        produto['curva_abc'] = abc['curva_abc']
+                except:
+                    pass
+
+            # Buscar CUE (Custo Unitario de Entrada) da tabela estoque_posicao_atual
+            # Mesma fonte usada no calculo do pedido ao fornecedor
+            if 'estoque_posicao_atual' in tabelas_existentes:
+                try:
+                    if cod_empresa_filter:
+                        cursor.execute("""
+                            SELECT cue FROM estoque_posicao_atual
+                            WHERE codigo::text = %s AND cod_empresa = %s
+                            LIMIT 1
+                        """, [produto['cod_produto'], cod_empresa_filter])
+                    else:
+                        cursor.execute("""
+                            SELECT cue FROM estoque_posicao_atual
+                            WHERE codigo::text = %s
+                            ORDER BY cod_empresa
+                            LIMIT 1
+                        """, [produto['cod_produto']])
+                    cue = cursor.fetchone()
+                    if cue and cue['cue']:
+                        produto['preco_custo'] = float(cue['cue'])
+                except:
+                    pass
+
+            # Buscar situacao compra
+            if 'situacao_compra_itens' in tabelas_existentes:
+                try:
+                    if cod_empresa_filter:
+                        cursor.execute("""
+                            SELECT sit_compra FROM situacao_compra_itens
+                            WHERE codigo::text = %s AND cod_empresa = %s
+                            LIMIT 1
+                        """, [produto['cod_produto'], cod_empresa_filter])
+                    else:
+                        cursor.execute("""
+                            SELECT sit_compra FROM situacao_compra_itens
+                            WHERE codigo::text = %s
+                            LIMIT 1
+                        """, [produto['cod_produto']])
+                    sit = cursor.fetchone()
+                    if sit:
+                        produto['sit_compra'] = sit['sit_compra']
+                except:
+                    pass
+
+            produtos.append(produto)
+
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'fornecedor': fornecedor,
+            'produtos': produtos
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+        return jsonify({
+            'success': False,
+            'mensagem': f'Erro ao buscar: {str(e)}'
+        }), 500
+
+
+@app.route('/api/central-parametros/salvar', methods=['POST'])
+def api_central_parametros_salvar():
+    """
+    Salva ou atualiza parametros de um fornecedor.
+    """
+    try:
+        dados = request.get_json()
+
+        cnpj = dados.get('cnpj_fornecedor')
+        nome = dados.get('nome_fornecedor', '')
+        cod_empresa = dados.get('cod_empresa')
+        lead_time = dados.get('lead_time_dias', 15)
+        ciclo = dados.get('ciclo_pedido_dias', 7)
+        fat_minimo = dados.get('pedido_minimo_valor', 0)
+        tipo_destino = dados.get('tipo_destino', 'LOJA')
+
+        if not cnpj:
+            return jsonify({'success': False, 'mensagem': 'CNPJ e obrigatorio'})
+
+        if not cod_empresa:
+            return jsonify({'success': False, 'mensagem': 'Codigo da empresa e obrigatorio'})
+
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+
+        # Criar tabela se nao existir
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS parametros_fornecedor (
+                id SERIAL PRIMARY KEY,
+                cnpj_fornecedor VARCHAR(20) NOT NULL,
+                nome_fornecedor VARCHAR(200),
+                cod_empresa INTEGER NOT NULL,
+                tipo_destino VARCHAR(20) DEFAULT 'LOJA',
+                lead_time_dias INTEGER DEFAULT 15,
+                ciclo_pedido_dias INTEGER DEFAULT 7,
+                pedido_minimo_valor DECIMAL(12,2) DEFAULT 0,
+                data_importacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ativo BOOLEAN DEFAULT TRUE,
+                UNIQUE(cnpj_fornecedor, cod_empresa)
+            )
+        """)
+
+        # Inserir ou atualizar
+        cursor.execute("""
+            INSERT INTO parametros_fornecedor
+                (cnpj_fornecedor, nome_fornecedor, cod_empresa, tipo_destino,
+                 lead_time_dias, ciclo_pedido_dias, pedido_minimo_valor, ativo)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
+            ON CONFLICT (cnpj_fornecedor, cod_empresa) DO UPDATE SET
+                nome_fornecedor = EXCLUDED.nome_fornecedor,
+                tipo_destino = EXCLUDED.tipo_destino,
+                lead_time_dias = EXCLUDED.lead_time_dias,
+                ciclo_pedido_dias = EXCLUDED.ciclo_pedido_dias,
+                pedido_minimo_valor = EXCLUDED.pedido_minimo_valor,
+                data_importacao = CURRENT_TIMESTAMP,
+                ativo = TRUE
+        """, [cnpj, nome, cod_empresa, tipo_destino, lead_time, ciclo, fat_minimo])
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'mensagem': 'Parametros salvos com sucesso'
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'mensagem': f'Erro ao salvar: {str(e)}'
+        }), 500
+
+
+# ============================================================================
 # APIS DE DEMANDA VALIDADA E PEDIDO PLANEJADO (v6.0)
 # ============================================================================
 
