@@ -1620,6 +1620,8 @@ def api_pedido_fornecedor_integrado():
                                 'cobertura_pos_pedido_dias': 999,
                                 'quantidade_pedido': 0,
                                 'valor_pedido': 0,
+                                'preco_custo': 0,
+                                'cue': 0,
                                 'deve_pedir': False,
                                 'bloqueado': False,
                                 'erro_processamento': resultado.get('erro', 'Erro desconhecido')
@@ -5704,7 +5706,7 @@ def api_gerar_previsao_banco_v2_interno():
         # Gerar datas de previsão BASEADO NO PERÍODO SELECIONADO PELO USUÁRIO
         datas_previsao = []
         from datetime import timedelta
-        import pandas as pd
+        # pd já importado globalmente na linha 9
 
         if granularidade == 'mensal' and mes_inicio and ano_inicio:
             # Usar as datas que o usuário selecionou

@@ -737,6 +737,7 @@ class PedidoFornecedorIntegrado:
 
             # Valores (usando CUE importado) - sanitizar valores
             'preco_custo': round(sanitizar_float(preco_custo, 0), 2),
+            'cue': round(sanitizar_float(preco_custo, 0), 2),  # Alias para compatibilidade com transferencias
             'valor_pedido': round(sanitizar_float(valor_pedido, 0), 2),
 
             # Alertas - usar valor sanitizado para comparacao

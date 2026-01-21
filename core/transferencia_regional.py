@@ -499,7 +499,8 @@ class TransferenciaRegional:
                 ot.cobertura_origem_dias,
                 ot.loja_destino, ot.nome_loja_destino, ot.estoque_destino,
                 ot.cobertura_destino_dias,
-                ot.qtd_sugerida, ot.valor_estimado, ot.urgencia, ot.status
+                ot.qtd_sugerida, ot.valor_estimado, ot.urgencia, ot.status,
+                ot.cue
             FROM oportunidades_transferencia ot
             LEFT JOIN grupos_transferencia gt ON ot.grupo_id = gt.id
             WHERE ot.data_calculo >= NOW() - INTERVAL '%s hours'
@@ -542,6 +543,7 @@ class TransferenciaRegional:
                 'valor_estimado': float(r[17]) if r[17] else 0,
                 'urgencia': r[18],
                 'status': r[19],
+                'cue': float(r[20]) if r[20] else 0,
                 'urgencia_ordem': prioridade_urgencia.get(r[18], 5)
             })
 
