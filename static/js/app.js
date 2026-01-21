@@ -1031,9 +1031,59 @@ function exibirTabelaFornecedorItem(dados) {
 
     let html = '';
 
+    // Função auxiliar para calcular prioridade do alerta de um item
+    function calcularPrioridadeAlerta(item, smartAlerts) {
+        const variacao = item.Variacao_YoY_Percentual;
+
+        // Verificar se há alertas críticos para este SKU
+        if (smartAlerts) {
+            const alertasCriticos = smartAlerts.filter(a =>
+                a.sku === item.SKU && a.tipo === 'CRITICAL'
+            );
+            if (alertasCriticos.length > 0) {
+                return 1; // 🔴 Crítico - Prioridade máxima
+            }
+
+            const alertasWarning = smartAlerts.filter(a =>
+                a.sku === item.SKU && a.tipo === 'WARNING'
+            );
+            if (alertasWarning.length > 0) {
+                return 2; // 🟡 Alerta
+            }
+        }
+
+        // Se não há alerta smart, usar lógica baseada na variação
+        if (variacao === null || variacao === undefined) {
+            return 5; // ⚪ Sem dados - menor prioridade
+        }
+
+        const absVariacao = Math.abs(variacao);
+        if (absVariacao > 50) {
+            return 2; // 🟡 Alerta (variação > 50%)
+        } else if (absVariacao > 20) {
+            return 3; // 🔵 Atenção (variação > 20%)
+        } else {
+            return 4; // 🟢 Normal (variação <= 20%)
+        }
+    }
+
     // Para cada fornecedor
     Object.keys(porFornecedor).sort().forEach(fornecedor => {
-        const itensFornecedor = porFornecedor[fornecedor];
+        let itensFornecedor = porFornecedor[fornecedor];
+
+        // Ordenar itens por criticidade do alerta (mais críticos primeiro)
+        itensFornecedor = itensFornecedor.map(item => ({
+            ...item,
+            _prioridade: calcularPrioridadeAlerta(item, dados.smart_alerts),
+            _absVariacao: Math.abs(item.Variacao_YoY_Percentual || 0)
+        })).sort((a, b) => {
+            // Primeiro por prioridade (menor = mais crítico)
+            if (a._prioridade !== b._prioridade) {
+                return a._prioridade - b._prioridade;
+            }
+            // Depois por variação absoluta (maior primeiro)
+            return b._absVariacao - a._absVariacao;
+        });
 
         // Calcular totalizadores do fornecedor
         let demandaPrevistaTotal = 0;
