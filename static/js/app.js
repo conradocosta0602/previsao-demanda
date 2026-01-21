@@ -2361,8 +2361,33 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
         bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1;">-</td>`;
         bodyHtml += `</tr>`;
 
+        // Função para calcular prioridade do alerta baseado no emoji
+        function getPrioridadeAlerta(emoji) {
+            const prioridades = {
+                '🔴': 1,  // Crítico
+                '🟡': 2,  // Alerta
+                '🔵': 3,  // Atenção
+                '🟢': 4,  // Normal
+                '⚪': 5   // Sem dados
+            };
+            return prioridades[emoji] || 5;
+        }
+
+        // Ordenar itens por criticidade do alerta (mais críticos primeiro)
+        const itensOrdenados = [...itensFornecedor].sort((a, b) => {
+            const prioridadeA = getPrioridadeAlerta(a.sinal_emoji);
+            const prioridadeB = getPrioridadeAlerta(b.sinal_emoji);
+
+            // Primeiro por prioridade (menor = mais crítico)
+            if (prioridadeA !== prioridadeB) {
+                return prioridadeA - prioridadeB;
+            }
+            // Depois por variação absoluta (maior primeiro)
+            return Math.abs(b.variacao_percentual || 0) - Math.abs(a.variacao_percentual || 0);
+        });
+
         // Linhas dos itens (inicialmente visíveis)
-        itensFornecedor.forEach(item => {
+        itensOrdenados.forEach(item => {
             bodyHtml += `<tr class="linha-item" data-fornecedor="${fornecedorId}" style="background: white;">`;
             bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; font-size: 0.85em;">${item.cod_produto}</td>`;
             bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; font-size: 0.85em; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${item.descricao}">${item.descricao}</td>`;
