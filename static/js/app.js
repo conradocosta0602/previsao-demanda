@@ -2189,10 +2189,10 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
         }
     }
 
-    // Criar cabeçalho
+    // Criar cabeçalho - Código e Descrição congelados
     let headerHtml = '<tr style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; font-size: 0.8em;">';
-    headerHtml += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd; position: sticky; left: 0; background: linear-gradient(135deg, #10b981 0%, #059669 100%); z-index: 11; min-width: 50px;">Código</th>';
-    headerHtml += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd; min-width: 200px;">Descrição</th>';
+    headerHtml += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd; position: sticky; left: 0; background: linear-gradient(135deg, #10b981 0%, #059669 100%); z-index: 12; min-width: 70px; width: 70px;">Código</th>';
+    headerHtml += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd; position: sticky; left: 70px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); z-index: 12; min-width: 220px; width: 220px;">Descrição</th>';
 
     // Colunas de períodos
     periodos.forEach(periodo => {
@@ -2256,10 +2256,13 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
         // Criar ID seguro para o fornecedor (remover caracteres especiais)
         const fornecedorId = fornecedor.replace(/[^a-zA-Z0-9]/g, '_');
 
-        // Linha do fornecedor (cabeçalho do grupo - colapsável)
+        // Linha do fornecedor (cabeçalho do grupo - colapsável) - duas colunas congeladas
         bodyHtml += `<tr class="linha-fornecedor" data-fornecedor="${fornecedorId}" onclick="toggleFornecedor('${fornecedorId}')" style="background: #e0f2f1; cursor: pointer; font-weight: bold;">`;
-        bodyHtml += `<td colspan="2" style="padding: 10px; border: 1px solid #ddd; position: sticky; left: 0; background: #e0f2f1; z-index: 5;">`;
-        bodyHtml += `<span class="toggle-icon" id="toggle-${fornecedorId}">▼</span> ${fornecedor} (${itensFornecedor.length} itens)`;
+        bodyHtml += `<td style="padding: 10px; border: 1px solid #ddd; position: sticky; left: 0; background: #e0f2f1; z-index: 6; width: 70px;">`;
+        bodyHtml += `<span class="toggle-icon" id="toggle-${fornecedorId}">▼</span>`;
+        bodyHtml += `</td>`;
+        bodyHtml += `<td style="padding: 10px; border: 1px solid #ddd; position: sticky; left: 70px; background: #e0f2f1; z-index: 6; width: 220px;">`;
+        bodyHtml += `${fornecedor} (${itensFornecedor.length} itens)`;
         bodyHtml += `</td>`;
 
         // Totais por período do fornecedor
@@ -2321,8 +2324,8 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
         // Linhas dos itens (inicialmente visíveis)
         itensOrdenados.forEach(item => {
             bodyHtml += `<tr class="linha-item" data-fornecedor="${fornecedorId}" style="background: white;">`;
-            bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; font-size: 0.85em;">${item.cod_produto}</td>`;
-            bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; font-size: 0.85em; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${item.descricao}">${item.descricao}</td>`;
+            bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; font-size: 0.85em; min-width: 70px; width: 70px;">${item.cod_produto}</td>`;
+            bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 70px; background: white; z-index: 5; font-size: 0.85em; min-width: 220px; width: 220px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${item.descricao}">${item.descricao}</td>`;
 
             // Valores por período
             if (item.previsao_por_periodo && item.previsao_por_periodo.length > 0) {
