@@ -23,6 +23,7 @@ from core.outlier_detector import auto_clean_outliers
 from core.validation import validate_series
 from core.seasonality_detector import detect_seasonality
 from core.auto_logger import get_auto_logger
+from core.ruptura_sanitizer import RupturaSanitizer
 
 # Configuração do Flask
 app = Flask(__name__)
@@ -5429,18 +5430,59 @@ def api_gerar_previsao_banco_v2_interno():
         print(f"  Encontrados {len(lista_itens)} itens", flush=True)
 
         # =====================================================
-        # PASSO 2: BUSCAR VENDAS HISTÓRICAS POR ITEM
+        # PASSO 2: BUSCAR VENDAS HISTÓRICAS POR ITEM (COM ESTOQUE PARA SANEAMENTO)
         # =====================================================
-        print(f"\n[PASSO 2] Buscando vendas históricas por item...", flush=True)
+        print(f"\n[PASSO 2] Buscando vendas históricas por item (com dados de estoque)...", flush=True)
+
+        # Verificar se a tabela de estoque existe (para graceful degradation)
+        tabela_estoque_existe = False
+        try:
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'historico_estoque_diario'
+                )
+            """)
+            tabela_estoque_existe = cursor.fetchone()[0] if cursor.fetchone else False
+            # Verificação alternativa para RealDictCursor
+            cursor.execute("SELECT to_regclass('public.historico_estoque_diario') IS NOT NULL as existe")
+            result = cursor.fetchone()
+            tabela_estoque_existe = result['existe'] if result else False
+        except Exception as e:
+            print(f"  AVISO: Não foi possível verificar tabela de estoque: {e}", flush=True)
+            tabela_estoque_existe = False
+
+        if tabela_estoque_existe:
+            print(f"  Tabela historico_estoque_diario encontrada - saneamento de rupturas ATIVO", flush=True)
+        else:
+            print(f"  Tabela historico_estoque_diario NÃO encontrada - saneamento de rupturas DESATIVADO", flush=True)
+
+        # Query com LEFT JOIN para trazer dados de estoque (para detecção de rupturas)
+        # Se a tabela não existir, usa query sem o JOIN (graceful degradation)
+        if tabela_estoque_existe:
+            # Query COM dados de estoque
+            join_estoque = """
+                LEFT JOIN historico_estoque_diario e
+                    ON h.data = e.data
+                    AND h.codigo = e.codigo
+                    AND h.cod_empresa = e.cod_empresa
+            """
+            select_estoque = "AVG(COALESCE(e.estoque_diario, -1)) as estoque_medio"
+        else:
+            # Query SEM dados de estoque (fallback)
+            join_estoque = ""
+            select_estoque = "-1 as estoque_medio"
 
         if granularidade == 'mensal':
             query_vendas = f"""
                 SELECT
                     h.codigo as cod_produto,
                     DATE_TRUNC('month', h.data) as periodo,
-                    SUM(h.qtd_venda) as qtd_venda
+                    SUM(h.qtd_venda) as qtd_venda,
+                    {select_estoque}
                 FROM historico_vendas_diario h
                 JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                {join_estoque}
                 WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
                 {where_sql}
                 GROUP BY h.codigo, DATE_TRUNC('month', h.data)
@@ -5451,9 +5493,11 @@ def api_gerar_previsao_banco_v2_interno():
                 SELECT
                     h.codigo as cod_produto,
                     DATE_TRUNC('week', h.data) as periodo,
-                    SUM(h.qtd_venda) as qtd_venda
+                    SUM(h.qtd_venda) as qtd_venda,
+                    {select_estoque}
                 FROM historico_vendas_diario h
                 JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                {join_estoque}
                 WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
                 {where_sql}
                 GROUP BY h.codigo, DATE_TRUNC('week', h.data)
@@ -5464,9 +5508,11 @@ def api_gerar_previsao_banco_v2_interno():
                 SELECT
                     h.codigo as cod_produto,
                     h.data as periodo,
-                    SUM(h.qtd_venda) as qtd_venda
+                    SUM(h.qtd_venda) as qtd_venda,
+                    {select_estoque}
                 FROM historico_vendas_diario h
                 JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+                {join_estoque}
                 WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
                 {where_sql}
                 GROUP BY h.codigo, h.data
@@ -5474,21 +5520,78 @@ def api_gerar_previsao_banco_v2_interno():
             """
 
         cursor.execute(query_vendas, params)
-        vendas_por_item = cursor.fetchall()
+        vendas_por_item_raw = cursor.fetchall()
 
-        # Organizar vendas por item
+        # =====================================================
+        # PASSO 2.1: SANEAR RUPTURAS NO HISTÓRICO
+        # =====================================================
+        print(f"\n[PASSO 2.1] Saneando rupturas no histórico...", flush=True)
+
+        # Organizar dados em DataFrame para saneamento
+        dados_para_sanear = []
+        for venda in vendas_por_item_raw:
+            estoque = float(venda['estoque_medio']) if venda['estoque_medio'] is not None else -1
+            dados_para_sanear.append({
+                'cod_produto': venda['cod_produto'],
+                'periodo': venda['periodo'].strftime('%Y-%m-%d') if venda['periodo'] else None,
+                'qtd_venda': float(venda['qtd_venda']) if venda['qtd_venda'] else 0,
+                'estoque': estoque if estoque >= 0 else None  # -1 significa sem dados
+            })
+
+        df_historico = pd.DataFrame(dados_para_sanear)
+
+        # Aplicar saneamento de rupturas
+        sanitizer = RupturaSanitizer()
+        estatisticas_saneamento = {'total_rupturas': 0, 'rupturas_saneadas': 0, 'metodos': {}}
+
+        if len(df_historico) > 0 and 'estoque' in df_historico.columns:
+            # Adicionar coluna dummy de loja para o sanitizer
+            df_historico['cod_empresa'] = 1
+
+            df_saneado, stats = sanitizer.sanear_serie_temporal(
+                df_historico,
+                col_data='periodo',
+                col_venda='qtd_venda',
+                col_estoque='estoque',
+                col_produto='cod_produto',
+                col_loja='cod_empresa',
+                granularidade=granularidade
+            )
+
+            estatisticas_saneamento = {
+                'total_rupturas': stats.get('total_rupturas_detectadas', 0),
+                'rupturas_saneadas': stats.get('rupturas_saneadas', 0),
+                'metodos': stats.get('metodos_usados', {})
+            }
+
+            print(f"  Rupturas detectadas: {estatisticas_saneamento['total_rupturas']}", flush=True)
+            print(f"  Rupturas saneadas: {estatisticas_saneamento['rupturas_saneadas']}", flush=True)
+            if estatisticas_saneamento['metodos']:
+                for metodo, qtd in estatisticas_saneamento['metodos'].items():
+                    print(f"    - {metodo}: {qtd}", flush=True)
+        else:
+            df_saneado = df_historico.copy()
+            df_saneado['qtd_venda_saneada'] = df_saneado['qtd_venda']
+            df_saneado['foi_saneado'] = False
+            print(f"  Sem dados de estoque - saneamento não aplicado", flush=True)
+
+        # Organizar vendas por item (usando valores saneados)
         vendas_item_dict = {}
         todas_datas = set()
-        for venda in vendas_por_item:
-            cod = venda['cod_produto']
+        for _, row in df_saneado.iterrows():
+            cod = row['cod_produto']
             if cod not in vendas_item_dict:
                 vendas_item_dict[cod] = []
-            data_str = venda['periodo'].strftime('%Y-%m-%d') if venda['periodo'] else None
+            data_str = row['periodo']
             if data_str:
                 todas_datas.add(data_str)
+            # Usar qtd_venda_saneada se disponível, senão qtd_venda original
+            qtd = row.get('qtd_venda_saneada', row['qtd_venda'])
             vendas_item_dict[cod].append({
                 'periodo': data_str,
-                'qtd_venda': float(venda['qtd_venda']) if venda['qtd_venda'] else 0
+                'qtd_venda': float(qtd) if qtd else 0,
+                'qtd_venda_original': float(row['qtd_venda']) if row['qtd_venda'] else 0,
+                'foi_saneado': row.get('foi_saneado', False)
             })
 
         # Ordenar datas
@@ -6575,7 +6678,13 @@ def api_gerar_previsao_banco_v2_interno():
                 'total_itens': len(relatorio_itens),
                 'granularidade': granularidade
             },
-            'estatisticas_modelos': contagem_modelos
+            'estatisticas_modelos': contagem_modelos,
+            'saneamento_rupturas': {
+                'total_rupturas_detectadas': estatisticas_saneamento.get('total_rupturas', 0),
+                'rupturas_saneadas': estatisticas_saneamento.get('rupturas_saneadas', 0),
+                'metodos_usados': estatisticas_saneamento.get('metodos', {}),
+                'descricao': 'Rupturas (venda=0 E estoque=0) foram substituídas por valores estimados usando interpolação sazonal'
+            }
         }
 
         cursor.close()

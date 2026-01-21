@@ -52,6 +52,7 @@ O sistema utiliza uma abordagem **Bottom-Up** que analisa cada produto individua
 - Limitadores de tendencia (queda >40% limitada a -40%, alta >50% limitada a +50%)
 - Sazonalidade anual (12 meses ou 52 semanas)
 - Deteccao automatica de outliers (IQR + Z-Score)
+- **Saneamento de rupturas**: Substitui zeros de ruptura por valores estimados via interpolacao sazonal
 
 ### Pedido ao Fornecedor Integrado
 
@@ -253,6 +254,28 @@ Para evitar previsoes irrealistas:
 - Historico: 100 un/mes
 - Tendencia detectada: -60% (queda)
 - Resultado: Tendencia limitada a -40%, previsao ajustada para 60 un/mes
+
+### Saneamento de Rupturas
+
+O sistema detecta automaticamente periodos de ruptura (quando venda=0 E estoque=0) e substitui por valores estimados para evitar distorcao na previsao.
+
+**Hierarquia de Estimacao:**
+
+| Prioridade | Metodo | Descricao |
+|------------|--------|-----------|
+| 1 | Interpolacao Sazonal | Usa valor do mesmo periodo do ano anterior |
+| 2 | Media Adjacentes | Media dos periodos imediatamente antes e depois |
+| 3 | Mediana do Periodo | Mediana dos periodos com venda > 0 |
+
+**Exemplo:**
+- Ruptura em: Janeiro/2025
+- Busca: Janeiro/2024 → encontrou 95 unidades
+- Resultado: Substitui o zero por 95 (metodo: sazonal_ano_anterior)
+
+**Rastreabilidade:**
+- Cada registro saneado e marcado com flag `foi_saneado = true`
+- Metodo utilizado e registrado em `metodo_saneamento`
+- Estatisticas de saneamento sao retornadas na API
 
 ### Granularidades Suportadas
 
@@ -570,6 +593,12 @@ R: Diferencas de 5-15% sao normais devido a janelas adaptativas, agregacao e fat
 
 **P: O que significam os limitadores de tendencia?**
 R: Quedas >40% sao limitadas a -40% (protecao contra dados anomalos). Altas >50% sao limitadas a +50% (protecao contra otimismo excessivo).
+
+**P: Como a ferramenta trata rupturas (falta de estoque) no historico?**
+R: O sistema detecta automaticamente rupturas (venda=0 E estoque=0) e substitui por valores estimados usando interpolacao sazonal. A hierarquia de estimacao e: (1) mesmo periodo do ano anterior, (2) media dos periodos adjacentes, (3) mediana do periodo. Isso evita que zeros de ruptura subestimem a previsao de demanda.
+
+**P: Preciso da coluna de estoque para o saneamento funcionar?**
+R: Sim. A tabela `historico_estoque_diario` deve estar preenchida. Se nao houver dados de estoque, o sistema nao consegue distinguir entre "nao vendeu porque nao teve demanda" e "nao vendeu porque nao tinha estoque".
 
 ### Pedido ao Fornecedor
 
