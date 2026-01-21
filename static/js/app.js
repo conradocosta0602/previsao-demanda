@@ -212,7 +212,7 @@ function mostrarResultados(data) {
     // Configurar dados e tabelas
     if (data.grafico_data) {
         configurarGraficoYoY(data.grafico_data);  // Gráfico de comparação YoY mensal
-        exibirTabelaFornecedorItem(data.grafico_data);  // Tabela fornecedor/item
+        exibirTabelaFornecedorItem(data.grafico_data, data.smart_alerts);  // Tabela fornecedor/item
     }
 }
 
@@ -1012,7 +1012,7 @@ function getTipoBorda(tipo) {
 }
 
 // ===== TABELA FORNECEDOR/ITEM =====
-function exibirTabelaFornecedorItem(dados) {
+function exibirTabelaFornecedorItem(dados, smartAlerts) {
     if (!dados.fornecedor_item || dados.fornecedor_item.length === 0) {
         return;
     }
@@ -1032,19 +1032,19 @@ function exibirTabelaFornecedorItem(dados) {
     let html = '';
 
     // Função auxiliar para calcular prioridade do alerta de um item
-    function calcularPrioridadeAlerta(item, smartAlerts) {
+    function calcularPrioridadeAlerta(item, alerts) {
         const variacao = item.Variacao_YoY_Percentual;
 
         // Verificar se há alertas críticos para este SKU
-        if (smartAlerts) {
-            const alertasCriticos = smartAlerts.filter(a =>
+        if (alerts && alerts.length > 0) {
+            const alertasCriticos = alerts.filter(a =>
                 a.sku === item.SKU && a.tipo === 'CRITICAL'
             );
             if (alertasCriticos.length > 0) {
                 return 1; // 🔴 Crítico - Prioridade máxima
             }
 
-            const alertasWarning = smartAlerts.filter(a =>
+            const alertasWarning = alerts.filter(a =>
                 a.sku === item.SKU && a.tipo === 'WARNING'
             );
             if (alertasWarning.length > 0) {
@@ -1074,7 +1074,7 @@ function exibirTabelaFornecedorItem(dados) {
         // Ordenar itens por criticidade do alerta (mais críticos primeiro)
         itensFornecedor = itensFornecedor.map(item => ({
             ...item,
-            _prioridade: calcularPrioridadeAlerta(item, dados.smart_alerts),
+            _prioridade: calcularPrioridadeAlerta(item, smartAlerts),
             _absVariacao: Math.abs(item.Variacao_YoY_Percentual || 0)
         })).sort((a, b) => {
             // Primeiro por prioridade (menor = mais crítico)
@@ -1153,8 +1153,8 @@ function exibirTabelaFornecedorItem(dados) {
             let alertTitle = '';
 
             // Verificar se há alertas críticos para este SKU
-            if (dados.smart_alerts) {
-                const alertasCriticos = dados.smart_alerts.filter(a =>
+            if (smartAlerts && smartAlerts.length > 0) {
+                const alertasCriticos = smartAlerts.filter(a =>
                     a.sku === item.SKU &&
                     (a.tipo === 'CRITICAL' || a.tipo === 'WARNING')
                 );
