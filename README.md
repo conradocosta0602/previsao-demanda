@@ -521,6 +521,10 @@ CREATE TABLE parametros_gondola (
 - Badges visuais para transferencias (Enviar/Receber)
 - Ordenacao do Excel por Codigo Filial e CNPJ Fornecedor
 - Botao "Limpar Historico" na tela de transferencias
+- Ordenacao por criticidade de alertas na tabela de previsao detalhada
+
+**Remocoes:**
+- Upload de arquivo Excel na tela de Previsao de Demanda (agora somente via banco de dados)
 
 **Seguranca:**
 - Credenciais do banco via variaveis de ambiente

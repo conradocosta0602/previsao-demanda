@@ -40,69 +40,7 @@ function parseLocalDate(dateStr) {
     return new Date(dateStr + 'T00:00:00');
 }
 
-document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    // Esconder seções
-    document.getElementById('results').style.display = 'none';
-    document.getElementById('error').style.display = 'none';
-
-    // Mostrar progresso
-    document.getElementById('progress').style.display = 'block';
-
-    const formData = new FormData(e.target);
-    const progressFill = document.getElementById('progressFill');
-    const progressText = document.getElementById('progressText');
-
-    // Simular progresso
-    let progress = 0;
-    const progressInterval = setInterval(() => {
-        progress += 2;
-        if (progress <= 90) {
-            progressFill.style.width = progress + '%';
-
-            // Atualizar texto de progresso
-            if (progress < 20) {
-                progressText.textContent = 'Carregando arquivo...';
-            } else if (progress < 40) {
-                progressText.textContent = 'Validando dados...';
-            } else if (progress < 60) {
-                progressText.textContent = 'Tratando rupturas de estoque...';
-            } else if (progress < 80) {
-                progressText.textContent = 'Gerando previsoes...';
-            } else {
-                progressText.textContent = 'Compilando relatorio...';
-            }
-        }
-    }, 200);
-
-    try {
-        // Enviar para backend
-        const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData
-        });
-
-        const data = await response.json();
-
-        clearInterval(progressInterval);
-        progressFill.style.width = '100%';
-        progressText.textContent = 'Concluido!';
-
-        // Pequeno delay para mostrar 100%
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        if (data.success) {
-            mostrarResultados(data);
-        } else {
-            mostrarErro(data.erro);
-        }
-
-    } catch (error) {
-        clearInterval(progressInterval);
-        mostrarErro('Erro de conexao com o servidor: ' + error.message);
-    }
-});
+// Upload de arquivo removido - agora apenas consulta ao banco de dados
 
 function mostrarResultados(data) {
     // Esconder progresso
@@ -1226,29 +1164,7 @@ function exibirTabelaFornecedorItem(dados, smartAlerts) {
 // Variável global para armazenar o gráfico de previsão
 let previsaoChart = null;
 
-// Trocar entre tabs (Upload vs Banco)
-function trocarTab(tipo) {
-    const tabBanco = document.getElementById('tabBanco');
-    const tabUpload = document.getElementById('tabUpload');
-    const formBanco = document.getElementById('formBanco');
-    const formUpload = document.getElementById('formUpload');
-
-    if (tipo === 'banco') {
-        tabBanco.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-        tabBanco.style.color = 'white';
-        tabUpload.style.background = '#e0e0e0';
-        tabUpload.style.color = '#666';
-        formBanco.style.display = 'block';
-        formUpload.style.display = 'none';
-    } else {
-        tabUpload.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-        tabUpload.style.color = 'white';
-        tabBanco.style.background = '#e0e0e0';
-        tabBanco.style.color = '#666';
-        formUpload.style.display = 'block';
-        formBanco.style.display = 'none';
-    }
-}
+// Função trocarTab removida - agora apenas consulta ao banco de dados
 
 // Ajustar limites de previsão baseado na granularidade
 function ajustarLimitesPrevisao() {

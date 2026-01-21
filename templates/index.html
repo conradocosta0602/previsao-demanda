@@ -26,14 +26,8 @@
             <!-- Coluna Esquerda: Upload e Configurações -->
             <div class="sidebar-left">
                 <div class="upload-section-compact card-compact">
-                    <!-- Tabs para alternar entre Banco e Upload -->
-                    <div style="display: flex; gap: 5px; margin-bottom: 15px; border-bottom: 2px solid #e0e0e0;">
-                        <button id="tabBanco" onclick="trocarTab('banco')" style="flex: 1; padding: 10px; border: none; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; cursor: pointer; font-weight: bold; border-radius: 5px 5px 0 0;">
-                            💾 Banco de Dados
-                        </button>
-                        <button id="tabUpload" onclick="trocarTab('upload')" style="flex: 1; padding: 10px; border: none; background: #e0e0e0; color: #666; cursor: pointer; border-radius: 5px 5px 0 0;">
-                            📤 Upload Arquivo
-                        </button>
+                    <div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">
+                        <h3 style="margin: 0; color: #667eea; font-size: 1em;">💾 Consulta do Banco de Dados</h3>
                     </div>
 
                     <!-- FORMULÁRIO BANCO DE DADOS -->
@@ -160,56 +154,12 @@
                         </button>
                     </form>
 
-                    <!-- FORMULÁRIO UPLOAD -->
-                    <form id="uploadForm" enctype="multipart/form-data" style="display: none;">
-                        <div class="file-input-compact">
-                            <input type="file" id="file" name="file" accept=".xlsx,.xls" required>
-                        </div>
-
-                        <div class="config-compact">
-                            <label for="meses_previsao">Períodos:</label>
-                            <input type="number" id="meses_previsao" name="meses_previsao"
-                                   value="6" min="1" max="24">
-                        </div>
-
-                        <div class="config-compact">
-                            <label for="granularidade">Granularidade:</label>
-                            <select id="granularidade" name="granularidade">
-                                <option value="semanal" selected>Semanal</option>
-                                <option value="mensal">Mensal</option>
-                            </select>
-                        </div>
-
-                        <div class="config-compact">
-                            <label for="filiais">Filiais (opcional):</label>
-                            <input type="text" id="filiais" name="filiais"
-                                   placeholder="Ex: 1,2,3 ou deixe vazio para todas"
-                                   style="font-size: 0.9em;">
-                            <small style="color: #666; font-size: 0.75em;">Separe por vírgula</small>
-                        </div>
-
-                        <div class="config-compact">
-                            <label for="produtos">Produtos (opcional):</label>
-                            <input type="text" id="produtos" name="produtos"
-                                   placeholder="Ex: 432212,432214 ou deixe vazio"
-                                   style="font-size: 0.9em;">
-                            <small style="color: #666; font-size: 0.75em;">Separe por vírgula</small>
-                        </div>
-
-                        <button type="submit" class="btn-primary-compact">
-                            Processar
-                        </button>
-                    </form>
-
                     <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
                         <a href="/eventos_simples" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 8px;">
                             📅 Gerenciar Eventos →
                         </a>
-                        <a href="/simulador" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px; margin-bottom: 8px;">
+                        <a href="/simulador" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px;">
                             🎯 Simulador de Cenários →
-                        </a>
-                        <a href="/reabastecimento" class="btn-secondary-compact" style="display: block; text-align: center; text-decoration: none; padding: 8px;">
-                            📦 Ir para Reabastecimento →
                         </a>
                     </div>
                 </div>
