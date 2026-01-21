@@ -2204,6 +2204,7 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
     headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 70px;">Ano Ant.</th>';
     headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 60px;">Var. %</th>';
     headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 50px;">Alerta</th>';
+    headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 70px;">Situação</th>';
     headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 80px;">Método</th>';
     headerHtml += '</tr>';
 
@@ -2275,6 +2276,7 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
 
         bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1;">-</td>`;
         bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1;">-</td>`;
+        bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1;">-</td>`;
         bodyHtml += `</tr>`;
 
         // Função para calcular prioridade do alerta baseado no emoji
@@ -2289,16 +2291,30 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
             return prioridades[emoji] || 5;
         }
 
-        // Ordenar itens por criticidade do alerta (mais críticos primeiro)
+        // Função para verificar se item é Fora de Linha ou Encomenda
+        function isSitCompraExcluido(sitCompra) {
+            return sitCompra === 'FL' || sitCompra === 'EN';
+        }
+
+        // Ordenar itens: primeiro por sit_compra (FL/EN por último), depois por criticidade
         const itensOrdenados = [...itensFornecedor].sort((a, b) => {
+            // Primeiro: itens FL/EN vão para o final
+            const aExcluido = isSitCompraExcluido(a.sit_compra);
+            const bExcluido = isSitCompraExcluido(b.sit_compra);
+
+            if (aExcluido !== bExcluido) {
+                return aExcluido ? 1 : -1;  // Excluídos vão para o final
+            }
+
+            // Segundo: por prioridade de alerta (menor = mais crítico)
             const prioridadeA = getPrioridadeAlerta(a.sinal_emoji);
             const prioridadeB = getPrioridadeAlerta(b.sinal_emoji);
 
-            // Primeiro por prioridade (menor = mais crítico)
             if (prioridadeA !== prioridadeB) {
                 return prioridadeA - prioridadeB;
             }
-            // Depois por variação absoluta (maior primeiro)
+
+            // Terceiro: por variação absoluta (maior primeiro)
             return Math.abs(b.variacao_percentual || 0) - Math.abs(a.variacao_percentual || 0);
         });
 
@@ -2340,6 +2356,27 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
 
             // Alerta
             bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 1.2em;">${item.sinal_emoji || '⚪'}</td>`;
+
+            // Situação de Compra
+            const sitCompra = item.sit_compra || '';
+            const sitCompraDesc = item.sit_compra_descricao || '';
+            let sitCompraHtml = '-';
+            let sitCompraBg = '';
+
+            if (sitCompra) {
+                // Cores por situação
+                const coresSitCompra = {
+                    'FL': { bg: '#ffebee', color: '#c62828', label: 'Fora de Linha' },
+                    'EN': { bg: '#fff8e1', color: '#f57f17', label: 'Encomenda' },
+                    'NC': { bg: '#ffebee', color: '#c62828', label: 'Não Comprar' },
+                    'CO': { bg: '#e3f2fd', color: '#1565c0', label: 'Compra Oport.' },
+                    'FF': { bg: '#f5f5f5', color: '#616161', label: 'Falta Fornec.' }
+                };
+                const config = coresSitCompra[sitCompra] || { bg: '#f5f5f5', color: '#666', label: sitCompraDesc || sitCompra };
+                sitCompraHtml = `<span style="background: ${config.bg}; color: ${config.color}; padding: 2px 6px; border-radius: 4px; font-size: 0.75em; font-weight: 500;" title="${sitCompraDesc}">${sitCompra}</span>`;
+                sitCompraBg = sitCompra === 'FL' || sitCompra === 'EN' ? 'background: #fafafa;' : '';
+            }
+            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; ${sitCompraBg}">${sitCompraHtml}</td>`;
 
             // Método
             bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.8em;">${item.metodo_estatistico || '-'}</td>`;

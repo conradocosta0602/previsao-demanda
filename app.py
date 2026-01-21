@@ -5322,9 +5322,34 @@ def api_gerar_previsao_banco_v2_interno():
             where_sql = "AND " + " AND ".join(where_conditions)
 
         # =====================================================
-        # PASSO 1: BUSCAR LISTA DE ITENS
+        # PASSO 1: BUSCAR LISTA DE ITENS (COM SITUAÇÃO DE COMPRA)
         # =====================================================
         print(f"\n[PASSO 1] Buscando lista de itens...", flush=True)
+
+        # Verificar se tabelas de situação de compra existem
+        tabela_sit_compra_existe = False
+        try:
+            cursor.execute("SELECT to_regclass('public.situacao_compra_itens') IS NOT NULL as existe")
+            result = cursor.fetchone()
+            tabela_sit_compra_existe = result['existe'] if result else False
+        except Exception:
+            tabela_sit_compra_existe = False
+
+        if tabela_sit_compra_existe:
+            print(f"  Tabela situacao_compra_itens encontrada - filtro SIT_COMPRA ATIVO", flush=True)
+            # Query com LEFT JOIN para trazer situação de compra
+            # Busca a loja específica ou qualquer loja se filtro for TODAS
+            sit_compra_join = """
+                LEFT JOIN situacao_compra_itens sci ON h.codigo = sci.codigo
+                    AND (sci.data_fim IS NULL OR sci.data_fim >= CURRENT_DATE)
+                LEFT JOIN situacao_compra_regras scr ON sci.sit_compra = scr.codigo_situacao
+                    AND scr.ativo = TRUE
+            """
+            sit_compra_select = ", sci.sit_compra, scr.descricao as sit_compra_descricao"
+        else:
+            print(f"  Tabela situacao_compra_itens NÃO encontrada - filtro SIT_COMPRA DESATIVADO", flush=True)
+            sit_compra_join = ""
+            sit_compra_select = ", NULL as sit_compra, NULL as sit_compra_descricao"
 
         query_itens = f"""
             SELECT DISTINCT
@@ -5334,8 +5359,10 @@ def api_gerar_previsao_banco_v2_interno():
                 p.cnpj_fornecedor,
                 p.categoria,
                 p.descricao_linha
+                {sit_compra_select}
             FROM historico_vendas_diario h
             JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+            {sit_compra_join}
             WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
             {where_sql}
             ORDER BY p.nome_fornecedor, p.descricao
@@ -5720,6 +5747,38 @@ def api_gerar_previsao_banco_v2_interno():
 
         for idx, item in enumerate(lista_itens):
             cod_produto = item['cod_produto']
+
+            # =====================================================
+            # VERIFICAR SITUAÇÃO DE COMPRA (FL, EN = sem cálculo de demanda)
+            # =====================================================
+            sit_compra = item.get('sit_compra')
+            sit_compra_descricao = item.get('sit_compra_descricao')
+
+            # Itens Fora de Linha (FL) ou Encomenda (EN) não têm previsão calculada
+            pular_calculo_demanda = sit_compra in ('FL', 'EN')
+
+            if pular_calculo_demanda:
+                # Adicionar item ao relatório com demanda zerada
+                relatorio_itens.append({
+                    'cod_produto': cod_produto,
+                    'descricao': item['descricao'],
+                    'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
+                    'cnpj_fornecedor': item['cnpj_fornecedor'],
+                    'categoria': item['categoria'],
+                    'linha': item['descricao_linha'],
+                    'demanda_prevista_total': 0,
+                    'demanda_ano_anterior': 0,
+                    'variacao_percentual': None,
+                    'sinal_alerta': 'cinza',
+                    'sinal_emoji': '⚪',
+                    'metodo_estatistico': f'Sem cálculo ({sit_compra_descricao or sit_compra})',
+                    'previsao_por_periodo': [{'periodo': d, 'previsao': 0} for d in datas_previsao],
+                    'historico_total': 0,
+                    'sit_compra': sit_compra,
+                    'sit_compra_descricao': sit_compra_descricao
+                })
+                continue  # Pular para o próximo item
+
             vendas_hist = vendas_item_dict.get(cod_produto, [])
 
             # Ordenar vendas por período
@@ -6264,7 +6323,9 @@ def api_gerar_previsao_banco_v2_interno():
                 'sinal_emoji': sinal_emoji,
                 'metodo_estatistico': melhor_modelo_item,
                 'previsao_por_periodo': previsao_por_periodo,
-                'historico_total': round(total_item_hist, 1)
+                'historico_total': round(total_item_hist, 1),
+                'sit_compra': sit_compra,
+                'sit_compra_descricao': sit_compra_descricao
             })
 
             # Log de progresso
