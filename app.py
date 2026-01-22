@@ -6440,20 +6440,29 @@ def api_gerar_previsao_banco_v2_interno():
 
             print(f"  Backtest calculado: {len(previsao_teste)} períodos", flush=True)
 
-            # Calcular erro do backtest para diagnóstico
-            if previsao_teste and valores_teste:
-                erros_bt = []
-                for i in range(min(len(previsao_teste), len(valores_teste))):
-                    if valores_teste[i] > 0:
-                        erro_pct = abs(previsao_teste[i] - valores_teste[i]) / valores_teste[i] * 100
-                        erros_bt.append(erro_pct)
-                if erros_bt:
-                    wmape_bt = sum(erros_bt) / len(erros_bt)
-                    print(f"  WMAPE do backtest: {wmape_bt:.1f}%", flush=True)
-                    # Mostrar comparação período a período
-                    print(f"    Comparação período a período:", flush=True)
-                    for i in range(min(3, len(previsao_teste), len(valores_teste))):
-                        print(f"      {datas_teste[i]}: Real={valores_teste[i]:,.0f}, Prev={previsao_teste[i]:,.0f}", flush=True)
+        # Calcular erro do backtest para diagnóstico (WMAPE e BIAS)
+        # Inicializar fora do bloco para garantir que existam
+        wmape_backtest = 0
+        bias_backtest = 0
+        if previsao_teste and valores_teste:
+            erros_bt = []
+            erros_reais_bt = []
+            for i in range(min(len(previsao_teste), len(valores_teste))):
+                if valores_teste[i] > 0:
+                    erro_pct = abs(previsao_teste[i] - valores_teste[i]) / valores_teste[i] * 100
+                    erro_real = previsao_teste[i] - valores_teste[i]
+                    erros_bt.append(erro_pct)
+                    erros_reais_bt.append(erro_real)
+            if erros_bt:
+                wmape_backtest = sum(erros_bt) / len(erros_bt)
+                soma_reais = sum(valores_teste[:len(erros_reais_bt)])
+                bias_backtest = (sum(erros_reais_bt) / soma_reais) * 100 if soma_reais > 0 else 0
+                print(f"  WMAPE do backtest: {wmape_backtest:.1f}%", flush=True)
+                print(f"  BIAS do backtest: {bias_backtest:.1f}%", flush=True)
+                # Mostrar comparação período a período
+                print(f"    Comparação período a período:", flush=True)
+                for i in range(min(3, len(previsao_teste), len(valores_teste))):
+                    print(f"      {datas_teste[i]}: Real={valores_teste[i]:,.0f}, Prev={previsao_teste[i]:,.0f}", flush=True)
 
         # Fallback: usar média simples se não conseguiu calcular
         if not previsao_teste and len(valores_base) >= 3 and len(datas_teste) > 0:
@@ -6588,24 +6597,8 @@ def api_gerar_previsao_banco_v2_interno():
                 print(f"  AVISO: Erro ao formatar período {data_str}: {e}", flush=True)
                 periodos_formatados.append(data_str)
 
-        # Calcular métricas (comparando previsão com ano anterior)
-        wmape_geral = 0
-        bias_geral = 0
-        if ano_anterior_valores and len(ano_anterior_valores) > 0:
-            erros_pct = []
-            erros_reais = []
-            tamanho_comp = min(len(previsao_agregada), len(ano_anterior_valores))
-            for i in range(tamanho_comp):
-                if ano_anterior_valores[i] > 0:
-                    erro_pct = abs(previsao_agregada[i] - ano_anterior_valores[i]) / ano_anterior_valores[i] * 100
-                    erro_real = previsao_agregada[i] - ano_anterior_valores[i]
-                    erros_pct.append(erro_pct)
-                    erros_reais.append(erro_real)
-
-            if erros_pct:
-                wmape_geral = sum(erros_pct) / len(erros_pct)
-                soma_aa = sum(ano_anterior_valores[:tamanho_comp])
-                bias_geral = (sum(erros_reais) / soma_aa) * 100 if soma_aa > 0 else 0
+        # Usar métricas do backtest (comparação previsão vs dados reais do período de teste)
+        # wmape_backtest e bias_backtest já foram calculados acima no bloco de backtest
 
         # Montar resposta no mesmo formato da v1
         resposta = {
@@ -6636,8 +6629,8 @@ def api_gerar_previsao_banco_v2_interno():
             'modelos': {
                 'Bottom-Up (Individual por Item)': {
                     'metricas': {
-                        'wmape': round(wmape_geral, 2),
-                        'bias': round(bias_geral, 2)
+                        'wmape': round(wmape_backtest, 2),
+                        'bias': round(bias_backtest, 2)
                     },
                     'teste': {
                         'datas': datas_teste,
