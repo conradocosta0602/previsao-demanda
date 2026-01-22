@@ -885,8 +885,11 @@
 
                     <!-- Lista de Fornecedores -->
                     <div class="card">
-                        <div class="card-header">
+                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
                             <h3>Pedidos por Fornecedor</h3>
+                            <button id="btnExportarTodos" class="btn-acao" onclick="exportarTodos()" style="background: #059669; color: white; padding: 8px 16px; font-size: 0.85em;">
+                                📥 Exportar Todos
+                            </button>
                         </div>
                         <div class="card-body" id="fornecedoresLista" style="padding: 12px;">
                         </div>
@@ -1691,6 +1694,62 @@
                 window.URL.revokeObjectURL(url);
             } catch (e) {
                 alert('Erro: ' + e.message);
+            }
+        }
+
+        // Funcao para exportar TODOS os fornecedores em um unico arquivo Excel
+        async function exportarTodos() {
+            if (!dadosPedidoAtual?.itens_pedido || dadosPedidoAtual.itens_pedido.length === 0) {
+                alert('Nenhum item disponivel para exportar');
+                return;
+            }
+
+            const btn = document.getElementById('btnExportarTodos');
+            const textoOriginal = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Exportando...';
+
+            // Verificar se é pedido planejado
+            const tipoPedido = document.getElementById('tipo_pedido')?.value || 'reabastecimento';
+            const isPlanejado = tipoPedido === 'planejado' || dadosPedidoAtual.tipo_pedido === 'planejado';
+
+            // Usar todos os dados sem filtrar por fornecedor
+            const dadosCompletos = {
+                ...dadosPedidoAtual,
+                exportar_todos: true  // Flag para indicar exportacao completa
+            };
+
+            // Escolher endpoint correto baseado no tipo de pedido
+            const endpoint = isPlanejado
+                ? '/api/pedido_planejado/exportar'
+                : '/api/pedido_fornecedor_integrado/exportar';
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(dadosCompletos)
+                });
+
+                if (!response.ok) throw new Error('Erro ao exportar');
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+
+                // Nome do arquivo inclui "TODOS" e a data
+                const tipoNome = isPlanejado ? 'planejado' : 'pedido';
+                const destino = document.getElementById('destino')?.value || '';
+                const sufixo = destino === 'CD' ? '_CD' : '';
+                a.download = `${tipoNome}_TODOS_FORNECEDORES${sufixo}_${new Date().toISOString().slice(0,10)}.xlsx`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Erro ao exportar: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = textoOriginal;
             }
         }
     </script>
