@@ -233,11 +233,13 @@ class PedidoFornecedorIntegrado:
     Processador de pedidos ao fornecedor integrado com previsão V2.
     """
 
-    def __init__(self, conn, usar_previsao_semanal: bool = True):
+    def __init__(self, conn, usar_previsao_semanal: bool = False):
         """
         Args:
             conn: Conexão com o banco PostgreSQL
-            usar_previsao_semanal: Se True, usa previsão semanal ISO-8601 (padrão)
+            usar_previsao_semanal: Se True, usa previsão semanal ISO-8601.
+                                   Desativado por padrão para manter consistência
+                                   com a demanda exibida na tela (DemandCalculator).
         """
         self.conn = conn
         self.usar_previsao_semanal = usar_previsao_semanal
