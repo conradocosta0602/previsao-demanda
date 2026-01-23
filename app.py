@@ -1517,7 +1517,6 @@ def api_pedido_fornecedor_integrado():
                             previsao_diaria=demanda_diaria,
                             desvio_padrao=desvio_padrao,
                             cobertura_dias=cobertura_dias,
-                            usar_previsao_semanal_item=True,
                             lead_time_dias=lead_time_forn,
                             ciclo_pedido_dias=ciclo_pedido_forn,
                             pedido_minimo_valor=pedido_min_forn
@@ -1593,17 +1592,12 @@ def api_pedido_fornecedor_integrado():
                         debug_por_fornecedor[nome_forn_atual]['sem_demanda'] += 1
                         continue
 
-                    # Se destino é CD ou demanda foi agregada de múltiplas lojas,
-                    # não usar previsão semanal (já calculamos a demanda somada)
-                    usar_prev_semanal = not is_destino_cd and len(lojas_demanda) == 1
-
                     resultado = processador.processar_item(
                         codigo=codigo,
                         cod_empresa=cod_destino,
                         previsao_diaria=demanda_diaria,
                         desvio_padrao=desvio_padrao,
                         cobertura_dias=cobertura_dias,
-                        usar_previsao_semanal_item=usar_prev_semanal,
                         lead_time_dias=lead_time_forn,
                         ciclo_pedido_dias=ciclo_pedido_forn,
                         pedido_minimo_valor=pedido_min_forn

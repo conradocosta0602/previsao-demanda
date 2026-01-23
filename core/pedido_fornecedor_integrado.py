@@ -4,7 +4,7 @@ Integra previsão de demanda V2 com cálculo de cobertura baseado em ABC
 
 Características:
 - Usa previsão V2 (Bottom-Up) em tempo real
-- Previsão semanal ISO-8601 para cálculo de demanda no período
+- Demanda do período: Demanda_Diária × Cobertura (consistente com tela de demanda)
 - Cobertura: Lead Time + Ciclo + Segurança_ABC
 - Curva ABC do cadastro de produtos para nível de serviço
 - Arredondamento para múltiplo de caixa
@@ -233,27 +233,14 @@ class PedidoFornecedorIntegrado:
     Processador de pedidos ao fornecedor integrado com previsão V2.
     """
 
-    def __init__(self, conn, usar_previsao_semanal: bool = False):
+    def __init__(self, conn):
         """
         Args:
             conn: Conexão com o banco PostgreSQL
-            usar_previsao_semanal: Se True, usa previsão semanal ISO-8601.
-                                   Desativado por padrão para manter consistência
-                                   com a demanda exibida na tela (DemandCalculator).
         """
         self.conn = conn
-        self.usar_previsao_semanal = usar_previsao_semanal
         # Cache das regras de situação de compra
         self._regras_sit_compra = None
-        # Instância de previsão semanal
-        self._weekly_forecast = None
-
-    def _get_weekly_forecast(self):
-        """Retorna instância de WeeklyForecast (lazy loading)."""
-        if self._weekly_forecast is None and self.usar_previsao_semanal:
-            from core.weekly_forecast import WeeklyForecast
-            self._weekly_forecast = WeeklyForecast(self.conn)
-        return self._weekly_forecast
 
     def carregar_regras_sit_compra(self) -> Dict:
         """
@@ -522,7 +509,6 @@ class PedidoFornecedorIntegrado:
         previsao_diaria: float,
         desvio_padrao: float,
         cobertura_dias: Optional[int] = None,
-        usar_previsao_semanal_item: bool = True,
         lead_time_dias: Optional[int] = None,
         ciclo_pedido_dias: Optional[int] = None,
         pedido_minimo_valor: Optional[float] = None
@@ -536,9 +522,6 @@ class PedidoFornecedorIntegrado:
             previsao_diaria: Demanda média diária prevista (da previsão V2)
             desvio_padrao: Desvio padrão da demanda
             cobertura_dias: Cobertura em dias (se None, calcula automaticamente)
-            usar_previsao_semanal_item: Se True, usa previsão semanal para este item.
-                                        Se False, usa previsao_diaria * cobertura_dias
-                                        (útil quando demanda já foi calculada externamente)
             lead_time_dias: Lead time do fornecedor (se None, busca do cadastro ou usa 15)
             ciclo_pedido_dias: Ciclo de pedido do fornecedor (se None, usa padrão)
             pedido_minimo_valor: Valor mínimo do pedido (para validação posterior)
@@ -623,33 +606,9 @@ class PedidoFornecedorIntegrado:
         )
 
         # 8. Calcular demanda no período de cobertura
-        # Usa previsão semanal ISO-8601 se habilitado E se o item permitir
-        # (para CDs com demanda agregada de múltiplas lojas, usar_previsao_semanal_item=False)
-        previsao_semanal_info = None
-        if self.usar_previsao_semanal and usar_previsao_semanal_item:
-            weekly_forecast = self._get_weekly_forecast()
-            if weekly_forecast:
-                try:
-                    previsao_semanal_info = weekly_forecast.calcular_demanda_periodo_cobertura(
-                        codigo=codigo,
-                        cod_empresa=cod_empresa,
-                        lead_time_dias=lead_time,
-                        cobertura_dias=cobertura_dias,
-                        demanda_media_diaria=previsao_diaria
-                    )
-                    demanda_periodo = previsao_semanal_info['demanda_total']
-                    # Atualizar desvio se disponível
-                    if previsao_semanal_info.get('desvio_padrao_total', 0) > 0:
-                        desvio_diario = previsao_semanal_info['desvio_padrao_total'] / cobertura_dias
-                except Exception:
-                    # Fallback para cálculo tradicional
-                    demanda_periodo = previsao_diaria * cobertura_dias
-                    previsao_semanal_info = None
-            else:
-                demanda_periodo = previsao_diaria * cobertura_dias
-        else:
-            # Usar demanda diária fornecida (já calculada externamente, ex: soma de lojas)
-            demanda_periodo = previsao_diaria * cobertura_dias
+        # Fórmula simplificada: Demanda_Período = Demanda_Diária × Cobertura
+        # Mantém consistência com a tela de demanda (DemandCalculator)
+        demanda_periodo = previsao_diaria * cobertura_dias
 
         # 9. Calcular quantidade a pedir
         pedido_info = calcular_quantidade_pedido(
