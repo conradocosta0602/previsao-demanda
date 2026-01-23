@@ -885,9 +885,9 @@
 
                     <!-- Lista de Fornecedores -->
                     <div class="card">
-                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div class="card-header">
                             <h3>Pedidos por Fornecedor</h3>
-                            <button id="btnExportarTodos" class="btn-acao" onclick="exportarTodos()" style="background: #059669; color: white; padding: 8px 16px; font-size: 0.85em;">
+                            <button id="btnExportarTodos" onclick="exportarTodos()" style="background: #059669; color: white; padding: 8px 16px; font-size: 0.85em; border-radius: 6px; border: none; cursor: pointer; font-weight: 500;">
                                 📥 Exportar Todos
                             </button>
                         </div>
@@ -1335,7 +1335,7 @@
             function gerarLinhaTabela(item, setProdutosTransf, detalhesTransf, isPedidoMultiloja = false) {
                 const est = item.estoque_atual ?? item.estoque_efetivo ?? 0;
                 const trans = item.estoque_transito ?? 0;
-                const dem = item.demanda_prevista ?? item.demanda_periodo ?? 0;
+                const dem = item.demanda_prevista_diaria ?? item.demanda_diaria ?? 0;
                 const estClass = (est === 0 && dem > 0) ? 'estoque-zero' : '';
                 const cobAtual = item.cobertura_atual_dias >= 999 ? '>999' : Math.round(item.cobertura_atual_dias || 0);
                 const cobPos = item.cobertura_pos_pedido_dias >= 999 ? '>999' : Math.round(item.cobertura_pos_pedido_dias || 0);
@@ -1421,7 +1421,7 @@
                         <td class="col-num"><span class="${estClass}">${est.toLocaleString('pt-BR')}</span></td>
                         <td class="col-num">${trans > 0 ? trans.toLocaleString('pt-BR') : '-'}</td>
                         <td><span class="cobertura-info"><span class="atual">${cobAtual}d</span><span class="seta">→</span><span class="pos">${cobPos}d</span></span></td>
-                        <td class="col-num">${dem.toLocaleString('pt-BR')}</td>
+                        <td class="col-num">${dem.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                         <td class="col-num">${pedidoCell}</td>
                         <td class="col-valor">${valorPedido > 0 ? 'R$ ' + valorPedido.toLocaleString('pt-BR', {minimumFractionDigits: 0}) : '-'}</td>
                     </tr>
@@ -1440,7 +1440,7 @@
                             <th class="col-num">Estoque</th>
                             <th class="col-num">Transito</th>
                             <th style="width: 100px;">Cobertura</th>
-                            <th class="col-num">Demanda</th>
+                            <th class="col-num">Demanda Media</th>
                             <th class="col-num">Pedido</th>
                             <th class="col-valor">Valor</th>
                         </tr>
