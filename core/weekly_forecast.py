@@ -225,6 +225,9 @@ class WeeklyForecast:
         2. Tendencia recente
         3. Indice sazonal semanal
 
+        IMPORTANTE: Se nao houver dados historicos suficientes, usa a demanda
+        media diaria como fallback para garantir calculos corretos.
+
         Args:
             df_historico: DataFrame com historico semanal
             ano_iso: Ano ISO da semana a prever
@@ -234,11 +237,13 @@ class WeeklyForecast:
         Returns:
             Tupla (previsao_semanal, desvio_padrao)
         """
+        # Fallback: usar demanda diaria * 7
+        demanda_semanal_base = demanda_media_diaria * 7 if demanda_media_diaria and demanda_media_diaria > 0 else 0
+        desvio_base = demanda_media_diaria * 2 if demanda_media_diaria and demanda_media_diaria > 0 else 0
+
         if df_historico.empty:
             # Sem historico, usar demanda diaria * 7 se disponivel
-            if demanda_media_diaria is not None:
-                return demanda_media_diaria * 7, demanda_media_diaria * 2
-            return 0.0, 0.0
+            return demanda_semanal_base, desvio_base
 
         # 1. Buscar historico da mesma semana em anos anteriores
         hist_semana = df_historico[df_historico['semana_iso'] == semana_iso]['qtd_venda'].tolist()
@@ -259,21 +264,33 @@ class WeeklyForecast:
 
             # Combinar: 60% historico da semana, 40% tendencia recente ajustada
             previsao = 0.6 * media_historica + 0.4 * (media_recente * indice_semana)
-        else:
+        elif media_recente > 0:
             # Sem historico suficiente da semana - usar tendencia com indice
             previsao = media_recente * indice_semana
             desvio_historico = media_recente * 0.3
+        else:
+            # Sem dados recentes - usar demanda diaria como fallback
+            previsao = demanda_semanal_base * indice_semana if demanda_semanal_base > 0 else 0
+            desvio_historico = desvio_base
 
-        # Se temos demanda_media_diaria, fazer sanity check
-        if demanda_media_diaria is not None and demanda_media_diaria > 0:
-            demanda_semanal_base = demanda_media_diaria * 7
+        # IMPORTANTE: Garantir consistencia com a demanda base diaria
+        # Quando temos uma demanda diaria calculada, a previsao semanal deve ser coerente
+        if demanda_semanal_base > 0:
+            # Se indice sazonal for muito baixo (< 0.5), usar 1.0 como fallback
+            # Isso evita que semanas com historico zerado/baixo distorcam a previsao
+            indice_ajustado = indice_semana if indice_semana >= 0.5 else 1.0
 
-            # Se previsao semanal difere muito da base diaria, ajustar
-            if previsao > 0:
-                ratio = previsao / demanda_semanal_base
-                if ratio > 3 or ratio < 0.3:
-                    # Ajuste mais conservador
-                    previsao = demanda_semanal_base * indice_semana
+            # Calcular limite minimo: 50% da demanda base (ajustado pelo indice)
+            limite_minimo = demanda_semanal_base * 0.5 * indice_ajustado
+
+            # Se previsao for menor que o limite minimo, usar a base com indice
+            if previsao < limite_minimo:
+                previsao = demanda_semanal_base * indice_ajustado
+                desvio_historico = desvio_base
+
+            # Se previsao for maior que 200% da base, limitar (outliers)
+            elif previsao > demanda_semanal_base * 2:
+                previsao = demanda_semanal_base * indice_ajustado
 
         return max(0, previsao), max(0, desvio_historico)
 
