@@ -4,6 +4,8 @@ Integra previsão de demanda V2 com cálculo de cobertura baseado em ABC
 
 Características:
 - Usa previsão V2 (Bottom-Up) em tempo real
+- Histórico de 2 anos (730 dias) para capturar sazonalidade completa
+- Saneamento de rupturas: zeros de falta de estoque são substituídos por estimativas
 - Demanda do período: Demanda_Diária × Cobertura (consistente com tela de demanda)
 - Cobertura: Lead Time + Ciclo + Segurança_ABC
 - Curva ABC do cadastro de produtos para nível de serviço
@@ -461,17 +463,27 @@ class PedidoFornecedorIntegrado:
 
         return float(df.iloc[0]['cue'])
 
-    def buscar_historico_vendas(self, codigo, cod_empresa: int, dias: int = 365) -> List[float]:
+    def buscar_historico_vendas(
+        self,
+        codigo,
+        cod_empresa: int,
+        dias: int = 730,
+        sanear_rupturas: bool = True
+    ) -> List[float]:
         """
         Busca histórico de vendas diárias para cálculo de demanda.
+
+        IMPORTANTE: Usa 730 dias (2 anos) por padrão para capturar ciclos
+        sazonais completos, mantendo consistência com a tela de demanda.
 
         Args:
             codigo: Código do produto (pode ser string ou int)
             cod_empresa: Código da empresa/loja
-            dias: Número de dias de histórico
+            dias: Número de dias de histórico (padrão: 730 = 2 anos)
+            sanear_rupturas: Se True, substitui zeros de ruptura por valores estimados
 
         Returns:
-            Lista com quantidades vendidas por dia
+            Lista com quantidades vendidas por dia (saneadas se aplicável)
         """
         from datetime import datetime, timedelta
 
@@ -484,23 +496,117 @@ class PedidoFornecedorIntegrado:
         except (ValueError, TypeError):
             return []
 
-        query = """
-            SELECT data, COALESCE(SUM(qtd_venda), 0) as qtd_venda
-            FROM historico_vendas_diario
-            WHERE codigo = %s
-              AND cod_empresa = %s
-              AND data >= %s
-              AND data <= %s
-            GROUP BY data
-            ORDER BY data
-        """
+        if sanear_rupturas:
+            # Buscar vendas com informação de estoque para identificar rupturas
+            query = """
+                SELECT
+                    h.data,
+                    COALESCE(SUM(h.qtd_venda), 0) as qtd_venda,
+                    COALESCE(AVG(e.estoque_diario), -1) as estoque
+                FROM historico_vendas_diario h
+                LEFT JOIN historico_estoque_diario e
+                    ON h.data = e.data
+                    AND h.codigo = e.codigo
+                    AND h.cod_empresa = e.cod_empresa
+                WHERE h.codigo = %s
+                  AND h.cod_empresa = %s
+                  AND h.data >= %s
+                  AND h.data <= %s
+                GROUP BY h.data
+                ORDER BY h.data
+            """
+        else:
+            query = """
+                SELECT data, COALESCE(SUM(qtd_venda), 0) as qtd_venda
+                FROM historico_vendas_diario
+                WHERE codigo = %s
+                  AND cod_empresa = %s
+                  AND data >= %s
+                  AND data <= %s
+                GROUP BY data
+                ORDER BY data
+            """
 
         df = pd.read_sql(query, self.conn, params=[codigo_int, cod_empresa, data_inicio, data_fim])
 
         if df.empty:
             return []
 
+        # Aplicar saneamento de rupturas se habilitado e se temos dados de estoque
+        if sanear_rupturas and 'estoque' in df.columns:
+            df = self._sanear_rupturas_historico(df, codigo_int, cod_empresa)
+            return [float(x) for x in df['qtd_venda_saneada'].tolist()]
+
         return [float(x) for x in df['qtd_venda'].tolist()]
+
+    def _sanear_rupturas_historico(
+        self,
+        df: pd.DataFrame,
+        codigo: int,
+        cod_empresa: int
+    ) -> pd.DataFrame:
+        """
+        Aplica saneamento de rupturas no histórico de vendas.
+
+        Ruptura = venda zero E estoque zero (falta de produto, não demanda real zero)
+
+        Substitui zeros de ruptura por valores estimados usando:
+        1. Mesmo dia da semana do ano anterior
+        2. Média dos dias adjacentes
+        3. Mediana do período
+
+        Args:
+            df: DataFrame com colunas data, qtd_venda, estoque
+            codigo: Código do produto
+            cod_empresa: Código da empresa
+
+        Returns:
+            DataFrame com coluna qtd_venda_saneada
+        """
+        df = df.copy()
+        df['qtd_venda_saneada'] = df['qtd_venda'].copy()
+
+        # Identificar rupturas: venda = 0 E estoque = 0 (ou estoque disponível)
+        # estoque = -1 significa sem informação de estoque
+        mask_ruptura = (df['qtd_venda'] == 0) & (df['estoque'] == 0)
+
+        if not mask_ruptura.any():
+            return df
+
+        # Para cada ruptura, estimar valor
+        for idx in df[mask_ruptura].index:
+            data_ruptura = df.loc[idx, 'data']
+
+            # 1. Tentar mesmo dia da semana do ano anterior (364 dias)
+            data_ano_anterior = data_ruptura - timedelta(days=364)
+            mask_ano_ant = (
+                (df['data'] == data_ano_anterior) &
+                (df['qtd_venda'] > 0)
+            )
+            if mask_ano_ant.any():
+                df.loc[idx, 'qtd_venda_saneada'] = df.loc[mask_ano_ant, 'qtd_venda'].iloc[0]
+                continue
+
+            # 2. Média dos dias adjacentes (antes e depois)
+            valores_adj = []
+            for delta in [-1, 1, -2, 2]:
+                data_adj = data_ruptura + timedelta(days=delta)
+                mask_adj = (df['data'] == data_adj) & (df['qtd_venda'] > 0)
+                if mask_adj.any():
+                    valores_adj.append(df.loc[mask_adj, 'qtd_venda'].iloc[0])
+                if len(valores_adj) >= 2:
+                    break
+
+            if valores_adj:
+                df.loc[idx, 'qtd_venda_saneada'] = sum(valores_adj) / len(valores_adj)
+                continue
+
+            # 3. Mediana do período com vendas positivas
+            vendas_positivas = df[df['qtd_venda'] > 0]['qtd_venda']
+            if len(vendas_positivas) >= 3:
+                df.loc[idx, 'qtd_venda_saneada'] = vendas_positivas.median()
+
+        return df
 
     def processar_item(
         self,

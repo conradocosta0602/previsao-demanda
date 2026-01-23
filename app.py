@@ -1498,8 +1498,8 @@ def api_pedido_fornecedor_integrado():
                     for loja_cod in lojas_demanda:
                         loja_nome = mapa_nomes_lojas.get(loja_cod, f"Loja {loja_cod}")
 
-                        # Buscar histórico apenas desta loja
-                        historico_loja = processador.buscar_historico_vendas(codigo, loja_cod, dias=365)
+                        # Buscar histórico desta loja (2 anos, com saneamento de rupturas)
+                        historico_loja = processador.buscar_historico_vendas(codigo, loja_cod)
 
                         # Calcular demanda (pode ser 0 se não houver histórico)
                         demanda_diaria = 0
@@ -1563,10 +1563,10 @@ def api_pedido_fornecedor_integrado():
                     # =====================================================================
                     # MODO NORMAL: Agregar demanda de todas as lojas
                     # =====================================================================
-                    # Buscar e somar histórico de todas as lojas relevantes
+                    # Buscar e somar histórico de todas as lojas (2 anos, com saneamento)
                     historico_total = []
                     for loja in lojas_demanda:
-                        historico_loja = processador.buscar_historico_vendas(codigo, loja, dias=365)
+                        historico_loja = processador.buscar_historico_vendas(codigo, loja)
                         if historico_loja:
                             if not historico_total:
                                 historico_total = historico_loja.copy()
