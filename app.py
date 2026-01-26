@@ -1563,6 +1563,22 @@ def api_pedido_fornecedor_integrado():
         from core.demand_calculator import DemandCalculator
 
         processador = PedidoFornecedorIntegrado(conn)
+
+        # Pré-carregar dados em lote (otimização de performance)
+        codigos_produtos = df_produtos['codigo'].astype(int).tolist()
+        print(f"  [PERFORMANCE] Pré-carregando dados para {len(codigos_produtos)} produtos x {len(lojas_demanda)} lojas...")
+
+        # 1. Situações de compra
+        processador.precarregar_situacoes_compra(codigos_produtos, lojas_demanda)
+
+        # 2. Estoque e CUE (uma query para tudo)
+        processador.precarregar_estoque(codigos_produtos, lojas_demanda)
+
+        # 3. Histórico de vendas (uma query para tudo)
+        processador.precarregar_historico_vendas(codigos_produtos, lojas_demanda)
+
+        print(f"  [PERFORMANCE] Dados pré-carregados com sucesso!")
+
         resultados = []
 
         itens_sem_historico = 0
@@ -7454,6 +7470,285 @@ def api_central_parametros_salvar():
         }), 500
 
 
+@app.route('/api/parametros-fornecedor/<cnpj>/lojas', methods=['GET'])
+def api_parametros_fornecedor_lojas(cnpj):
+    """
+    Retorna parametros de todas as lojas para um fornecedor.
+    Usado na tela de parametros para exibir tabela editavel.
+    """
+    conn = None
+    try:
+        # Normalizar CNPJ
+        cnpj_limpo = cnpj.replace('.', '').replace('/', '').replace('-', '').strip()
+        if len(cnpj_limpo) < 14:
+            cnpj_limpo = cnpj_limpo.zfill(14)
+
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Buscar nome do fornecedor
+        cursor.execute("""
+            SELECT DISTINCT nome_fornecedor
+            FROM parametros_fornecedor
+            WHERE cnpj_fornecedor = %s AND ativo = TRUE
+            LIMIT 1
+        """, [cnpj_limpo])
+        forn = cursor.fetchone()
+        nome_fornecedor = forn['nome_fornecedor'] if forn else None
+
+        # Se nao encontrou em parametros, buscar em cadastro_produtos_completo
+        if not nome_fornecedor:
+            cursor.execute("""
+                SELECT DISTINCT nome_fornecedor
+                FROM cadastro_produtos_completo
+                WHERE cnpj_fornecedor = %s
+                LIMIT 1
+            """, [cnpj_limpo])
+            forn = cursor.fetchone()
+            nome_fornecedor = forn['nome_fornecedor'] if forn else 'Fornecedor'
+
+        # Buscar todas as lojas
+        cursor.execute("""
+            SELECT cod_empresa, nome_loja
+            FROM cadastro_lojas
+            WHERE ativo = TRUE
+            ORDER BY cod_empresa
+        """)
+        lojas = cursor.fetchall()
+
+        # Buscar parametros existentes
+        cursor.execute("""
+            SELECT cod_empresa, lead_time_dias, ciclo_pedido_dias, pedido_minimo_valor
+            FROM parametros_fornecedor
+            WHERE cnpj_fornecedor = %s AND ativo = TRUE
+        """, [cnpj_limpo])
+        params_existentes = {row['cod_empresa']: row for row in cursor.fetchall()}
+
+        # Montar lista de parametros por loja
+        parametros = []
+        lead_times = []
+
+        for loja in lojas:
+            cod_emp = loja['cod_empresa']
+            params = params_existentes.get(cod_emp, {})
+
+            lt = params.get('lead_time_dias') if params else None
+            ciclo = params.get('ciclo_pedido_dias', 7) if params else 7
+            ped_min = float(params.get('pedido_minimo_valor', 0)) if params else 0
+
+            parametros.append({
+                'cod_empresa': cod_emp,
+                'nome_loja': loja['nome_loja'],
+                'lead_time_dias': lt,
+                'ciclo_pedido_dias': ciclo,
+                'pedido_minimo_valor': ped_min,
+                'cadastrado': lt is not None
+            })
+
+            if lt:
+                lead_times.append(lt)
+
+        # Calcular resumo
+        resumo = {
+            'lead_time_min': min(lead_times) if lead_times else None,
+            'lead_time_max': max(lead_times) if lead_times else None,
+            'lead_time_medio': round(sum(lead_times) / len(lead_times), 1) if lead_times else None,
+            'lojas_cadastradas': len(lead_times),
+            'lojas_total': len(lojas)
+        }
+
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'cnpj': cnpj_limpo,
+            'nome': nome_fornecedor,
+            'parametros': parametros,
+            'resumo': resumo
+        })
+
+    except Exception as e:
+        if conn:
+            conn.close()
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'mensagem': f'Erro ao buscar parametros: {str(e)}'
+        }), 500
+
+
+@app.route('/api/parametros-fornecedor/<cnpj>/salvar-lote', methods=['POST'])
+def api_parametros_fornecedor_salvar_lote(cnpj):
+    """
+    Salva parametros de multiplas lojas de uma vez.
+    Usado na tela de parametros para salvar tabela editavel.
+    """
+    conn = None
+    try:
+        dados = request.get_json()
+        parametros = dados.get('parametros', [])
+        nome_fornecedor = dados.get('nome_fornecedor', '')
+
+        if not parametros:
+            return jsonify({'success': False, 'mensagem': 'Nenhum parametro para salvar'})
+
+        # Normalizar CNPJ
+        cnpj_limpo = cnpj.replace('.', '').replace('/', '').replace('-', '').strip()
+        if len(cnpj_limpo) < 14:
+            cnpj_limpo = cnpj_limpo.zfill(14)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        salvos = 0
+        for param in parametros:
+            cod_empresa = param.get('cod_empresa')
+            lead_time = param.get('lead_time_dias')
+            ciclo = param.get('ciclo_pedido_dias', 7)
+            ped_min = param.get('pedido_minimo_valor', 0)
+
+            if cod_empresa is None or lead_time is None:
+                continue
+
+            cursor.execute("""
+                INSERT INTO parametros_fornecedor
+                    (cnpj_fornecedor, nome_fornecedor, cod_empresa, lead_time_dias,
+                     ciclo_pedido_dias, pedido_minimo_valor, data_importacao, ativo)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW(), TRUE)
+                ON CONFLICT (cnpj_fornecedor, cod_empresa) DO UPDATE SET
+                    nome_fornecedor = COALESCE(EXCLUDED.nome_fornecedor, parametros_fornecedor.nome_fornecedor),
+                    lead_time_dias = EXCLUDED.lead_time_dias,
+                    ciclo_pedido_dias = EXCLUDED.ciclo_pedido_dias,
+                    pedido_minimo_valor = EXCLUDED.pedido_minimo_valor,
+                    data_importacao = NOW(),
+                    ativo = TRUE
+            """, [cnpj_limpo, nome_fornecedor, cod_empresa, lead_time, ciclo, ped_min])
+            salvos += 1
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'mensagem': f'{salvos} parametros salvos com sucesso'
+        })
+
+    except Exception as e:
+        if conn:
+            conn.close()
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'mensagem': f'Erro ao salvar: {str(e)}'
+        }), 500
+
+
+@app.route('/api/parametros-fornecedor/<cnpj>/aplicar-todas', methods=['POST'])
+def api_parametros_fornecedor_aplicar_todas(cnpj):
+    """
+    Aplica parametros de uma loja para todas as outras.
+    """
+    conn = None
+    try:
+        dados = request.get_json()
+        loja_origem = dados.get('loja_origem')
+        campos = dados.get('campos', ['ciclo_pedido_dias', 'pedido_minimo_valor'])
+
+        if not loja_origem:
+            return jsonify({'success': False, 'mensagem': 'Loja origem e obrigatoria'})
+
+        # Normalizar CNPJ
+        cnpj_limpo = cnpj.replace('.', '').replace('/', '').replace('-', '').strip()
+        if len(cnpj_limpo) < 14:
+            cnpj_limpo = cnpj_limpo.zfill(14)
+
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Buscar parametros da loja origem
+        cursor.execute("""
+            SELECT lead_time_dias, ciclo_pedido_dias, pedido_minimo_valor, nome_fornecedor
+            FROM parametros_fornecedor
+            WHERE cnpj_fornecedor = %s AND cod_empresa = %s AND ativo = TRUE
+        """, [cnpj_limpo, loja_origem])
+        origem = cursor.fetchone()
+
+        if not origem:
+            conn.close()
+            return jsonify({'success': False, 'mensagem': 'Parametros da loja origem nao encontrados'})
+
+        # Buscar todas as lojas
+        cursor.execute("SELECT cod_empresa FROM cadastro_lojas WHERE ativo = TRUE")
+        lojas = [row['cod_empresa'] for row in cursor.fetchall()]
+
+        # Montar SET dinamico
+        set_parts = []
+        values = []
+        if 'lead_time_dias' in campos:
+            set_parts.append("lead_time_dias = %s")
+            values.append(origem['lead_time_dias'])
+        if 'ciclo_pedido_dias' in campos:
+            set_parts.append("ciclo_pedido_dias = %s")
+            values.append(origem['ciclo_pedido_dias'])
+        if 'pedido_minimo_valor' in campos:
+            set_parts.append("pedido_minimo_valor = %s")
+            values.append(origem['pedido_minimo_valor'])
+
+        set_parts.append("data_importacao = NOW()")
+
+        # Atualizar todas as lojas
+        atualizados = 0
+        for loja in lojas:
+            if loja == loja_origem:
+                continue
+
+            # Verificar se existe
+            cursor.execute("""
+                SELECT id FROM parametros_fornecedor
+                WHERE cnpj_fornecedor = %s AND cod_empresa = %s
+            """, [cnpj_limpo, loja])
+
+            if cursor.fetchone():
+                # Atualizar
+                cursor.execute(f"""
+                    UPDATE parametros_fornecedor
+                    SET {', '.join(set_parts)}
+                    WHERE cnpj_fornecedor = %s AND cod_empresa = %s
+                """, values + [cnpj_limpo, loja])
+            else:
+                # Inserir
+                cursor.execute("""
+                    INSERT INTO parametros_fornecedor
+                        (cnpj_fornecedor, nome_fornecedor, cod_empresa, lead_time_dias,
+                         ciclo_pedido_dias, pedido_minimo_valor, data_importacao, ativo)
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW(), TRUE)
+                """, [cnpj_limpo, origem['nome_fornecedor'], loja,
+                      origem['lead_time_dias'] if 'lead_time_dias' in campos else None,
+                      origem['ciclo_pedido_dias'] if 'ciclo_pedido_dias' in campos else 7,
+                      origem['pedido_minimo_valor'] if 'pedido_minimo_valor' in campos else 0])
+            atualizados += 1
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'mensagem': f'Parametros aplicados para {atualizados} lojas'
+        })
+
+    except Exception as e:
+        if conn:
+            conn.close()
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'mensagem': f'Erro: {str(e)}'
+        }), 500
+
+
 # ============================================================================
 # APIS DE DEMANDA VALIDADA E PEDIDO PLANEJADO (v6.0)
 # ============================================================================
@@ -8010,6 +8305,21 @@ def api_pedido_planejado():
 
         produtos = cursor.fetchall()
         print(f"  Produtos encontrados: {len(produtos)}")
+
+        # Pré-carregar dados em lote (otimização de performance)
+        codigos_produtos = [int(p['codigo']) for p in produtos]
+        print(f"  [PERFORMANCE] Pré-carregando dados para {len(codigos_produtos)} produtos x {len(lojas_selecionadas)} lojas...")
+
+        # 1. Situações de compra
+        processador.precarregar_situacoes_compra(codigos_produtos, lojas_selecionadas)
+
+        # 2. Estoque e CUE
+        processador.precarregar_estoque(codigos_produtos, lojas_selecionadas)
+
+        # 3. Histórico de vendas
+        processador.precarregar_historico_vendas(codigos_produtos, lojas_selecionadas)
+
+        print(f"  [PERFORMANCE] Dados pré-carregados com sucesso!")
 
         # Processar itens
         itens_pedido = []

@@ -13,12 +13,10 @@
             background: #f8f9fa;
         }
 
-        /* Navbar suavizada */
         .navbar-custom {
             background: linear-gradient(135deg, #4a5568 0%, #5a6778 100%);
         }
 
-        /* Cards */
         .card {
             background: white;
             border-radius: 12px;
@@ -35,7 +33,6 @@
 
         .card-body { padding: 20px; }
 
-        /* Tabs */
         .nav-tabs {
             border-bottom: 2px solid #e5e7eb;
             background: white;
@@ -63,17 +60,8 @@
             background: transparent;
         }
 
-        .tab-content > .tab-pane > .card {
-            border-radius: 0 0 12px 12px;
-        }
-
-        /* Fornecedor Card */
         .card-fornecedor {
             border-left: 4px solid #6366f1;
-            transition: all 0.3s;
-        }
-        .card-fornecedor:hover {
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         }
 
         .fornecedor-header {
@@ -83,85 +71,6 @@
             border-radius: 8px;
             margin-bottom: 16px;
         }
-
-        .fornecedor-header h5 {
-            margin: 0 0 4px 0;
-            font-size: 1.1em;
-        }
-
-        .fornecedor-header .cnpj {
-            opacity: 0.8;
-            font-size: 0.85em;
-        }
-
-        .param-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.4em 0.75em;
-            font-size: 0.82em;
-            border-radius: 6px;
-            background-color: #f3f4f6;
-            margin-right: 0.5rem;
-            margin-bottom: 0.5rem;
-            color: #374151;
-        }
-        .param-badge i {
-            margin-right: 0.4em;
-            color: #6b7280;
-        }
-
-        .cobertura-calc {
-            font-size: 0.85em;
-            padding: 12px 16px;
-            border-radius: 8px;
-            background: #f0f9ff;
-            border: 1px solid #bae6fd;
-        }
-        .cobertura-abc {
-            display: inline-block;
-            width: 26px;
-            height: 26px;
-            line-height: 26px;
-            text-align: center;
-            border-radius: 50%;
-            font-weight: bold;
-            color: white;
-            margin-right: 0.3rem;
-            font-size: 0.8em;
-        }
-        .cobertura-abc.curva-a { background-color: #10b981; }
-        .cobertura-abc.curva-b { background-color: #f59e0b; color: #1f2937; }
-        .cobertura-abc.curva-c { background-color: #3b82f6; }
-
-        .table-produtos th {
-            position: sticky;
-            top: 0;
-            background: #f9fafb;
-            z-index: 10;
-            font-size: 0.8em;
-            font-weight: 600;
-            color: #374151;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .table-produtos td {
-            font-size: 0.85em;
-            vertical-align: middle;
-        }
-
-        .sit-compra-badge {
-            font-size: 0.72em;
-            padding: 0.25em 0.6em;
-            border-radius: 4px;
-            font-weight: 500;
-        }
-        .sit-compra-FL { background-color: #6b7280; color: white; }
-        .sit-compra-NC { background-color: #ef4444; color: white; }
-        .sit-compra-EN { background-color: #f59e0b; color: #1f2937; }
-        .sit-compra-CO { background-color: #06b6d4; color: #1f2937; }
-        .sit-compra-FF { background-color: #f97316; color: white; }
-        .sit-compra-OK { background-color: #10b981; color: white; }
 
         .search-box {
             position: relative;
@@ -179,29 +88,12 @@
             border-radius: 6px;
             font-size: 0.9em;
         }
-        .search-box input:focus {
-            border-color: #6366f1;
-            box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-            outline: none;
-        }
 
         .form-select, .form-control {
             border: 1px solid #e5e7eb;
             border-radius: 6px;
             font-size: 0.9em;
             padding: 8px 12px;
-        }
-
-        .form-select:focus, .form-control:focus {
-            border-color: #6366f1;
-            box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-        }
-
-        .form-label {
-            font-size: 0.82em;
-            font-weight: 500;
-            color: #374151;
-            margin-bottom: 6px;
         }
 
         .btn-primary {
@@ -212,113 +104,145 @@
 
         .btn-primary:hover {
             background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(99,102,241,0.3);
         }
 
-        .btn-outline-primary {
-            color: #6366f1;
-            border-color: #6366f1;
+        /* Tabela de parametros por loja */
+        .params-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
         }
 
-        .btn-outline-primary:hover {
-            background: #6366f1;
-            border-color: #6366f1;
-        }
-
-        .badge.bg-primary {
-            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
-        }
-
-        .inline-edit {
-            border: 1px solid transparent;
-            background: transparent;
-            padding: 0.25rem 0.5rem;
-            border-radius: 0.25rem;
-            width: 80px;
+        .params-table th {
+            background: #f9fafb;
+            padding: 10px 8px;
             text-align: center;
-        }
-        .inline-edit:hover {
-            border-color: #dee2e6;
-            background: #f8f9fa;
-        }
-        .inline-edit:focus {
-            border-color: var(--fc-primary);
-            background: white;
-            outline: none;
-            box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-        }
-        .inline-edit.saving {
-            background: #fff3cd;
-        }
-        .inline-edit.saved {
-            background: #d1e7dd;
-        }
-        .inline-edit.error {
-            background: #f8d7da;
-            border-color: var(--fc-danger);
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 2px solid #e5e7eb;
+            font-size: 0.75em;
+            text-transform: uppercase;
         }
 
-        .nd-badge {
-            color: #6c757d;
-            font-style: italic;
-            cursor: help;
-        }
-
-        .legenda-nd {
-            background: #fef3c7;
-            border: 1px solid #fcd34d;
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-size: 0.78em;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            color: #92400e;
-        }
-        .legenda-nd i {
-            color: #d97706;
-        }
-
-        .upload-zone {
-            border: 2px dashed #d1d5db;
-            padding: 40px;
+        .params-table td {
+            padding: 8px 6px;
             text-align: center;
-            cursor: pointer;
-            transition: all 0.3s;
-            border-radius: 12px;
+            border-bottom: 1px solid #f3f4f6;
+            vertical-align: middle;
+        }
+
+        .params-table tr:hover {
             background: #f9fafb;
         }
-        .upload-zone:hover {
+
+        .params-table .row-label {
+            text-align: left;
+            font-weight: 500;
+            color: #374151;
+            padding-left: 12px;
+            background: #fafafa;
+            width: 120px;
+        }
+
+        .param-input {
+            width: 70px;
+            padding: 4px 6px;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+
+        .param-input:focus {
             border-color: #6366f1;
-            background-color: #f5f3ff;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(99,102,241,0.2);
         }
-        .upload-zone.dragover {
+
+        .param-input.saving {
+            background: #fef3c7;
+        }
+
+        .param-input.saved {
+            background: #d1e7dd;
             border-color: #10b981;
-            background-color: #ecfdf5;
         }
 
-        .loading-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255,255,255,0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 100;
+        .param-input.error {
+            background: #fee2e2;
+            border-color: #ef4444;
         }
 
-        .produtos-container {
-            max-height: 500px;
-            overflow-y: auto;
+        .param-input:disabled {
+            background: #f9fafb;
+            color: #9ca3af;
         }
 
-        .pagination-info {
+        .param-input-money {
+            width: 85px;
+        }
+
+        /* Linha de cobertura calculada */
+        .cobertura-row td {
+            background: #f0f9ff;
+            font-weight: 500;
+            color: #0369a1;
             font-size: 0.85em;
+        }
+
+        .cobertura-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.75em;
+            font-weight: 600;
+        }
+
+        .cobertura-a { background: #d1fae5; color: #065f46; }
+        .cobertura-b { background: #fef3c7; color: #92400e; }
+        .cobertura-c { background: #dbeafe; color: #1e40af; }
+
+        /* Resumo */
+        .resumo-box {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border: 1px solid #bae6fd;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-top: 16px;
+        }
+
+        .resumo-item {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 24px;
+            font-size: 0.85em;
+        }
+
+        .resumo-item strong {
+            color: #0369a1;
+            margin-left: 4px;
+        }
+
+        /* Status de nao cadastrado */
+        .not-configured {
+            color: #9ca3af;
+            font-style: italic;
+        }
+
+        .loja-header {
+            font-size: 0.7em;
+            line-height: 1.2;
+        }
+
+        .loja-header .loja-num {
+            font-weight: 700;
+            font-size: 1.1em;
+        }
+
+        .loja-header .loja-nome {
             color: #6b7280;
+            font-weight: 400;
         }
 
         .no-results {
@@ -326,43 +250,43 @@
             padding: 3rem;
             color: #9ca3af;
         }
-        .no-results i {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-            color: #d1d5db;
+
+        .loading-spinner {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 3rem;
         }
 
-        .tipo-destino-badge {
+        /* Produtos */
+        .produtos-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .table-produtos th {
+            position: sticky;
+            top: 0;
+            background: #f9fafb;
+            z-index: 10;
+            font-size: 0.8em;
+        }
+
+        .table-produtos td {
+            font-size: 0.85em;
+        }
+
+        .sit-compra-badge {
             font-size: 0.72em;
             padding: 0.25em 0.6em;
             border-radius: 4px;
             font-weight: 500;
         }
-        .tipo-destino-LOJA { background-color: #6366f1; color: white; }
-        .tipo-destino-CD { background-color: #8b5cf6; color: white; }
-
-        .alert-warning {
-            background: #fef3c7;
-            border: 1px solid #fcd34d;
-            color: #92400e;
-            border-radius: 8px;
-        }
-
-        .text-muted {
-            color: #9ca3af !important;
-        }
-
-        /* Modal */
-        .modal-content {
-            border-radius: 12px;
-            border: none;
-        }
-        .modal-header {
-            border-bottom: 1px solid #f3f4f6;
-        }
-        .modal-footer {
-            border-top: 1px solid #f3f4f6;
-        }
+        .sit-compra-FL { background-color: #6b7280; color: white; }
+        .sit-compra-NC { background-color: #ef4444; color: white; }
+        .sit-compra-EN { background-color: #f59e0b; color: #1f2937; }
+        .sit-compra-CO { background-color: #06b6d4; color: #1f2937; }
+        .sit-compra-FF { background-color: #f97316; color: white; }
     </style>
 </head>
 <body>
@@ -380,7 +304,7 @@
 
     <div class="container mt-4">
         <h2><i class="bi bi-gear-wide-connected"></i> Central de Parametros de Fornecedor</h2>
-        <p class="text-muted">Consulte e edite parametros de fornecedor e visualize produtos</p>
+        <p class="text-muted">Consulte e edite Lead Time, Ciclo de Pedido e Pedido Minimo por filial</p>
 
         <!-- Abas -->
         <ul class="nav nav-tabs" id="mainTabs" role="tablist">
@@ -417,22 +341,16 @@
                                     <input type="text" class="form-control" id="filtro-cnpj" placeholder="Ex: 12345678000199">
                                 </div>
                             </div>
-                            <div class="col-md-3">
+                            <div class="col-md-4">
                                 <label class="form-label">Nome Fornecedor</label>
                                 <div class="search-box">
                                     <i class="bi bi-person"></i>
-                                    <input type="text" class="form-control" id="filtro-nome" placeholder="Ex: ACME">
+                                    <input type="text" class="form-control" id="filtro-nome" placeholder="Ex: HIDRO FILTROS">
                                 </div>
                             </div>
-                            <div class="col-md-2">
-                                <label class="form-label">Loja</label>
-                                <select class="form-select" id="filtro-loja">
-                                    <option value="">Todas</option>
-                                </select>
-                            </div>
-                            <div class="col-md-1 d-flex align-items-end">
+                            <div class="col-md-2 d-flex align-items-end">
                                 <button class="btn btn-primary w-100" onclick="buscarFornecedor()">
-                                    <i class="bi bi-search"></i>
+                                    <i class="bi bi-search"></i> Buscar
                                 </button>
                             </div>
                         </div>
@@ -440,8 +358,8 @@
                         <!-- Resultados -->
                         <div id="resultados-container">
                             <div class="no-results">
-                                <i class="bi bi-search"></i>
-                                <p>Use os filtros acima para buscar fornecedores e seus produtos</p>
+                                <i class="bi bi-search" style="font-size: 3rem; color: #d1d5db;"></i>
+                                <p class="mt-3">Use os filtros acima para buscar um fornecedor</p>
                                 <small class="text-muted">Voce pode buscar por codigo de produto, CNPJ ou nome do fornecedor</small>
                             </div>
                         </div>
@@ -453,176 +371,30 @@
             <div class="tab-pane fade" id="importacao" role="tabpanel">
                 <div class="card border-top-0 rounded-top-0">
                     <div class="card-body">
-                        <!-- Upload -->
-                        <div class="upload-zone" id="uploadZone">
-                            <i class="bi bi-file-earmark-excel" style="font-size: 48px; color: #198754;"></i>
-                            <h5 class="mt-3">Arraste o arquivo Excel aqui</h5>
-                            <p class="text-muted">ou clique para selecionar</p>
-                            <input type="file" id="fileInput" accept=".xlsx,.xls" style="display: none;">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            Para importar lead times em massa, use o arquivo Excel no formato:
+                            <strong>CNPJ, COD_EMPRESA, LEAD_TIME_DIAS, CICLO_PEDIDO_DIAS, PEDIDO_MINIMO</strong>
                         </div>
-
-                        <div class="mt-4">
-                            <h6>Formato esperado do arquivo:</h6>
-                            <table class="table table-sm table-bordered">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>Coluna</th>
-                                        <th>Obrigatorio</th>
-                                        <th>Descricao</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr><td>CNPJ</td><td><i class="bi bi-check-circle text-success"></i></td><td>CNPJ do fornecedor (14 digitos)</td></tr>
-                                    <tr><td>COD_EMPRESA</td><td><i class="bi bi-check-circle text-success"></i></td><td>Codigo da loja/CD destino</td></tr>
-                                    <tr><td>LEAD_TIME_DIAS</td><td><i class="bi bi-check-circle text-success"></i></td><td>Tempo de entrega em dias</td></tr>
-                                    <tr><td>FANTAS</td><td></td><td>Nome fantasia do fornecedor</td></tr>
-                                    <tr><td>TIPO_DESTINO</td><td></td><td>LOJA ou CD</td></tr>
-                                    <tr><td>CICLO_PEDIDO_DIAS</td><td></td><td>Ciclo de pedido em dias (padrao: 7)</td></tr>
-                                    <tr><td>FAT_MINIMO</td><td></td><td>Faturamento minimo do pedido</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <!-- Preview de importacao -->
-                        <div id="importacao-preview" style="display: none;">
-                            <hr>
-                            <h5><i class="bi bi-eye"></i> Preview dos Dados</h5>
-
-                            <div class="row mb-3" id="importacao-resumo"></div>
-
-                            <div id="importacao-criticas" class="mb-3" style="display: none;"></div>
-
-                            <div class="table-responsive" style="max-height: 300px;">
-                                <table class="table table-sm table-striped" id="tabela-preview">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th>CNPJ</th>
-                                            <th>Fornecedor</th>
-                                            <th>Loja</th>
-                                            <th>Tipo</th>
-                                            <th>Lead Time</th>
-                                            <th>Ciclo</th>
-                                            <th>Fat. Minimo</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-
-                            <div class="mt-3">
-                                <label class="form-label">Modo de importacao:</label>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="modoImportacao" id="modoAtualizar" value="atualizar" checked>
-                                    <label class="form-check-label" for="modoAtualizar">
-                                        <strong>Atualizar</strong> - Mantem registros existentes, atualiza os que ja existem
-                                    </label>
-                                </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="modoImportacao" id="modoSubstituir" value="substituir">
-                                    <label class="form-check-label" for="modoSubstituir">
-                                        <strong>Substituir</strong> - Desativa todos os registros anteriores
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div class="mt-3 d-flex gap-2">
-                                <button class="btn btn-secondary" onclick="cancelarImportacao()">
-                                    <i class="bi bi-x-circle"></i> Cancelar
-                                </button>
-                                <button class="btn btn-success" id="btn-confirmar-importacao" onclick="confirmarImportacao()">
-                                    <i class="bi bi-check-circle"></i> Confirmar Importacao
-                                </button>
-                            </div>
-                        </div>
+                        <p class="text-muted">Funcionalidade de importacao em desenvolvimento.</p>
                     </div>
-                </div>
-            </div>
-        </div>
-    </div> <!-- Fecha container -->
-
-    <!-- Modal de Edicao -->
-    <div class="modal fade" id="modalEditarParametro" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title"><i class="bi bi-pencil"></i> Editar Parametro</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <input type="hidden" id="edit-cnpj">
-                    <input type="hidden" id="edit-cod-empresa">
-
-                    <div class="mb-3">
-                        <label class="form-label">Fornecedor</label>
-                        <input type="text" class="form-control" id="edit-nome-fornecedor" readonly>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label">Loja</label>
-                        <input type="text" class="form-control" id="edit-loja-nome" readonly>
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Lead Time (dias)</label>
-                            <input type="number" class="form-control" id="edit-lead-time" min="1" max="365">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Ciclo de Pedido (dias)</label>
-                            <input type="number" class="form-control" id="edit-ciclo-pedido" min="1" max="90">
-                        </div>
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Faturamento Minimo (R$)</label>
-                            <input type="number" class="form-control" id="edit-fat-minimo" min="0" step="0.01">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Tipo Destino</label>
-                            <select class="form-select" id="edit-tipo-destino">
-                                <option value="LOJA">LOJA</option>
-                                <option value="CD">CD</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="cobertura-calc mt-3">
-                        <strong>Cobertura Calculada:</strong>
-                        <div class="mt-2" id="edit-cobertura-preview">
-                            <span class="cobertura-abc curva-a">A</span> <span id="cob-a">--</span> dias |
-                            <span class="cobertura-abc curva-b">B</span> <span id="cob-b">--</span> dias |
-                            <span class="cobertura-abc curva-c">C</span> <span id="cob-c">--</span> dias
-                        </div>
-                        <small class="text-muted">Formula: Lead Time + Ciclo (7d) + Seguranca ABC</small>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                    <button type="button" class="btn btn-primary" onclick="salvarParametro()">
-                        <i class="bi bi-check-circle"></i> Salvar
-                    </button>
                 </div>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script>
         // Estado global
         let lojas = [];
         let fornecedorAtual = null;
+        let parametrosLojas = [];
         let produtosCarregados = [];
-        let paginaAtual = 1;
-        const itensPorPagina = 50;
-        let dadosImportacao = [];
-        let criticasImportacao = [];
+        let alteracoesPendentes = {};
 
         // Inicializacao
         document.addEventListener('DOMContentLoaded', function() {
             carregarLojas();
-            configurarUpload();
 
             // Eventos de Enter nos filtros
             ['filtro-codigo', 'filtro-cnpj', 'filtro-nome'].forEach(id => {
@@ -630,24 +402,12 @@
                     if (e.key === 'Enter') buscarFornecedor();
                 });
             });
-
-            // Atualizar cobertura no modal de edicao
-            ['edit-lead-time', 'edit-ciclo-pedido'].forEach(id => {
-                document.getElementById(id).addEventListener('input', atualizarCoberturaPreview);
-            });
         });
 
         async function carregarLojas() {
             try {
                 const response = await fetch('/api/lojas');
-                const data = await response.json();
-                lojas = data;
-
-                const select = document.getElementById('filtro-loja');
-                select.innerHTML = '<option value="">Todas</option>';
-                data.forEach(loja => {
-                    select.innerHTML += `<option value="${loja.cod_empresa}">${loja.cod_empresa} - ${loja.nome_loja}</option>`;
-                });
+                lojas = await response.json();
             } catch (error) {
                 console.error('Erro ao carregar lojas:', error);
             }
@@ -657,7 +417,6 @@
             const codigo = document.getElementById('filtro-codigo').value.trim();
             const cnpj = document.getElementById('filtro-cnpj').value.trim();
             const nome = document.getElementById('filtro-nome').value.trim();
-            const codEmpresa = document.getElementById('filtro-loja').value;
 
             if (!codigo && !cnpj && !nome) {
                 alert('Informe pelo menos um filtro de busca');
@@ -666,18 +425,18 @@
 
             const container = document.getElementById('resultados-container');
             container.innerHTML = `
-                <div class="text-center py-5">
+                <div class="loading-spinner">
                     <div class="spinner-border text-primary" role="status"></div>
-                    <p class="mt-2">Buscando fornecedor...</p>
+                    <span class="ms-2">Buscando fornecedor...</span>
                 </div>
             `;
 
             try {
+                // Primeiro buscar dados basicos do fornecedor
                 const params = new URLSearchParams();
                 if (codigo) params.append('codigo', codigo);
                 if (cnpj) params.append('cnpj', cnpj);
                 if (nome) params.append('nome', nome);
-                if (codEmpresa) params.append('cod_empresa', codEmpresa);
 
                 const response = await fetch(`/api/central-parametros/buscar?${params.toString()}`);
                 const data = await response.json();
@@ -685,13 +444,28 @@
                 if (!data.success) {
                     container.innerHTML = `
                         <div class="alert alert-warning">
-                            <i class="bi bi-exclamation-triangle"></i> ${data.mensagem || 'Nenhum resultado encontrado'}
+                            <i class="bi bi-exclamation-triangle"></i> ${data.mensagem || 'Fornecedor nao encontrado'}
                         </div>
                     `;
                     return;
                 }
 
-                renderizarResultados(data);
+                fornecedorAtual = data.fornecedor;
+                produtosCarregados = data.produtos || [];
+
+                // Agora buscar parametros por loja
+                const cnpjFornecedor = fornecedorAtual.cnpj_fornecedor;
+                const responseParams = await fetch(`/api/parametros-fornecedor/${cnpjFornecedor}/lojas`);
+                const dataParams = await responseParams.json();
+
+                if (dataParams.success) {
+                    parametrosLojas = dataParams.parametros;
+                    fornecedorAtual.nome_fornecedor = dataParams.nome || fornecedorAtual.nome_fornecedor;
+                    fornecedorAtual.resumo = dataParams.resumo;
+                }
+
+                renderizarResultados();
+
             } catch (error) {
                 container.innerHTML = `
                     <div class="alert alert-danger">
@@ -701,80 +475,142 @@
             }
         }
 
-        function renderizarResultados(data) {
+        function renderizarResultados() {
             const container = document.getElementById('resultados-container');
-            fornecedorAtual = data.fornecedor;
-            produtosCarregados = data.produtos || [];
-            paginaAtual = 1;
+            alteracoesPendentes = {};
 
-            let html = '';
-
-            // Card do fornecedor
-            if (fornecedorAtual) {
-                html += `
-                    <div class="card card-fornecedor mb-4">
-                        <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-start">
-                                <div>
-                                    <h5 class="mb-1">
-                                        <i class="bi bi-building"></i> ${fornecedorAtual.nome_fornecedor || 'Fornecedor'}
-                                    </h5>
-                                    <p class="text-muted mb-2">CNPJ: ${formatarCNPJ(fornecedorAtual.cnpj_fornecedor)}</p>
-                                </div>
-                                <button class="btn btn-outline-primary btn-sm" onclick="abrirModalEdicao()">
-                                    <i class="bi bi-pencil"></i> Editar Parametros
+            let html = `
+                <!-- Card do Fornecedor -->
+                <div class="card card-fornecedor mb-4">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-3">
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-building"></i> ${fornecedorAtual.nome_fornecedor || 'Fornecedor'}
+                                </h4>
+                                <p class="text-muted mb-0">CNPJ: ${formatarCNPJ(fornecedorAtual.cnpj_fornecedor)}</p>
+                            </div>
+                            <div>
+                                <button class="btn btn-success btn-sm me-2" onclick="salvarTodosParametros()" id="btn-salvar">
+                                    <i class="bi bi-check-circle"></i> Salvar Alteracoes
                                 </button>
                             </div>
-
-                            <div class="row mt-3">
-                                <div class="col-md-8">
-                                    <div class="d-flex flex-wrap gap-2">
-                                        <span class="param-badge" title="Lead Time">
-                                            <i class="bi bi-clock"></i> Lead Time: <strong>${fornecedorAtual.lead_time_dias || 15}</strong> dias
-                                        </span>
-                                        <span class="param-badge" title="Ciclo de Pedido">
-                                            <i class="bi bi-arrow-repeat"></i> Ciclo: <strong>${fornecedorAtual.ciclo_pedido_dias || 7}</strong> dias
-                                        </span>
-                                        <span class="param-badge" title="Faturamento Minimo">
-                                            <i class="bi bi-currency-dollar"></i> Fat. Min: <strong>R$ ${(fornecedorAtual.pedido_minimo_valor || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</strong>
-                                        </span>
-                                        <span class="param-badge tipo-destino-badge tipo-destino-${fornecedorAtual.tipo_destino || 'LOJA'}">
-                                            ${fornecedorAtual.tipo_destino || 'LOJA'}
-                                        </span>
-                                        ${fornecedorAtual.cod_empresa ? `<span class="param-badge"><i class="bi bi-shop"></i> Loja: ${fornecedorAtual.cod_empresa}</span>` : ''}
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="cobertura-calc">
-                                        <small class="d-block mb-1"><strong>Cobertura Calculada:</strong></small>
-                                        ${calcularCoberturasHTML(fornecedorAtual.lead_time_dias || 15, fornecedorAtual.ciclo_pedido_dias || 7)}
-                                    </div>
-                                </div>
-                            </div>
-
-                            ${!fornecedorAtual.parametros_cadastrados ? `
-                                <div class="alert alert-warning mt-3 mb-0 py-2">
-                                    <i class="bi bi-exclamation-triangle"></i>
-                                    <small>Parametros nao cadastrados para esta loja. Usando valores padrao.</small>
-                                </div>
-                            ` : ''}
                         </div>
-                    </div>
-                `;
-            }
 
-            // Lista de produtos
-            html += `
+                        <!-- Tabela de Parametros por Loja -->
+                        <h6 class="mb-3"><i class="bi bi-grid-3x3"></i> Parametros por Filial</h6>
+                        <div class="table-responsive">
+                            <table class="params-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 120px;"></th>
+                                        ${parametrosLojas.map(p => `
+                                            <th>
+                                                <div class="loja-header">
+                                                    <div class="loja-num">Lj ${p.cod_empresa}</div>
+                                                    <div class="loja-nome">${abreviarNome(p.nome_loja)}</div>
+                                                </div>
+                                            </th>
+                                        `).join('')}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Lead Time -->
+                                    <tr>
+                                        <td class="row-label"><i class="bi bi-clock"></i> Lead Time</td>
+                                        ${parametrosLojas.map(p => `
+                                            <td>
+                                                <input type="number" class="param-input"
+                                                    id="lt-${p.cod_empresa}"
+                                                    value="${p.lead_time_dias || ''}"
+                                                    placeholder="-"
+                                                    min="1" max="365"
+                                                    onchange="marcarAlteracao(${p.cod_empresa}, 'lead_time_dias', this.value)">
+                                                <small class="text-muted">d</small>
+                                            </td>
+                                        `).join('')}
+                                    </tr>
+                                    <!-- Ciclo Pedido -->
+                                    <tr>
+                                        <td class="row-label"><i class="bi bi-arrow-repeat"></i> Ciclo Pedido</td>
+                                        ${parametrosLojas.map(p => `
+                                            <td>
+                                                <input type="number" class="param-input"
+                                                    id="ciclo-${p.cod_empresa}"
+                                                    value="${p.ciclo_pedido_dias || 7}"
+                                                    min="1" max="90"
+                                                    onchange="marcarAlteracao(${p.cod_empresa}, 'ciclo_pedido_dias', this.value)">
+                                                <small class="text-muted">d</small>
+                                            </td>
+                                        `).join('')}
+                                    </tr>
+                                    <!-- Pedido Minimo -->
+                                    <tr>
+                                        <td class="row-label"><i class="bi bi-currency-dollar"></i> Ped. Minimo</td>
+                                        ${parametrosLojas.map(p => `
+                                            <td>
+                                                <input type="number" class="param-input param-input-money"
+                                                    id="pedmin-${p.cod_empresa}"
+                                                    value="${p.pedido_minimo_valor || 0}"
+                                                    min="0" step="100"
+                                                    onchange="marcarAlteracao(${p.cod_empresa}, 'pedido_minimo_valor', this.value)">
+                                            </td>
+                                        `).join('')}
+                                    </tr>
+                                    <!-- Cobertura Calculada (somente leitura) -->
+                                    <tr class="cobertura-row">
+                                        <td class="row-label">Cobertura A</td>
+                                        ${parametrosLojas.map(p => {
+                                            const lt = p.lead_time_dias || 30;
+                                            const ciclo = p.ciclo_pedido_dias || 7;
+                                            return `<td><span class="cobertura-badge cobertura-a">${lt + ciclo + 2}d</span></td>`;
+                                        }).join('')}
+                                    </tr>
+                                    <tr class="cobertura-row">
+                                        <td class="row-label">Cobertura B</td>
+                                        ${parametrosLojas.map(p => {
+                                            const lt = p.lead_time_dias || 30;
+                                            const ciclo = p.ciclo_pedido_dias || 7;
+                                            return `<td><span class="cobertura-badge cobertura-b">${lt + ciclo + 4}d</span></td>`;
+                                        }).join('')}
+                                    </tr>
+                                    <tr class="cobertura-row">
+                                        <td class="row-label">Cobertura C</td>
+                                        ${parametrosLojas.map(p => {
+                                            const lt = p.lead_time_dias || 30;
+                                            const ciclo = p.ciclo_pedido_dias || 7;
+                                            return `<td><span class="cobertura-badge cobertura-c">${lt + ciclo + 6}d</span></td>`;
+                                        }).join('')}
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Resumo -->
+                        ${fornecedorAtual.resumo ? `
+                            <div class="resumo-box">
+                                <span class="resumo-item">
+                                    <i class="bi bi-speedometer2"></i> Lead Time Min: <strong>${fornecedorAtual.resumo.lead_time_min || '-'}d</strong>
+                                </span>
+                                <span class="resumo-item">
+                                    <i class="bi bi-bar-chart"></i> Media: <strong>${fornecedorAtual.resumo.lead_time_medio || '-'}d</strong>
+                                </span>
+                                <span class="resumo-item">
+                                    <i class="bi bi-speedometer"></i> Max: <strong>${fornecedorAtual.resumo.lead_time_max || '-'}d</strong>
+                                </span>
+                                <span class="resumo-item">
+                                    <i class="bi bi-shop"></i> Lojas cadastradas: <strong>${fornecedorAtual.resumo.lojas_cadastradas || 0}/${fornecedorAtual.resumo.lojas_total || 0}</strong>
+                                </span>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- Lista de Produtos -->
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span><i class="bi bi-box-seam"></i> Produtos do Fornecedor</span>
-                        <div class="d-flex align-items-center gap-3">
-                            <span class="legenda-nd">
-                                <i class="bi bi-info-circle"></i>
-                                <span><strong>N/D</strong> = Nao Disponivel (dado nao cadastrado no sistema)</span>
-                            </span>
-                            <span class="badge bg-primary">${produtosCarregados.length} itens</span>
-                        </div>
+                        <span class="badge bg-primary">${produtosCarregados.length} itens</span>
                     </div>
                     <div class="card-body p-0">
                         <div class="produtos-container">
@@ -785,121 +621,140 @@
                                         <th>Descricao</th>
                                         <th>Linha</th>
                                         <th class="text-center">Curva ABC</th>
-                                        <th class="text-end" title="Custo Unitario de Entrada">CUE</th>
                                         <th class="text-center">Sit. Compra</th>
                                     </tr>
                                 </thead>
-                                <tbody id="tbody-produtos">
+                                <tbody>
+                                    ${produtosCarregados.length === 0 ? `
+                                        <tr><td colspan="5" class="text-center text-muted py-4">Nenhum produto encontrado</td></tr>
+                                    ` : produtosCarregados.slice(0, 100).map(p => `
+                                        <tr>
+                                            <td><code>${p.cod_produto}</code></td>
+                                            <td>${p.descricao || ''}</td>
+                                            <td><small class="text-muted">${p.descricao_linha || p.categoria || '-'}</small></td>
+                                            <td class="text-center">
+                                                ${p.curva_abc ? `<span class="badge bg-${p.curva_abc === 'A' ? 'success' : p.curva_abc === 'B' ? 'warning' : 'primary'}">${p.curva_abc}</span>` : '-'}
+                                            </td>
+                                            <td class="text-center">
+                                                ${p.sit_compra ? `<span class="badge sit-compra-badge sit-compra-${p.sit_compra}">${p.sit_compra}</span>` : '-'}
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                    ${produtosCarregados.length > 100 ? `
+                                        <tr><td colspan="5" class="text-center text-muted py-2">... e mais ${produtosCarregados.length - 100} produtos</td></tr>
+                                    ` : ''}
                                 </tbody>
                             </table>
-                        </div>
-                        <div class="card-footer d-flex justify-content-between align-items-center" id="paginacao-container">
                         </div>
                     </div>
                 </div>
             `;
 
             container.innerHTML = html;
-            renderizarProdutos();
         }
 
-        function renderizarProdutos() {
-            const tbody = document.getElementById('tbody-produtos');
-            const inicio = (paginaAtual - 1) * itensPorPagina;
-            const fim = inicio + itensPorPagina;
-            const produtosPagina = produtosCarregados.slice(inicio, fim);
+        function marcarAlteracao(codEmpresa, campo, valor) {
+            if (!alteracoesPendentes[codEmpresa]) {
+                alteracoesPendentes[codEmpresa] = {};
+            }
+            alteracoesPendentes[codEmpresa][campo] = valor ? parseFloat(valor) : null;
 
-            if (produtosPagina.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="6" class="text-center text-muted py-4">
-                            Nenhum produto encontrado
-                        </td>
-                    </tr>
-                `;
-            } else {
-                tbody.innerHTML = produtosPagina.map(p => `
-                    <tr>
-                        <td><code>${p.cod_produto}</code></td>
-                        <td>${p.descricao || ''}</td>
-                        <td><small>${p.descricao_linha || p.categoria || '<span class="text-muted">N/D</span>'}</small></td>
-                        <td class="text-center">
-                            ${p.curva_abc ? `<span class="cobertura-abc curva-${p.curva_abc.toLowerCase()}" style="width:24px;height:24px;line-height:24px;font-size:0.8em;">${p.curva_abc}</span>` : '<span class="text-muted small" title="Curva ABC nao cadastrada">N/D</span>'}
-                        </td>
-                        <td class="text-end">${p.preco_custo ? 'R$ ' + parseFloat(p.preco_custo).toLocaleString('pt-BR', {minimumFractionDigits: 2}) : '<span class="text-muted" title="CUE nao encontrado em estoque_posicao_atual">N/D</span>'}</td>
-                        <td class="text-center">
-                            ${p.sit_compra ? `<span class="badge sit-compra-badge sit-compra-${p.sit_compra}">${p.sit_compra}</span>` : '<span class="text-muted small" title="Situacao de compra nao cadastrada">N/D</span>'}
-                        </td>
-                    </tr>
-                `).join('');
+            // Feedback visual
+            const input = document.getElementById(`${campo === 'lead_time_dias' ? 'lt' : campo === 'ciclo_pedido_dias' ? 'ciclo' : 'pedmin'}-${codEmpresa}`);
+            if (input) {
+                input.classList.add('saving');
+                setTimeout(() => input.classList.remove('saving'), 300);
             }
 
-            // Paginacao
-            const totalPaginas = Math.ceil(produtosCarregados.length / itensPorPagina);
-            const paginacaoContainer = document.getElementById('paginacao-container');
-
-            if (totalPaginas > 1) {
-                paginacaoContainer.innerHTML = `
-                    <span class="pagination-info">
-                        Mostrando ${inicio + 1}-${Math.min(fim, produtosCarregados.length)} de ${produtosCarregados.length}
-                    </span>
-                    <nav>
-                        <ul class="pagination pagination-sm mb-0">
-                            <li class="page-item ${paginaAtual === 1 ? 'disabled' : ''}">
-                                <a class="page-link" href="#" onclick="mudarPagina(${paginaAtual - 1}); return false;">Anterior</a>
-                            </li>
-                            ${gerarBotoesPaginacao(totalPaginas)}
-                            <li class="page-item ${paginaAtual === totalPaginas ? 'disabled' : ''}">
-                                <a class="page-link" href="#" onclick="mudarPagina(${paginaAtual + 1}); return false;">Proximo</a>
-                            </li>
-                        </ul>
-                    </nav>
-                `;
-            } else {
-                paginacaoContainer.innerHTML = `<span class="pagination-info">${produtosCarregados.length} produtos</span>`;
-            }
+            // Atualizar coberturas calculadas
+            atualizarCoberturas(codEmpresa);
         }
 
-        function gerarBotoesPaginacao(totalPaginas) {
-            let html = '';
-            const maxBotoes = 5;
-            let inicio = Math.max(1, paginaAtual - 2);
-            let fim = Math.min(totalPaginas, inicio + maxBotoes - 1);
+        function atualizarCoberturas(codEmpresa) {
+            const ltInput = document.getElementById(`lt-${codEmpresa}`);
+            const cicloInput = document.getElementById(`ciclo-${codEmpresa}`);
 
-            if (fim - inicio < maxBotoes - 1) {
-                inicio = Math.max(1, fim - maxBotoes + 1);
-            }
+            const lt = parseInt(ltInput?.value) || 30;
+            const ciclo = parseInt(cicloInput?.value) || 7;
 
-            for (let i = inicio; i <= fim; i++) {
-                html += `
-                    <li class="page-item ${i === paginaAtual ? 'active' : ''}">
-                        <a class="page-link" href="#" onclick="mudarPagina(${i}); return false;">${i}</a>
-                    </li>
-                `;
-            }
-            return html;
+            // Atualizar badges de cobertura na tabela
+            // (simplificado - seria necessario IDs nos badges para atualizar dinamicamente)
         }
 
-        function mudarPagina(pagina) {
-            const totalPaginas = Math.ceil(produtosCarregados.length / itensPorPagina);
-            if (pagina < 1 || pagina > totalPaginas) return;
-            paginaAtual = pagina;
-            renderizarProdutos();
-        }
+        async function salvarTodosParametros() {
+            const btn = document.getElementById('btn-salvar');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...';
 
-        function calcularCoberturasHTML(leadTime, ciclo) {
-            const lt = parseInt(leadTime) || 15;
-            const cp = parseInt(ciclo) || 7;
+            try {
+                // Montar lista de parametros para salvar
+                const parametros = [];
 
-            const cobA = lt + cp + 2;
-            const cobB = lt + cp + 4;
-            const cobC = lt + cp + 6;
+                parametrosLojas.forEach(p => {
+                    const ltInput = document.getElementById(`lt-${p.cod_empresa}`);
+                    const cicloInput = document.getElementById(`ciclo-${p.cod_empresa}`);
+                    const pedminInput = document.getElementById(`pedmin-${p.cod_empresa}`);
 
-            return `
-                <span class="cobertura-abc curva-a" style="width:22px;height:22px;line-height:22px;font-size:0.75em;">A</span>${cobA}d
-                <span class="cobertura-abc curva-b ms-2" style="width:22px;height:22px;line-height:22px;font-size:0.75em;">B</span>${cobB}d
-                <span class="cobertura-abc curva-c ms-2" style="width:22px;height:22px;line-height:22px;font-size:0.75em;">C</span>${cobC}d
-            `;
+                    const lt = ltInput?.value ? parseInt(ltInput.value) : null;
+                    const ciclo = cicloInput?.value ? parseInt(cicloInput.value) : 7;
+                    const pedmin = pedminInput?.value ? parseFloat(pedminInput.value) : 0;
+
+                    if (lt !== null) {
+                        parametros.push({
+                            cod_empresa: p.cod_empresa,
+                            lead_time_dias: lt,
+                            ciclo_pedido_dias: ciclo,
+                            pedido_minimo_valor: pedmin
+                        });
+                    }
+                });
+
+                if (parametros.length === 0) {
+                    alert('Nenhum parametro para salvar. Preencha ao menos um Lead Time.');
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-check-circle"></i> Salvar Alteracoes';
+                    return;
+                }
+
+                const response = await fetch(`/api/parametros-fornecedor/${fornecedorAtual.cnpj_fornecedor}/salvar-lote`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        parametros: parametros,
+                        nome_fornecedor: fornecedorAtual.nome_fornecedor
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Feedback visual de sucesso
+                    document.querySelectorAll('.param-input').forEach(input => {
+                        if (input.value) {
+                            input.classList.add('saved');
+                            setTimeout(() => input.classList.remove('saved'), 2000);
+                        }
+                    });
+
+                    btn.innerHTML = '<i class="bi bi-check-circle"></i> Salvo!';
+                    setTimeout(() => {
+                        btn.innerHTML = '<i class="bi bi-check-circle"></i> Salvar Alteracoes';
+                        btn.disabled = false;
+                    }, 2000);
+
+                    // Atualizar dados
+                    alteracoesPendentes = {};
+                } else {
+                    alert('Erro ao salvar: ' + result.mensagem);
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-check-circle"></i> Salvar Alteracoes';
+                }
+
+            } catch (error) {
+                alert('Erro ao salvar: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-circle"></i> Salvar Alteracoes';
+            }
         }
 
         function formatarCNPJ(cnpj) {
@@ -908,292 +763,10 @@
             return `${c.slice(0,2)}.${c.slice(2,5)}.${c.slice(5,8)}/${c.slice(8,12)}-${c.slice(12,14)}`;
         }
 
-        function abrirModalEdicao() {
-            if (!fornecedorAtual) return;
-
-            document.getElementById('edit-cnpj').value = fornecedorAtual.cnpj_fornecedor;
-            document.getElementById('edit-cod-empresa').value = fornecedorAtual.cod_empresa || '';
-            document.getElementById('edit-nome-fornecedor').value = fornecedorAtual.nome_fornecedor || '';
-            document.getElementById('edit-loja-nome').value = fornecedorAtual.cod_empresa ?
-                `${fornecedorAtual.cod_empresa} - ${lojas.find(l => l.cod_empresa == fornecedorAtual.cod_empresa)?.nome_loja || ''}` :
-                'Todas as lojas';
-            document.getElementById('edit-lead-time').value = fornecedorAtual.lead_time_dias || 15;
-            document.getElementById('edit-ciclo-pedido').value = fornecedorAtual.ciclo_pedido_dias || 7;
-            document.getElementById('edit-fat-minimo').value = fornecedorAtual.pedido_minimo_valor || 0;
-            document.getElementById('edit-tipo-destino').value = fornecedorAtual.tipo_destino || 'LOJA';
-
-            atualizarCoberturaPreview();
-
-            const modal = new bootstrap.Modal(document.getElementById('modalEditarParametro'));
-            modal.show();
-        }
-
-        function atualizarCoberturaPreview() {
-            const lt = parseInt(document.getElementById('edit-lead-time').value) || 15;
-            const cp = parseInt(document.getElementById('edit-ciclo-pedido').value) || 7;
-
-            document.getElementById('cob-a').textContent = (lt + cp + 2);
-            document.getElementById('cob-b').textContent = (lt + cp + 4);
-            document.getElementById('cob-c').textContent = (lt + cp + 6);
-        }
-
-        async function salvarParametro() {
-            const cnpj = document.getElementById('edit-cnpj').value;
-            const codEmpresa = document.getElementById('edit-cod-empresa').value;
-            const leadTime = parseInt(document.getElementById('edit-lead-time').value);
-            const cicloPedido = parseInt(document.getElementById('edit-ciclo-pedido').value);
-            const fatMinimo = parseFloat(document.getElementById('edit-fat-minimo').value);
-            const tipoDestino = document.getElementById('edit-tipo-destino').value;
-            const nomeFornecedor = document.getElementById('edit-nome-fornecedor').value;
-
-            if (!leadTime || leadTime < 1) {
-                alert('Lead Time deve ser pelo menos 1 dia');
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/central-parametros/salvar', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        cnpj_fornecedor: cnpj,
-                        nome_fornecedor: nomeFornecedor,
-                        cod_empresa: codEmpresa ? parseInt(codEmpresa) : null,
-                        lead_time_dias: leadTime,
-                        ciclo_pedido_dias: cicloPedido,
-                        pedido_minimo_valor: fatMinimo,
-                        tipo_destino: tipoDestino
-                    })
-                });
-
-                const data = await response.json();
-
-                if (data.success) {
-                    bootstrap.Modal.getInstance(document.getElementById('modalEditarParametro')).hide();
-                    // Atualizar dados na tela
-                    fornecedorAtual.lead_time_dias = leadTime;
-                    fornecedorAtual.ciclo_pedido_dias = cicloPedido;
-                    fornecedorAtual.pedido_minimo_valor = fatMinimo;
-                    fornecedorAtual.tipo_destino = tipoDestino;
-                    fornecedorAtual.parametros_cadastrados = true;
-                    renderizarResultados({ success: true, fornecedor: fornecedorAtual, produtos: produtosCarregados });
-                } else {
-                    alert('Erro ao salvar: ' + (data.mensagem || 'Erro desconhecido'));
-                }
-            } catch (error) {
-                alert('Erro ao salvar: ' + error.message);
-            }
-        }
-
-        // ==================== IMPORTACAO ====================
-
-        function configurarUpload() {
-            const uploadZone = document.getElementById('uploadZone');
-            const fileInput = document.getElementById('fileInput');
-
-            uploadZone.addEventListener('click', () => fileInput.click());
-            uploadZone.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadZone.classList.add('dragover');
-            });
-            uploadZone.addEventListener('dragleave', () => {
-                uploadZone.classList.remove('dragover');
-            });
-            uploadZone.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadZone.classList.remove('dragover');
-                if (e.dataTransfer.files.length > 0) processarArquivo(e.dataTransfer.files[0]);
-            });
-            fileInput.addEventListener('change', (e) => {
-                if (e.target.files.length > 0) processarArquivo(e.target.files[0]);
-            });
-        }
-
-        function processarArquivo(file) {
-            if (!file.name.match(/\.(xlsx|xls)$/i)) {
-                alert('Por favor, selecione um arquivo Excel (.xlsx ou .xls)');
-                return;
-            }
-
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, {type: 'array'});
-                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet);
-                    validarDadosImportacao(jsonData);
-                } catch (error) {
-                    alert('Erro ao ler arquivo: ' + error.message);
-                }
-            };
-            reader.readAsArrayBuffer(file);
-        }
-
-        function validarDadosImportacao(dados) {
-            dadosImportacao = [];
-            criticasImportacao = [];
-
-            dados.forEach((row, idx) => {
-                const linha = idx + 2;
-
-                const cnpj = String(row['CNPJ'] || '').trim();
-                if (!cnpj) {
-                    criticasImportacao.push({linha, tipo: 'ERRO', msg: 'CNPJ vazio'});
-                    return;
-                }
-
-                const codEmpresa = parseInt(row['COD_EMPRESA']);
-                if (isNaN(codEmpresa)) {
-                    criticasImportacao.push({linha, tipo: 'ERRO', msg: 'COD_EMPRESA invalido'});
-                    return;
-                }
-
-                let leadTime = parseInt(row['LEAD_TIME_DIAS']);
-                if (isNaN(leadTime) || leadTime < 0) {
-                    leadTime = 15;
-                    criticasImportacao.push({linha, tipo: 'AVISO', msg: 'Lead time invalido, usando padrao (15)'});
-                }
-
-                dadosImportacao.push({
-                    cnpj_fornecedor: cnpj.padStart(14, '0'),
-                    nome_fornecedor: String(row['FANTAS'] || '').trim(),
-                    cod_empresa: codEmpresa,
-                    tipo_destino: String(row['TIPO_DESTINO'] || 'LOJA').toUpperCase(),
-                    lead_time_dias: leadTime,
-                    ciclo_pedido_dias: parseInt(row['CICLO_PEDIDO_DIAS']) || 7,
-                    pedido_minimo_valor: parseFloat(row['FAT_MINIMO']) || 0
-                });
-            });
-
-            exibirPreviewImportacao();
-        }
-
-        function exibirPreviewImportacao() {
-            document.getElementById('uploadZone').style.display = 'none';
-            document.getElementById('importacao-preview').style.display = 'block';
-
-            const erros = criticasImportacao.filter(c => c.tipo === 'ERRO').length;
-            const avisos = criticasImportacao.filter(c => c.tipo === 'AVISO').length;
-
-            document.getElementById('importacao-resumo').innerHTML = `
-                <div class="col-md-3">
-                    <div class="card bg-success text-white">
-                        <div class="card-body py-2">
-                            <h4 class="mb-0">${dadosImportacao.length}</h4>
-                            <small>Registros Validos</small>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card bg-primary text-white">
-                        <div class="card-body py-2">
-                            <h4 class="mb-0">${[...new Set(dadosImportacao.map(d => d.cnpj_fornecedor))].length}</h4>
-                            <small>Fornecedores</small>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card bg-info text-white">
-                        <div class="card-body py-2">
-                            <h4 class="mb-0">${[...new Set(dadosImportacao.map(d => d.cod_empresa))].length}</h4>
-                            <small>Lojas</small>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card ${erros > 0 ? 'bg-danger' : avisos > 0 ? 'bg-warning' : 'bg-secondary'} text-white">
-                        <div class="card-body py-2">
-                            <h4 class="mb-0">${erros + avisos}</h4>
-                            <small>Criticas (${erros} erros)</small>
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            if (criticasImportacao.length > 0) {
-                document.getElementById('importacao-criticas').style.display = 'block';
-                document.getElementById('importacao-criticas').innerHTML = `
-                    <div class="alert alert-warning">
-                        <h6><i class="bi bi-exclamation-triangle"></i> Criticas Encontradas</h6>
-                        <ul class="mb-0" style="max-height: 100px; overflow-y: auto;">
-                            ${criticasImportacao.slice(0, 10).map(c => `<li>Linha ${c.linha}: ${c.msg} (${c.tipo})</li>`).join('')}
-                            ${criticasImportacao.length > 10 ? `<li>... e mais ${criticasImportacao.length - 10}</li>` : ''}
-                        </ul>
-                    </div>
-                `;
-            } else {
-                document.getElementById('importacao-criticas').style.display = 'none';
-            }
-
-            const tbody = document.querySelector('#tabela-preview tbody');
-            tbody.innerHTML = dadosImportacao.slice(0, 30).map(d => `
-                <tr>
-                    <td>${d.cnpj_fornecedor}</td>
-                    <td>${d.nome_fornecedor}</td>
-                    <td>${d.cod_empresa}</td>
-                    <td>${d.tipo_destino}</td>
-                    <td>${d.lead_time_dias}d</td>
-                    <td>${d.ciclo_pedido_dias}d</td>
-                    <td>R$ ${d.pedido_minimo_valor.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
-                </tr>
-            `).join('');
-
-            if (dadosImportacao.length > 30) {
-                tbody.innerHTML += `<tr><td colspan="7" class="text-center text-muted">... e mais ${dadosImportacao.length - 30}</td></tr>`;
-            }
-
-            document.getElementById('btn-confirmar-importacao').disabled = dadosImportacao.length === 0;
-        }
-
-        function cancelarImportacao() {
-            document.getElementById('uploadZone').style.display = 'block';
-            document.getElementById('importacao-preview').style.display = 'none';
-            document.getElementById('fileInput').value = '';
-            dadosImportacao = [];
-            criticasImportacao = [];
-        }
-
-        async function confirmarImportacao() {
-            if (dadosImportacao.length === 0) return;
-
-            const modo = document.querySelector('input[name="modoImportacao"]:checked').value;
-
-            if (modo === 'substituir') {
-                if (!confirm('ATENCAO: Isso ira desativar todos os parametros anteriores. Deseja continuar?')) {
-                    return;
-                }
-            }
-
-            const btn = document.getElementById('btn-confirmar-importacao');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Importando...';
-
-            try {
-                const response = await fetch('/api/importar-parametros-fornecedor', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dados: dadosImportacao,
-                        modo: modo
-                    })
-                });
-
-                const result = await response.json();
-
-                if (result.sucesso) {
-                    alert(`Importacao concluida! ${result.total || dadosImportacao.length} registros processados.`);
-                    cancelarImportacao();
-                } else {
-                    alert('Erro: ' + result.mensagem);
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="bi bi-check-circle"></i> Confirmar Importacao';
-                }
-            } catch (error) {
-                alert('Erro: ' + error.message);
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check-circle"></i> Confirmar Importacao';
-            }
+        function abreviarNome(nome) {
+            if (!nome) return '';
+            if (nome.length <= 8) return nome;
+            return nome.substring(0, 7) + '...';
         }
     </script>
 </body>

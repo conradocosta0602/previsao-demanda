@@ -94,24 +94,95 @@ class TransferenciaRegional:
                 return g
         return None
 
-    def _calcular_urgencia(self, cobertura_dias: float) -> str:
+    def _get_lead_time_loja(self, cnpj_fornecedor: str, cod_empresa: int) -> Optional[int]:
         """
-        Calcula nivel de urgencia baseado na cobertura.
+        Busca lead time de um fornecedor para uma loja especifica.
+
+        Usa parametros_fornecedor como fonte unica de lead time.
+
+        Args:
+            cnpj_fornecedor: CNPJ do fornecedor
+            cod_empresa: Codigo da loja/empresa
 
         Returns:
-            'CRITICA': Ruptura atual (estoque = 0)
-            'ALTA': Ruptura em ate 3 dias
-            'MEDIA': Ruptura em ate 7 dias
-            'BAIXA': Preventivo
+            Lead time em dias ou None se nao encontrado
         """
+        if not cnpj_fornecedor:
+            return None
+
+        cur = self.conn.cursor()
+        try:
+            # Normalizar CNPJ (14 digitos com zeros)
+            cnpj_limpo = str(cnpj_fornecedor).replace('.', '').replace('/', '').replace('-', '').strip()
+            if len(cnpj_limpo) < 14:
+                cnpj_limpo = cnpj_limpo.zfill(14)
+
+            cur.execute("""
+                SELECT lead_time_dias
+                FROM parametros_fornecedor
+                WHERE cnpj_fornecedor = %s AND cod_empresa = %s AND ativo = TRUE
+            """, (cnpj_limpo, cod_empresa))
+            row = cur.fetchone()
+
+            if row and row[0]:
+                return int(row[0])
+
+            # Fallback: buscar media do fornecedor em outras lojas
+            cur.execute("""
+                SELECT AVG(lead_time_dias)::integer
+                FROM parametros_fornecedor
+                WHERE cnpj_fornecedor = %s AND ativo = TRUE AND lead_time_dias IS NOT NULL
+            """, (cnpj_limpo,))
+            row = cur.fetchone()
+
+            if row and row[0]:
+                return int(row[0])
+
+            return None  # Nao encontrou lead time
+
+        finally:
+            cur.close()
+
+    def _calcular_urgencia(self, cobertura_dias: float, lead_time_destino: int = None) -> str:
+        """
+        Calcula nivel de urgencia baseado na cobertura e lead time do destino.
+
+        A urgencia considera se a cobertura atual e suficiente para aguardar
+        uma reposicao via fornecedor (lead time) ou se transferencia e necessaria.
+
+        Args:
+            cobertura_dias: Dias de cobertura do estoque atual
+            lead_time_destino: Lead time do fornecedor para a loja destino (opcional)
+
+        Returns:
+            'CRITICA': Ruptura atual ou cobertura < lead_time (nao aguenta esperar)
+            'ALTA': Ruptura iminente em ate 3 dias ou cobertura < lead_time + 3
+            'MEDIA': Ruptura em ate 7 dias ou cobertura < lead_time + 7
+            'BAIXA': Preventivo (transferencia opcional)
+        """
+        # Se nao tem lead time, usar logica original baseada apenas na cobertura
+        if lead_time_destino is None:
+            if cobertura_dias <= 0:
+                return 'CRITICA'
+            elif cobertura_dias < 3:
+                return 'ALTA'
+            elif cobertura_dias < 7:
+                return 'MEDIA'
+            else:
+                return 'BAIXA'
+
+        # Com lead time: urgencia baseada na capacidade de esperar reposicao
+        # CRITICA: cobertura nao aguenta ate o lead time (vai romper antes)
         if cobertura_dias <= 0:
             return 'CRITICA'
-        elif cobertura_dias < 3:
-            return 'ALTA'
-        elif cobertura_dias < 7:
-            return 'MEDIA'
+        elif cobertura_dias < lead_time_destino:
+            return 'CRITICA'  # Nao aguenta esperar fornecedor
+        elif cobertura_dias < lead_time_destino + 3:
+            return 'ALTA'  # Cobertura apertada
+        elif cobertura_dias < lead_time_destino + 7:
+            return 'MEDIA'  # Cobertura razoavel mas vale transferir
         else:
-            return 'BAIXA'
+            return 'BAIXA'  # Transferencia preventiva
 
     def consolidar_posicao_item(
         self,
@@ -225,7 +296,8 @@ class TransferenciaRegional:
         self,
         posicao: Dict,
         demanda_por_loja: Dict[int, float],
-        cobertura_alvo: int = None
+        cobertura_alvo: int = None,
+        cnpj_fornecedor: str = None
     ) -> Dict:
         """
         Analisa desbalanceamento de estoque entre lojas.
@@ -234,6 +306,7 @@ class TransferenciaRegional:
             posicao: Resultado de consolidar_posicao_item
             demanda_por_loja: Dict {cod_empresa: demanda_diaria}
             cobertura_alvo: Cobertura alvo em dias (default: COBERTURA_ALVO_PADRAO)
+            cnpj_fornecedor: CNPJ do fornecedor para buscar lead time por loja
 
         Returns:
             Dict com analise de cada loja (excesso, falta, ok)
@@ -246,6 +319,11 @@ class TransferenciaRegional:
         for loja in posicao['posicao_lojas']:
             cod = loja['cod_empresa']
             demanda = demanda_por_loja.get(cod, 0)
+
+            # Buscar lead time especifico da loja (para calculo de urgencia)
+            lead_time_loja = None
+            if cnpj_fornecedor:
+                lead_time_loja = self._get_lead_time_loja(cnpj_fornecedor, cod)
 
             # Calcular cobertura
             if demanda > 0:
@@ -271,6 +349,11 @@ class TransferenciaRegional:
                 excesso_unidades = 0
                 necessidade_unidades = 0
 
+            # Calcular urgencia considerando lead time da loja destino
+            urgencia = None
+            if status == 'FALTA':
+                urgencia = self._calcular_urgencia(cobertura_dias, lead_time_loja)
+
             analise_lojas.append({
                 **loja,
                 'demanda_diaria': demanda,
@@ -278,7 +361,8 @@ class TransferenciaRegional:
                 'status': status,
                 'excesso_unidades': excesso_unidades,
                 'necessidade_unidades': necessidade_unidades,
-                'urgencia': self._calcular_urgencia(cobertura_dias) if status == 'FALTA' else None
+                'urgencia': urgencia,
+                'lead_time_dias': lead_time_loja
             })
 
         # Ordenar: FALTA primeiro (por urgencia), depois EXCESSO
@@ -372,6 +456,7 @@ class TransferenciaRegional:
                     'demanda_diaria_destino': destino['demanda_diaria'],
                     'cobertura_destino_dias': destino['cobertura_dias'],
                     'necessidade_unidades': destino['necessidade_unidades'],
+                    'lead_time_destino': destino.get('lead_time_dias'),
 
                     'qtd_sugerida': qtd_transferir,
                     'valor_estimado': round(qtd_transferir * posicao['cue'], 2),

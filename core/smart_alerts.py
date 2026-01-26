@@ -38,6 +38,11 @@ class SmartAlertGenerator:
     CATEGORY_ACCURACY = 'ACURACIA'
     CATEGORY_OUTLIERS = 'OUTLIERS'
     CATEGORY_DATA_QUALITY = 'QUALIDADE_DADOS'
+    CATEGORY_LEAD_TIME = 'LEAD_TIME_LONGO'
+
+    # Limites de lead time para alertas
+    LEAD_TIME_WARNING_THRESHOLD = 30  # Dias para alerta de atencao
+    LEAD_TIME_CRITICAL_THRESHOLD = 45  # Dias para alerta critico
 
     def __init__(self):
         self.alertas = []
@@ -108,6 +113,9 @@ class SmartAlertGenerator:
 
         # 7. Alertas de Qualidade de Dados
         self._check_data_quality(sku, loja, historico)
+
+        # 8. Alertas de Lead Time Longo
+        self._check_lead_time_alerts(sku, loja, lead_time_dias)
 
         # Ordenar por prioridade (críticos primeiro)
         self.alertas.sort(key=lambda x: x['prioridade'])
@@ -504,6 +512,64 @@ class SmartAlertGenerator:
                 'timestamp': datetime.now().isoformat(),
                 'dados_contexto': {
                     'periodos_historico': len(historico)
+                }
+            })
+
+    def _check_lead_time_alerts(
+        self,
+        sku: str,
+        loja: str,
+        lead_time_dias: int
+    ):
+        """
+        Alertas sobre lead time longo do fornecedor.
+
+        Lead times longos aumentam o risco de ruptura e exigem maior
+        estoque de seguranca e planejamento antecipado.
+
+        Args:
+            sku: Codigo do SKU
+            loja: Codigo da loja
+            lead_time_dias: Lead time em dias
+        """
+        if lead_time_dias is None:
+            return
+
+        # CRITICO: Lead time muito longo (>45 dias)
+        if lead_time_dias >= self.LEAD_TIME_CRITICAL_THRESHOLD:
+            self.alertas.append({
+                'tipo': self.CRITICAL,
+                'categoria': self.CATEGORY_LEAD_TIME,
+                'sku': sku,
+                'loja': loja,
+                'titulo': 'Lead time critico',
+                'mensagem': f'Lead time de {lead_time_dias} dias exige planejamento de longo prazo. Alto risco de ruptura se demanda variar.',
+                'acao_recomendada': f'Considerar estoque de seguranca adicional ou buscar fornecedor alternativo. Monitorar previsao com {lead_time_dias} dias de antecedencia.',
+                'prioridade': 1,
+                'timestamp': datetime.now().isoformat(),
+                'dados_contexto': {
+                    'lead_time_dias': lead_time_dias,
+                    'threshold_critico': self.LEAD_TIME_CRITICAL_THRESHOLD,
+                    'cobertura_minima_sugerida': lead_time_dias + 15
+                }
+            })
+
+        # ATENCAO: Lead time longo (30-45 dias)
+        elif lead_time_dias >= self.LEAD_TIME_WARNING_THRESHOLD:
+            self.alertas.append({
+                'tipo': self.WARNING,
+                'categoria': self.CATEGORY_LEAD_TIME,
+                'sku': sku,
+                'loja': loja,
+                'titulo': 'Lead time longo',
+                'mensagem': f'Lead time de {lead_time_dias} dias requer atencao no planejamento.',
+                'acao_recomendada': f'Manter cobertura de estoque de pelo menos {lead_time_dias + 10} dias. Planejar pedidos com antecedencia.',
+                'prioridade': 2,
+                'timestamp': datetime.now().isoformat(),
+                'dados_contexto': {
+                    'lead_time_dias': lead_time_dias,
+                    'threshold_atencao': self.LEAD_TIME_WARNING_THRESHOLD,
+                    'cobertura_minima_sugerida': lead_time_dias + 10
                 }
             })
 

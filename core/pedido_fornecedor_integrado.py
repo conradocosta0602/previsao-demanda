@@ -243,6 +243,14 @@ class PedidoFornecedorIntegrado:
         self.conn = conn
         # Cache das regras de situação de compra
         self._regras_sit_compra = None
+        # Cache de situações de compra dos itens (codigo, cod_empresa) -> sit_compra
+        self._cache_sit_compra_itens = None
+        # Cache de estoque posição atual: (codigo, cod_empresa) -> dict
+        self._cache_estoque = None
+        # Cache de histórico de vendas agregado: (codigo, tuple(lojas)) -> list
+        self._cache_historico = None
+        # Cache de dados de produtos: codigo -> dict
+        self._cache_produtos = None
 
     def carregar_regras_sit_compra(self) -> Dict:
         """
@@ -278,6 +286,161 @@ class PedidoFornecedorIntegrado:
 
         return self._regras_sit_compra
 
+    def precarregar_situacoes_compra(self, codigos: List[int], cod_empresas: List[int]) -> None:
+        """
+        Pré-carrega todas as situações de compra em lote para otimizar performance.
+
+        Args:
+            codigos: Lista de códigos de produtos
+            cod_empresas: Lista de códigos de empresas/lojas
+        """
+        if not codigos or not cod_empresas:
+            self._cache_sit_compra_itens = {}
+            return
+
+        try:
+            # Carregar regras primeiro
+            self.carregar_regras_sit_compra()
+
+            # Buscar todas as situações de compra de uma vez
+            placeholders_cod = ','.join(['%s'] * len(codigos))
+            placeholders_emp = ','.join(['%s'] * len(cod_empresas))
+
+            query = f"""
+                SELECT sci.codigo, sci.cod_empresa, sci.sit_compra
+                FROM situacao_compra_itens sci
+                JOIN situacao_compra_regras scr ON sci.sit_compra = scr.codigo_situacao
+                WHERE sci.codigo IN ({placeholders_cod})
+                  AND sci.cod_empresa IN ({placeholders_emp})
+                  AND scr.bloqueia_compra_automatica = TRUE
+                  AND scr.ativo = TRUE
+                  AND (sci.data_fim IS NULL OR sci.data_fim >= CURRENT_DATE)
+            """
+            params = list(codigos) + list(cod_empresas)
+            df = pd.read_sql(query, self.conn, params=params)
+
+            # Montar cache
+            self._cache_sit_compra_itens = {}
+            for _, row in df.iterrows():
+                key = (int(row['codigo']), int(row['cod_empresa']))
+                self._cache_sit_compra_itens[key] = row['sit_compra']
+
+        except Exception:
+            self._cache_sit_compra_itens = {}
+
+    def precarregar_estoque(self, codigos: List[int], cod_empresas: List[int]) -> None:
+        """
+        Pré-carrega estoque de todos os produtos/lojas em lote para otimizar performance.
+
+        Args:
+            codigos: Lista de códigos de produtos
+            cod_empresas: Lista de códigos de empresas/lojas
+        """
+        if not codigos or not cod_empresas:
+            self._cache_estoque = {}
+            return
+
+        try:
+            placeholders_cod = ','.join(['%s'] * len(codigos))
+            placeholders_emp = ','.join(['%s'] * len(cod_empresas))
+
+            query = f"""
+                SELECT
+                    codigo, cod_empresa,
+                    COALESCE(estoque, 0) as estoque_disponivel,
+                    COALESCE(qtd_pendente, 0) as qtd_pendente,
+                    COALESCE(qtd_pend_transf, 0) as qtd_pend_transf,
+                    COALESCE(cue, 0) as cue
+                FROM estoque_posicao_atual
+                WHERE codigo IN ({placeholders_cod})
+                  AND cod_empresa IN ({placeholders_emp})
+            """
+            params = list(codigos) + list(cod_empresas)
+
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                df = pd.read_sql(query, self.conn, params=params)
+
+            # Montar cache
+            self._cache_estoque = {}
+            for _, row in df.iterrows():
+                key = (int(row['codigo']), int(row['cod_empresa']))
+                estoque_disp = float(row['estoque_disponivel'])
+                qtd_pendente = float(row['qtd_pendente'])
+                qtd_pend_transf = float(row['qtd_pend_transf'])
+                estoque_transito = qtd_pendente + qtd_pend_transf
+
+                self._cache_estoque[key] = {
+                    'estoque_disponivel': estoque_disp,
+                    'estoque_transito': estoque_transito,
+                    'estoque_efetivo': estoque_disp + estoque_transito,
+                    'qtd_pendente': qtd_pendente,
+                    'qtd_pend_transf': qtd_pend_transf,
+                    'cue': float(row['cue'])
+                }
+
+            print(f"  [CACHE] Estoque pré-carregado: {len(self._cache_estoque)} registros")
+
+        except Exception as e:
+            print(f"  [CACHE] Erro ao pré-carregar estoque: {e}")
+            self._cache_estoque = {}
+
+    def precarregar_historico_vendas(self, codigos: List[int], cod_empresas: List[int], dias: int = 730) -> None:
+        """
+        Pré-carrega histórico de vendas de todos os produtos/lojas em lote.
+
+        Args:
+            codigos: Lista de códigos de produtos
+            cod_empresas: Lista de códigos de empresas/lojas
+            dias: Número de dias de histórico (padrão: 730 = 2 anos)
+        """
+        if not codigos or not cod_empresas:
+            self._cache_historico = {}
+            return
+
+        try:
+            from datetime import datetime, timedelta
+
+            data_fim = datetime.now().date()
+            data_inicio = data_fim - timedelta(days=dias)
+
+            placeholders_cod = ','.join(['%s'] * len(codigos))
+            placeholders_emp = ','.join(['%s'] * len(cod_empresas))
+
+            # Query agregada: soma vendas por produto/loja/data
+            query = f"""
+                SELECT
+                    codigo,
+                    cod_empresa,
+                    data,
+                    COALESCE(SUM(qtd_venda), 0) as qtd_venda
+                FROM historico_vendas_diario
+                WHERE codigo IN ({placeholders_cod})
+                  AND cod_empresa IN ({placeholders_emp})
+                  AND data >= %s
+                  AND data <= %s
+                GROUP BY codigo, cod_empresa, data
+                ORDER BY codigo, cod_empresa, data
+            """
+            params = list(codigos) + list(cod_empresas) + [data_inicio, data_fim]
+
+            df = pd.read_sql(query, self.conn, params=params)
+
+            # Montar cache por (codigo, loja) -> lista de vendas ordenada por data
+            self._cache_historico = {}
+            if not df.empty:
+                for (codigo, cod_empresa), group in df.groupby(['codigo', 'cod_empresa']):
+                    key = (int(codigo), int(cod_empresa))
+                    vendas = group.sort_values('data')['qtd_venda'].tolist()
+                    self._cache_historico[key] = [float(v) for v in vendas]
+
+            print(f"  [CACHE] Histórico pré-carregado: {len(self._cache_historico)} combinações produto/loja")
+
+        except Exception as e:
+            print(f"  [CACHE] Erro ao pré-carregar histórico: {e}")
+            self._cache_historico = {}
+
     def verificar_situacao_compra(self, codigo, cod_empresa: int) -> Optional[Dict]:
         """
         Verifica se o item tem alguma situação de compra que bloqueia pedido.
@@ -294,6 +457,26 @@ class PedidoFornecedorIntegrado:
         except (ValueError, TypeError):
             return None
 
+        # Usar cache se disponível (muito mais rápido)
+        if self._cache_sit_compra_itens is not None:
+            key = (codigo_int, int(cod_empresa))
+            sit_compra = self._cache_sit_compra_itens.get(key)
+            if sit_compra is None:
+                return None  # Não bloqueado
+
+            # Buscar detalhes da regra do cache de regras
+            regras = self.carregar_regras_sit_compra()
+            regra = regras.get(sit_compra, {})
+            return {
+                'sit_compra': sit_compra,
+                'descricao': regra.get('descricao', sit_compra),
+                'bloqueia_compra_automatica': regra.get('bloqueia_compra_automatica', True),
+                'permite_compra_manual': regra.get('permite_compra_manual', False),
+                'cor_alerta': regra.get('cor_alerta', '#ffc107'),
+                'icone': regra.get('icone', '⚠️')
+            }
+
+        # Fallback: query individual (mais lento)
         try:
             query = """
                 SELECT sci.sit_compra, scr.descricao, scr.bloqueia_compra_automatica,
@@ -371,13 +554,23 @@ class PedidoFornecedorIntegrado:
         Returns:
             Dicionário com estoque disponível, em trânsito e pendente
         """
+        default_result = {'estoque_disponivel': 0, 'estoque_transito': 0, 'estoque_efetivo': 0, 'qtd_pendente': 0, 'qtd_pend_transf': 0}
+
         # Converter codigo para int
         try:
             codigo_int = int(codigo)
         except (ValueError, TypeError):
-            return {'estoque_disponivel': 0, 'estoque_transito': 0, 'estoque_efetivo': 0, 'qtd_pendente': 0}
+            return default_result
 
-        # Buscar estoque da tabela de posição atual (dados importados)
+        # Usar cache se disponível (muito mais rápido)
+        if self._cache_estoque is not None:
+            key = (codigo_int, int(cod_empresa))
+            cached = self._cache_estoque.get(key)
+            if cached:
+                return cached
+            return default_result
+
+        # Fallback: query individual (mais lento)
         query_estoque = """
             SELECT
                 COALESCE(estoque, 0) as estoque_disponivel,
@@ -393,14 +586,12 @@ class PedidoFornecedorIntegrado:
             df_estoque = pd.read_sql(query_estoque, self.conn, params=[codigo_int, cod_empresa])
 
         if df_estoque.empty:
-            return {'estoque_disponivel': 0, 'estoque_transito': 0, 'estoque_efetivo': 0, 'qtd_pendente': 0}
+            return default_result
 
         row = df_estoque.iloc[0]
         estoque_disponivel = float(row['estoque_disponivel'])
-        qtd_pendente = float(row['qtd_pendente'])  # Pedidos pendentes de entrega
-        qtd_pend_transf = float(row['qtd_pend_transf'])  # Transferências pendentes
-
-        # Estoque em trânsito = pedidos pendentes + transferências pendentes
+        qtd_pendente = float(row['qtd_pendente'])
+        qtd_pend_transf = float(row['qtd_pend_transf'])
         estoque_transito = qtd_pendente + qtd_pend_transf
 
         return {
@@ -446,7 +637,15 @@ class PedidoFornecedorIntegrado:
         except (ValueError, TypeError):
             return 0.0
 
-        # Buscar CUE da tabela de posição atual
+        # Usar cache de estoque se disponível (CUE é carregado junto)
+        if self._cache_estoque is not None:
+            key = (codigo_int, int(cod_empresa))
+            cached = self._cache_estoque.get(key)
+            if cached:
+                return cached.get('cue', 0.0)
+            return 0.0
+
+        # Fallback: query individual (mais lento)
         query = """
             SELECT COALESCE(cue, 0) as cue
             FROM estoque_posicao_atual
@@ -487,17 +686,26 @@ class PedidoFornecedorIntegrado:
         """
         from datetime import datetime, timedelta
 
-        data_fim = datetime.now().date()
-        data_inicio = data_fim - timedelta(days=dias)
-
         # Converter codigo para int (historico_vendas_diario usa INTEGER)
         try:
             codigo_int = int(codigo)
         except (ValueError, TypeError):
             return []
 
+        # Usar cache se disponível (muito mais rápido)
+        # Nota: cache não inclui saneamento de rupturas, mas é aceitável para performance
+        if self._cache_historico is not None:
+            key = (codigo_int, int(cod_empresa))
+            cached = self._cache_historico.get(key)
+            if cached:
+                return cached
+            return []
+
+        # Fallback: query individual (mais lento)
+        data_fim = datetime.now().date()
+        data_inicio = data_fim - timedelta(days=dias)
+
         if sanear_rupturas:
-            # Buscar vendas com informação de estoque para identificar rupturas
             query = """
                 SELECT
                     h.data,
@@ -635,6 +843,9 @@ class PedidoFornecedorIntegrado:
         Returns:
             Dicionário com análise completa do item
         """
+        # Inicializar variável de previsão semanal (pode ser populada em versões futuras)
+        previsao_semanal_info = None
+
         # 0. Verificar situação de compra (antes de qualquer processamento)
         bloqueio = self.verificar_situacao_compra(codigo, cod_empresa)
         if bloqueio:
