@@ -449,6 +449,11 @@
             background: #fef3c7 !important;
         }
 
+        .linha-sem-padrao {
+            background: #fffbeb !important;
+            border-left: 3px solid #f59e0b;
+        }
+
         .estoque-zero {
             background: #fef2f2;
             color: #dc2626;
@@ -835,6 +840,14 @@
                     A: +2d | B: +4d | C: +6d
                 </div>
 
+                <div class="filtro-grupo">
+                    <label>Visualizacao</label>
+                    <select id="visualizacao">
+                        <option value="padrao_compra" selected>Por Padrao de Compra (Destino)</option>
+                        <option value="padrao">Padrao (Por Fornecedor)</option>
+                    </select>
+                </div>
+
                 <button id="btnGerar" class="btn-gerar" onclick="gerarPedido()">
                     Gerar Pedido
                 </button>
@@ -911,8 +924,42 @@
 
     <script>
         let dadosPedidoAtual = null;
+        let diasTransferenciaGlobal = 10; // Valor padrao
 
-        document.addEventListener('DOMContentLoaded', carregarFiltros);
+        document.addEventListener('DOMContentLoaded', async function() {
+            await carregarFiltros();
+            await carregarParametrosGlobais();
+            setupVisualizacaoToggle();
+        });
+
+        // Carregar dias de transferencia dos parametros globais
+        async function carregarParametrosGlobais() {
+            try {
+                const resp = await fetch('/api/parametros-globais');
+                const data = await resp.json();
+                if (data.success && data.parametros) {
+                    const diasParam = data.parametros.find(p => p.chave === 'dias_transferencia_padrao_compra');
+                    if (diasParam) {
+                        diasTransferenciaGlobal = parseInt(diasParam.valor) || 10;
+                    }
+                }
+            } catch (e) {
+                console.error('Erro ao carregar parametros globais:', e);
+            }
+        }
+
+        // Setup toggle de visualizacao
+        function setupVisualizacaoToggle() {
+            const selectVisualizacao = document.getElementById('visualizacao');
+
+            selectVisualizacao.addEventListener('change', function() {
+                // Se ja tem dados carregados, re-exibir com nova visualizacao
+                if (dadosPedidoAtual) {
+                    const tipoPedido = document.getElementById('tipo_pedido').value;
+                    exibirResultados(dadosPedidoAtual, tipoPedido);
+                }
+            });
+        }
 
         async function carregarFiltros() {
             try {
@@ -1100,6 +1147,13 @@
         function exibirResultados(data, tipoPedido = 'reabastecimento') {
             dadosPedidoAtual = data;
             document.getElementById('results').style.display = 'block';
+
+            // Verificar modo de visualizacao
+            const visualizacao = document.getElementById('visualizacao').value;
+            if (visualizacao === 'padrao_compra') {
+                exibirResultadosPadraoCompra(data, tipoPedido);
+                return;
+            }
 
             // Verificar se e pedido planejado (v6.0)
             const isPlanejado = tipoPedido === 'planejado' || data.tipo_pedido === 'planejado';
@@ -1617,6 +1671,512 @@
             }
 
             document.getElementById('detalhamentoContainer').innerHTML = detalhamentoHtml;
+        }
+
+        // =====================================================================
+        // VISUALIZACAO POR PADRAO DE COMPRA - Agrupa por Destino > Fornecedor
+        // AGREGA quantidades do mesmo SKU de diferentes lojas para o destino
+        // =====================================================================
+        async function exibirResultadosPadraoCompra(data, tipoPedido = 'reabastecimento') {
+            const isPlanejado = tipoPedido === 'planejado' || data.tipo_pedido === 'planejado';
+
+            // Extrair itens do pedido (apenas itens a pedir, nao bloqueados/ok)
+            const itensPedido = data.itens_pedido || [];
+
+            // Buscar padroes de compra dos itens
+            const codigos = [...new Set(itensPedido.map(i => i.codigo))];
+            let padraoCompraMap = {};
+
+            try {
+                const resp = await fetch('/api/padrao-compra/buscar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ codigos: codigos })
+                });
+                const padraoData = await resp.json();
+                if (padraoData.success && padraoData.padroes) {
+                    // Criar mapa: codigo|loja_venda -> destino
+                    padraoData.padroes.forEach(p => {
+                        const chave = `${p.codigo}|${p.cod_empresa_venda}`;
+                        padraoCompraMap[chave] = p.cod_empresa_destino;
+                    });
+                }
+            } catch (e) {
+                console.error('Erro ao buscar padroes de compra:', e);
+            }
+
+            // =====================================================================
+            // AGREGACAO: Agrupar por codigo + destino + fornecedor
+            // Somar quantidades de todas as lojas de venda
+            // =====================================================================
+            const itensAgregados = {};  // chave: "codigo|destino|fornecedor"
+            let itensSemPadrao = [];
+            let totalLinhasOriginais = 0;
+
+            itensPedido.forEach(item => {
+                totalLinhasOriginais++;
+                const lojaVenda = item.cod_loja || item.cod_empresa;
+                const chave = `${item.codigo}|${lojaVenda}`;
+                const destino = padraoCompraMap[chave] || lojaVenda;  // Se nao tem padrao, destino = loja venda
+                const nomeForn = item.nome_fornecedor || 'Sem Fornecedor';
+
+                // Chave de agregacao: codigo + destino + fornecedor
+                const chaveAgregacao = `${item.codigo}|${destino}|${nomeForn}`;
+
+                if (!itensAgregados[chaveAgregacao]) {
+                    itensAgregados[chaveAgregacao] = {
+                        codigo: item.codigo,
+                        descricao: item.descricao || '',
+                        nome_fornecedor: nomeForn,
+                        codigo_fornecedor: item.codigo_fornecedor || '',
+                        curva_abc: item.curva_abc || 'B',
+                        linha1: item.linha1 || '',
+                        destino: destino,
+                        // Acumuladores
+                        quantidade_pedido: 0,
+                        valor_pedido: 0,
+                        estoque_total: 0,
+                        demanda_total: 0,
+                        // Lojas de origem (onde o item sera vendido)
+                        lojas_origem: [],
+                        // Detalhes por loja
+                        detalhes_lojas: [],
+                        // Flags
+                        tem_ruptura: false,
+                        sem_padrao_compra: !padraoCompraMap[chave],
+                        // Lead time do destino + dias transferencia
+                        lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
+                        // CUE (preco) - usar o primeiro encontrado
+                        cue: item.cue || item.preco || 0
+                    };
+                }
+
+                // Agregar valores
+                itensAgregados[chaveAgregacao].quantidade_pedido += (item.quantidade_pedido || 0);
+                itensAgregados[chaveAgregacao].valor_pedido += (item.valor_pedido || 0);
+                itensAgregados[chaveAgregacao].estoque_total += (item.estoque_atual || item.estoque_efetivo || 0);
+                itensAgregados[chaveAgregacao].demanda_total += (item.demanda_prevista_diaria || item.demanda_diaria || 0);
+
+                if (item.ruptura_iminente) {
+                    itensAgregados[chaveAgregacao].tem_ruptura = true;
+                }
+
+                // Registrar loja de origem
+                if (!itensAgregados[chaveAgregacao].lojas_origem.includes(lojaVenda)) {
+                    itensAgregados[chaveAgregacao].lojas_origem.push(lojaVenda);
+                }
+
+                // Guardar detalhe da loja
+                itensAgregados[chaveAgregacao].detalhes_lojas.push({
+                    loja: lojaVenda,
+                    qtd: item.quantidade_pedido || 0,
+                    estoque: item.estoque_atual || item.estoque_efetivo || 0,
+                    demanda: item.demanda_prevista_diaria || item.demanda_diaria || 0
+                });
+
+                // Contar itens sem padrao
+                if (!padraoCompraMap[chave]) {
+                    itensSemPadrao.push(item);
+                }
+            });
+
+            // =====================================================================
+            // AJUSTE DE COBERTURA: Adicionar +dias de transferencia para itens centralizados
+            // Formula: quantidade_ajustada = quantidade_original + (demanda_total * dias_transferencia)
+            // =====================================================================
+            Object.values(itensAgregados).forEach(item => {
+                // Verificar se e centralizado (destino diferente de TODAS as lojas de origem)
+                const isCentralizado = item.lojas_origem.some(loja => String(loja) !== String(item.destino));
+
+                if (isCentralizado && item.demanda_total > 0) {
+                    // Calcular quantidade adicional para cobrir os dias de transferencia
+                    const qtdAdicional = Math.ceil(item.demanda_total * diasTransferenciaGlobal);
+                    const qtdOriginal = item.quantidade_pedido;
+
+                    // Adicionar a quantidade extra
+                    item.quantidade_pedido += qtdAdicional;
+
+                    // Recalcular valor do pedido
+                    if (item.cue > 0) {
+                        item.valor_pedido = item.quantidade_pedido * item.cue;
+                    }
+
+                    // Guardar info do ajuste para exibicao
+                    item.qtd_original = qtdOriginal;
+                    item.qtd_adicional_transferencia = qtdAdicional;
+                    item.ajustado_transferencia = true;
+                }
+            });
+
+            // Converter para array
+            const itensArray = Object.values(itensAgregados);
+
+            // =====================================================================
+            // Agrupar por DESTINO
+            // =====================================================================
+            const itensPorDestino = {};
+            itensArray.forEach(item => {
+                if (!itensPorDestino[item.destino]) {
+                    itensPorDestino[item.destino] = [];
+                }
+                itensPorDestino[item.destino].push(item);
+            });
+
+            // Calcular estatisticas
+            const totalDestinos = Object.keys(itensPorDestino).length;
+            const totalSkusAgregados = itensArray.length;
+            const valorTotal = itensArray.reduce((s, i) => s + (i.valor_pedido || 0), 0);
+            const qtdTotalUnidades = itensArray.reduce((s, i) => s + (i.quantidade_pedido || 0), 0);
+            const itensCentralizados = itensArray.filter(i => i.lojas_origem.length > 1 ||
+                (i.lojas_origem.length === 1 && String(i.lojas_origem[0]) !== String(i.destino))).length;
+
+            // Resumo Header - Visao Padrao de Compra
+            document.getElementById('resumoTitulo').textContent = `PADRAO DE COMPRA: ${totalDestinos} Destino(s)`;
+
+            document.getElementById('resumoMetricas').innerHTML = `
+                <div class="metrica">
+                    <div class="valor">${totalSkusAgregados}</div>
+                    <div class="label">SKUs Agregados</div>
+                </div>
+                <div class="metrica" title="${totalLinhasOriginais} linhas originais agregadas em ${totalSkusAgregados} SKUs" style="cursor: help;">
+                    <div class="valor">${totalLinhasOriginais}</div>
+                    <div class="label">Linhas Originais</div>
+                </div>
+                <div class="metrica" title="${itensCentralizados} SKUs vem de lojas diferentes do destino" style="cursor: help;">
+                    <div class="valor">${itensCentralizados}</div>
+                    <div class="label">Centralizados</div>
+                </div>
+                <div class="metrica">
+                    <div class="valor">${qtdTotalUnidades.toLocaleString('pt-BR')}</div>
+                    <div class="label">Unidades</div>
+                </div>
+                <div class="metrica">
+                    <div class="valor">R$ ${(valorTotal/1000).toFixed(1)}k</div>
+                    <div class="label">Valor Total</div>
+                </div>
+            `;
+
+            // Cards de Destino
+            let fornHtml = '';
+            const destinosOrdenados = Object.keys(itensPorDestino).sort((a, b) => {
+                const valorA = itensPorDestino[a].reduce((s, i) => s + (i.valor_pedido || 0), 0);
+                const valorB = itensPorDestino[b].reduce((s, i) => s + (i.valor_pedido || 0), 0);
+                return valorB - valorA;
+            });
+
+            destinosOrdenados.forEach(destino => {
+                const itensDestino = itensPorDestino[destino];
+                const valorDestino = itensDestino.reduce((s, i) => s + (i.valor_pedido || 0), 0);
+                const totalSkusDestino = itensDestino.length;
+                const fornecedoresDestino = [...new Set(itensDestino.map(i => i.nome_fornecedor))];
+                const qtdUnidadesDestino = itensDestino.reduce((s, i) => s + (i.quantidade_pedido || 0), 0);
+                const lojasOrigemDestino = [...new Set(itensDestino.flatMap(i => i.lojas_origem))];
+
+                fornHtml += `
+                    <div class="fornecedor-card">
+                        <div class="fornecedor-card-header" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%);">
+                            <div class="fornecedor-info">
+                                <h4>Destino: Loja ${destino}</h4>
+                                <div class="cnpj">Origem: Lojas ${lojasOrigemDestino.sort((a,b) => a-b).join(', ')}</div>
+                            </div>
+                            <div class="fornecedor-valor">
+                                <div class="total">R$ ${valorDestino.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</div>
+                                <div class="itens">${totalSkusDestino} SKUs | ${qtdUnidadesDestino.toLocaleString('pt-BR')} un</div>
+                            </div>
+                        </div>
+                        <div class="fornecedor-card-body">
+                            <div class="fornecedor-stats">
+                                <div class="fornecedor-stat">
+                                    <div class="num">${fornecedoresDestino.length}</div>
+                                    <div class="lbl">Fornecedores</div>
+                                </div>
+                                <div class="fornecedor-stat">
+                                    <div class="num">${lojasOrigemDestino.length}</div>
+                                    <div class="lbl">Lojas Origem</div>
+                                </div>
+                            </div>
+                            <div class="fornecedor-acoes">
+                                <button class="btn-sm btn-exportar-forn" onclick="exportarDestino('${destino}')">
+                                    Exportar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            if (!fornHtml) {
+                fornHtml = '<div class="empty-state"><p>Nenhum pedido necessario</p></div>';
+            }
+            document.getElementById('fornecedoresLista').innerHTML = fornHtml;
+
+            // Alerta de itens sem padrao
+            let detalhamentoHtml = '';
+            if (itensSemPadrao.length > 0) {
+                const skusSemPadrao = [...new Set(itensSemPadrao.map(i => i.codigo))].length;
+                detalhamentoHtml = `
+                    <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                        <strong style="color: #92400e;">⚠️ Atencao:</strong>
+                        <span style="color: #78350f;">${skusSemPadrao} SKU(s) sem padrao de compra definido (${itensSemPadrao.length} linhas). Esses itens permanecem na propria loja de venda.</span>
+                    </div>
+                `;
+            }
+
+            // Tabela detalhada - Agrupada por Destino > Fornecedor
+            destinosOrdenados.forEach(destino => {
+                const itensDestino = itensPorDestino[destino];
+                const valorDestino = itensDestino.reduce((s, i) => s + (i.valor_pedido || 0), 0);
+                const lojasOrigemDestino = [...new Set(itensDestino.flatMap(i => i.lojas_origem))].sort((a,b) => a-b);
+
+                // Agrupar por fornecedor dentro do destino
+                const itensPorFornecedor = {};
+                itensDestino.forEach(item => {
+                    if (!itensPorFornecedor[item.nome_fornecedor]) {
+                        itensPorFornecedor[item.nome_fornecedor] = [];
+                    }
+                    itensPorFornecedor[item.nome_fornecedor].push(item);
+                });
+
+                // Gerar sub-secoes por fornecedor
+                let fornecedoresHtml = '';
+                const fornecedoresOrdenados = Object.keys(itensPorFornecedor).sort((a, b) => {
+                    const valorA = itensPorFornecedor[a].reduce((s, i) => s + (i.valor_pedido || 0), 0);
+                    const valorB = itensPorFornecedor[b].reduce((s, i) => s + (i.valor_pedido || 0), 0);
+                    return valorB - valorA;
+                });
+
+                fornecedoresOrdenados.forEach(nomeForn => {
+                    const itensForn = itensPorFornecedor[nomeForn];
+                    const valorForn = itensForn.reduce((s, i) => s + (i.valor_pedido || 0), 0);
+                    const qtdUnidadesForn = itensForn.reduce((s, i) => s + (i.quantidade_pedido || 0), 0);
+
+                    let tbodyForn = '';
+                    itensForn.forEach(item => {
+                        tbodyForn += gerarLinhaTabelaPadraoCompraAgregado(item);
+                    });
+
+                    fornecedoresHtml += `
+                        <div class="loja-section">
+                            <div class="loja-section-header" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom-color: #e5e7eb;">
+                                <h5 style="color: #374151;">${nomeForn}</h5>
+                                <div class="stats" style="color: #6b7280;">
+                                    <span>${itensForn.length} SKUs</span>
+                                    <span style="color: #1e40af;">${qtdUnidadesForn.toLocaleString('pt-BR')} un</span>
+                                    <span style="color: #059669; font-weight: 600;">R$ ${valorForn.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
+                                </div>
+                            </div>
+                            <div class="tabela-container">
+                                <table class="tabela-itens">
+                                    <thead>
+                                        <tr>
+                                            <th class="col-codigo">Codigo</th>
+                                            <th class="col-descricao">Descricao</th>
+                                            <th style="width: 50px; text-align: center;">ABC</th>
+                                            <th style="width: 120px; text-align: center;">Lojas Origem</th>
+                                            <th class="col-num">Estoque Total</th>
+                                            <th class="col-num">Demanda Total</th>
+                                            <th class="col-num">Qtd Pedido</th>
+                                            <th class="col-valor">Valor</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>${tbodyForn}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                detalhamentoHtml += `
+                    <div class="fornecedor-section multiloja" style="margin-bottom: 20px;">
+                        <div class="fornecedor-section-header" style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-bottom: 2px solid #10b981;">
+                            <h4 style="color: #065f46;">📦 Destino: Loja ${destino}</h4>
+                            <div class="stats">
+                                <span>${itensDestino.length} SKUs agregados</span>
+                                <span>Origem: ${lojasOrigemDestino.join(', ')}</span>
+                                <span class="valor-total" style="color: #047857;">R$ ${valorDestino.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
+                            </div>
+                        </div>
+                        ${fornecedoresHtml}
+                    </div>
+                `;
+            });
+
+            document.getElementById('detalhamentoContainer').innerHTML = detalhamentoHtml;
+            document.getElementById('totalItensLabel').textContent = `${totalSkusAgregados} SKUs agregados de ${totalLinhasOriginais} linhas em ${totalDestinos} destino(s)`;
+        }
+
+        // Gerar linha da tabela para visualizacao Padrao de Compra AGREGADO
+        function gerarLinhaTabelaPadraoCompraAgregado(item) {
+            // Tooltip com detalhes por loja
+            let tooltipDetalhes = item.detalhes_lojas.map(d =>
+                `Loja ${d.loja}: ${d.qtd} un (est: ${d.estoque}, dem: ${d.demanda.toFixed(2)})`
+            ).join('\n');
+
+            // Badge de lojas origem
+            const lojasOrigemStr = item.lojas_origem.sort((a,b) => a-b).join(', ');
+            const qtdLojas = item.lojas_origem.length;
+            const badgeLojas = qtdLojas > 1
+                ? `<span style="background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 0.75em;" title="${tooltipDetalhes}">${lojasOrigemStr}</span>`
+                : `<span title="${tooltipDetalhes}">${lojasOrigemStr}</span>`;
+
+            // Status badge
+            let statusInfo = '';
+            if (item.tem_ruptura) {
+                statusInfo = `<span class="badge-status badge-ruptura" style="font-size: 0.65em; margin-left: 4px;">Ruptura</span>`;
+            }
+            if (item.sem_padrao_compra) {
+                statusInfo += `<span style="background: #fef3c7; color: #92400e; padding: 1px 4px; border-radius: 3px; font-size: 0.65em; margin-left: 4px;" title="Item sem padrao de compra">⚠️</span>`;
+            }
+
+            // Formatacao da quantidade - mostrar ajuste de transferencia se houver
+            let qtdCell = '';
+            if (item.ajustado_transferencia) {
+                const tooltipAjuste = `Original: ${item.qtd_original.toLocaleString('pt-BR')} un\n+${item.qtd_adicional_transferencia.toLocaleString('pt-BR')} un (${diasTransferenciaGlobal} dias transf.)`;
+                qtdCell = `
+                    <span style="font-weight: 600;" title="${tooltipAjuste}">
+                        ${item.quantidade_pedido.toLocaleString('pt-BR')}
+                        <span style="color: #059669; font-size: 0.75em; font-weight: normal;">
+                            (+${item.qtd_adicional_transferencia.toLocaleString('pt-BR')})
+                        </span>
+                    </span>`;
+            } else {
+                qtdCell = `<span style="font-weight: 600;">${item.quantidade_pedido.toLocaleString('pt-BR')}</span>`;
+            }
+
+            return `
+                <tr>
+                    <td>${item.codigo}${statusInfo}</td>
+                    <td title="${item.descricao}">${item.descricao.substring(0, 35)}</td>
+                    <td style="text-align: center;"><span class="badge badge-${item.curva_abc.toLowerCase()}">${item.curva_abc}</span></td>
+                    <td style="text-align: center;">${badgeLojas}</td>
+                    <td class="col-num">${item.estoque_total.toLocaleString('pt-BR')}</td>
+                    <td class="col-num">${item.demanda_total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td class="col-num">${qtdCell}</td>
+                    <td class="col-valor">R$ ${item.valor_pedido.toLocaleString('pt-BR', {minimumFractionDigits: 0})}</td>
+                </tr>
+            `;
+        }
+
+        // Exportar itens de um destino especifico
+        async function exportarDestino(codDestino) {
+            if (!dadosPedidoAtual?.itens_pedido) return;
+
+            // Buscar padroes de compra
+            const todosItens = dadosPedidoAtual.itens_pedido;
+            const codigos = [...new Set(todosItens.map(i => i.codigo))];
+
+            try {
+                const resp = await fetch('/api/padrao-compra/buscar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ codigos: codigos })
+                });
+                const padraoData = await resp.json();
+
+                let padraoCompraMap = {};
+                if (padraoData.success && padraoData.padroes) {
+                    padraoData.padroes.forEach(p => {
+                        const chave = `${p.codigo}|${p.cod_empresa_venda}`;
+                        padraoCompraMap[chave] = p.cod_empresa_destino;
+                    });
+                }
+
+                // Filtrar itens deste destino
+                const itensDestino = todosItens.filter(item => {
+                    const chave = `${item.codigo}|${item.cod_loja || item.cod_empresa}`;
+                    const destino = padraoCompraMap[chave] || (item.cod_loja || item.cod_empresa);
+                    return String(destino) === String(codDestino);
+                });
+
+                if (!itensDestino.length) {
+                    alert('Nenhum item encontrado para este destino');
+                    return;
+                }
+
+                // Agrupar por codigo para consolidar lojas origem
+                const itensAgrupados = {};
+                itensDestino.forEach(item => {
+                    const lojaVenda = item.cod_loja || item.cod_empresa;
+                    if (!itensAgrupados[item.codigo]) {
+                        itensAgrupados[item.codigo] = {
+                            codigo: item.codigo,
+                            descricao: item.descricao || '',
+                            categoria: item.linha1 || item.categoria || '',
+                            curva_abc: item.curva_abc || 'B',
+                            nome_fornecedor: item.nome_fornecedor || '',
+                            codigo_fornecedor: item.codigo_fornecedor || '',
+                            cod_empresa_destino: codDestino,
+                            quantidade_pedido: 0,
+                            cue: item.cue || item.preco || 0,
+                            valor_pedido: 0,
+                            lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
+                            lojas_origem: [],
+                            criticas: []
+                        };
+                    }
+                    // Somar quantidades
+                    itensAgrupados[item.codigo].quantidade_pedido += (item.quantidade_pedido || 0);
+                    itensAgrupados[item.codigo].valor_pedido += (item.valor_pedido || 0);
+
+                    // Adicionar loja origem se diferente do destino
+                    if (String(lojaVenda) !== String(codDestino)) {
+                        if (!itensAgrupados[item.codigo].lojas_origem.includes(lojaVenda)) {
+                            itensAgrupados[item.codigo].lojas_origem.push(lojaVenda);
+                        }
+                    }
+
+                    // Verificar criticas
+                    const chave = `${item.codigo}|${lojaVenda}`;
+                    if (!padraoCompraMap[chave]) {
+                        if (!itensAgrupados[item.codigo].criticas.includes('Sem padrao de compra')) {
+                            itensAgrupados[item.codigo].criticas.push('Sem padrao de compra');
+                        }
+                    }
+                });
+
+                // Converter para array e formatar para exportacao
+                const linhasExcel = Object.values(itensAgrupados).map(item => ({
+                    ...item,
+                    lojas_origem: item.lojas_origem.join(', '),
+                    criticas: item.criticas.join('; ')
+                }));
+
+                // Preparar dados para exportacao no formato esperado pela API
+                const dadosExportar = {
+                    linhas_excel: linhasExcel,
+                    estatisticas: {
+                        total_itens: linhasExcel.length,
+                        valor_total: linhasExcel.reduce((s, i) => s + (i.valor_pedido || 0), 0),
+                        destino: codDestino
+                    },
+                    criticas: linhasExcel
+                        .filter(i => i.criticas)
+                        .map(i => ({
+                            tipo: 'SEM_PADRAO',
+                            codigo: i.codigo,
+                            cod_empresa: codDestino,
+                            mensagem: i.criticas
+                        }))
+                };
+
+                const response = await fetch('/api/padrao-compra/exportar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(dadosExportar)
+                });
+
+                if (!response.ok) throw new Error('Erro ao exportar');
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `pedido_destino_${codDestino}_${new Date().toISOString().slice(0,10)}.xlsx`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Erro ao exportar: ' + e.message);
+            }
         }
 
         async function exportarFornecedor(nomeFornecedor) {

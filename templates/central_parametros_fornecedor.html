@@ -622,11 +622,12 @@
                                         <th>Linha</th>
                                         <th class="text-center">Curva ABC</th>
                                         <th class="text-center">Sit. Compra</th>
+                                        <th class="text-center">Padrao Compra</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${produtosCarregados.length === 0 ? `
-                                        <tr><td colspan="5" class="text-center text-muted py-4">Nenhum produto encontrado</td></tr>
+                                        <tr><td colspan="6" class="text-center text-muted py-4">Nenhum produto encontrado</td></tr>
                                     ` : produtosCarregados.slice(0, 100).map(p => `
                                         <tr>
                                             <td><code>${p.cod_produto}</code></td>
@@ -638,10 +639,13 @@
                                             <td class="text-center">
                                                 ${p.sit_compra ? `<span class="badge sit-compra-badge sit-compra-${p.sit_compra}">${p.sit_compra}</span>` : '-'}
                                             </td>
+                                            <td class="text-center">
+                                                ${p.padrao_compra ? `<span class="badge bg-info" title="Loja destino do pedido">${p.padrao_compra}</span>` : '<span class="text-muted">-</span>'}
+                                            </td>
                                         </tr>
                                     `).join('')}
                                     ${produtosCarregados.length > 100 ? `
-                                        <tr><td colspan="5" class="text-center text-muted py-2">... e mais ${produtosCarregados.length - 100} produtos</td></tr>
+                                        <tr><td colspan="6" class="text-center text-muted py-2">... e mais ${produtosCarregados.length - 100} produtos</td></tr>
                                     ` : ''}
                                 </tbody>
                             </table>
