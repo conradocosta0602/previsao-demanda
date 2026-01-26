@@ -1,0 +1,7 @@
+nome,tipo,impacto_percentual,data_inicio,data_fim,codigo_item,cod_empresa,cod_fornecedor,linha1,linha3,recorrente,descricao
+Black Friday 2026,PROMOCAO,80,2026-11-27,2026-11-29,,,,,,1,Promocao Black Friday - todos os itens
+Promocao Tintas Verao,PROMOCAO,30,2026-01-15,2026-02-28,,,1234,TINTAS,,0,Promocao de tintas do fornecedor 1234
+Reducao Obras Loja 3,REDUCAO,-40,2026-03-01,2026-03-31,,3,,,,0,Obras na loja 3 - reducao de demanda
+Natal 2026,SAZONAL,100,2026-12-15,2026-12-25,,,,,,1,Periodo natalino
+Dia das Maes 2026,SAZONAL,50,2026-05-01,2026-05-12,,,,,PRESENTES,1,Promocao dia das maes
+Item Especifico Promocao,PROMOCAO,25,2026-02-01,2026-02-15,123456,1,,,,0,Promocao item especifico

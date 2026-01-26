@@ -277,24 +277,27 @@ def processar_previsao(arquivo_excel: str,
     df_metodos = pd.DataFrame(metodos_utilizados)
     df_caracteristicas = pd.DataFrame(caracteristicas_series)
 
-    # 4.5 APLICAR EVENTOS SAZONAIS
-    print("4.5 Aplicando eventos sazonais...")
+    # 4.5 APLICAR EVENTOS SAZONAIS (V2)
+    print("4.5 Aplicando eventos sazonais (EventManagerV2)...")
     try:
-        from core.event_manager import EventManager
+        from core.event_manager_v2 import EventManagerV2
 
-        manager = EventManager()
+        manager = EventManagerV2()
         df_previsoes_lojas = manager.aplicar_eventos_na_previsao(df_previsoes_lojas)
 
         # Contar quantos eventos foram aplicados
         eventos_aplicados = df_previsoes_lojas[df_previsoes_lojas['Evento_Aplicado'].notna()]
         if len(eventos_aplicados) > 0:
-            print(f"   OK {len(eventos_aplicados)} previsoes ajustadas por eventos sazonais")
+            print(f"   OK {len(eventos_aplicados)} previsoes ajustadas por eventos")
             eventos_unicos = eventos_aplicados['Evento_Aplicado'].unique()
             for evento in eventos_unicos:
                 count = len(eventos_aplicados[eventos_aplicados['Evento_Aplicado'] == evento])
-                print(f"     - {evento}: {count} ajustes")
+                mult_medio = eventos_aplicados[eventos_aplicados['Evento_Aplicado'] == evento]['Multiplicador_Evento'].mean()
+                print(f"     - {evento}: {count} ajustes (fator medio: {mult_medio:.2f}x)")
+        else:
+            print("   Nenhum evento aplicavel no periodo de previsao")
     except Exception as e:
-        print(f"Aviso: Não foi possível aplicar eventos sazonais: {e}")
+        print(f"Aviso: Nao foi possivel aplicar eventos: {e}")
 
     # 5. GERAR PREVISÕES DO CD
     print("5. Gerando previsões do CD...")
@@ -887,51 +890,81 @@ def exportar_cenario():
         return jsonify({'success': False, 'erro': str(e)}), 500
 
 
-@app.route('/eventos')
-def eventos():
-    """Página de gerenciamento de eventos"""
-    return render_template('eventos.html')
+# ==============================================================================
+# ROTAS - EVENTOS V2 (Sistema Completo)
+# ==============================================================================
+
+@app.route('/eventos_v2')
+def eventos_v2_page():
+    """Pagina de gestao de eventos V2"""
+    return render_template('eventos_v2.html')
 
 
-@app.route('/eventos_simples')
-def eventos_simples():
-    """Página simplificada de gerenciamento de eventos"""
-    return render_template('eventos_simples.html')
-
-
-@app.route('/eventos/cadastrar', methods=['POST'])
-def cadastrar_evento():
-    """Cadastra um novo evento"""
+@app.route('/eventos/v2/listar', methods=['GET'])
+def listar_eventos_v2():
+    """Lista eventos V2 com filtros"""
     try:
-        from core.event_manager import EventManager
+        from core.event_manager_v2 import EventManagerV2
+
+        status = request.args.get('status')
+        incluir_expirados = request.args.get('incluir_expirados', 'true') == 'true'
+
+        manager = EventManagerV2()
+        eventos = manager.listar_eventos(
+            status=status,
+            incluir_expirados=incluir_expirados
+        )
+
+        return jsonify({
+            'success': True,
+            'eventos': eventos,
+            'total': len(eventos)
+        })
+
+    except Exception as e:
+        print(f"[ERRO] listar_eventos_v2: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/eventos/v2/buscar/<int:evento_id>', methods=['GET'])
+def buscar_evento_v2(evento_id):
+    """Busca evento V2 por ID com historico"""
+    try:
+        from core.event_manager_v2 import EventManagerV2
+
+        manager = EventManagerV2()
+        evento = manager.buscar_evento(evento_id)
+
+        if evento:
+            return jsonify({'success': True, 'evento': evento})
+        else:
+            return jsonify({'success': False, 'erro': 'Evento nao encontrado'}), 404
+
+    except Exception as e:
+        print(f"[ERRO] buscar_evento_v2: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/eventos/v2/cadastrar', methods=['POST'])
+def cadastrar_evento_v2():
+    """Cadastra novo evento V2"""
+    try:
+        from core.event_manager_v2 import EventManagerV2
 
         dados = request.get_json()
 
-        # Validação de dados
-        if not dados:
-            return jsonify({'success': False, 'erro': 'Nenhum dado recebido'}), 400
-
-        if 'tipo' not in dados or 'data_evento' not in dados:
-            return jsonify({'success': False, 'erro': 'Campos obrigatórios faltando'}), 400
-
-        # Log de debug
-        print(f"[EVENTOS] Cadastrando evento:")
-        print(f"   Tipo: {dados.get('tipo')}")
-        print(f"   Data: {dados.get('data_evento')}")
-        print(f"   Multiplicador: {dados.get('multiplicador_manual')}")
-        print(f"   Duracao: {dados.get('duracao_dias')}")
-
-        manager = EventManager()
+        manager = EventManagerV2()
         evento_id = manager.cadastrar_evento(
-            tipo=dados['tipo'],
-            data_evento=dados['data_evento'],
-            multiplicador_manual=dados.get('multiplicador_manual'),
-            nome_custom=dados.get('nome_custom'),
-            duracao_dias=dados.get('duracao_dias'),
-            observacoes=dados.get('observacoes')
+            nome=dados['nome'],
+            impacto_percentual=float(dados['impacto_percentual']),
+            data_inicio=dados['data_inicio'],
+            data_fim=dados['data_fim'],
+            tipo=dados.get('tipo', 'CUSTOM'),
+            descricao=dados.get('descricao'),
+            recorrente_anual=dados.get('recorrente_anual', False),
+            filtros=dados.get('filtros'),
+            usuario=dados.get('usuario', 'web')
         )
-
-        print(f"   [OK] Evento cadastrado com ID: {evento_id}")
 
         return jsonify({
             'success': True,
@@ -940,104 +973,41 @@ def cadastrar_evento():
         })
 
     except Exception as e:
-        print(f"[ERRO] Erro ao cadastrar evento: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"[ERRO] cadastrar_evento_v2: {e}")
         return jsonify({'success': False, 'erro': str(e)}), 500
 
 
-@app.route('/eventos/listar', methods=['GET'])
-def listar_eventos():
-    """Lista todos os eventos cadastrados"""
+@app.route('/eventos/v2/atualizar', methods=['POST'])
+def atualizar_evento_v2():
+    """Atualiza evento V2 existente"""
     try:
-        from core.event_manager import EventManager
-
-        manager = EventManager()
-        eventos = manager.listar_eventos(apenas_ativos=False, apenas_futuros=False)
-
-        # Converter para JSON manualmente para garantir compatibilidade
-        import json
-        eventos_serializaveis = []
-
-        for evento in eventos:
-            try:
-                # Criar dict limpo apenas com campos necessários (SEM timestamps)
-                # Função auxiliar para converter número de forma segura
-                def safe_float(valor):
-                    if valor is None or valor == '':
-                        return None
-                    try:
-                        num = float(valor)
-                        # Verificar se é NaN ou infinito
-                        import math
-                        if math.isnan(num) or math.isinf(num):
-                            return None
-                        return num
-                    except (ValueError, TypeError):
-                        return None
-
-                evento_limpo = {
-                    'id': int(evento.get('id', 0)),
-                    'tipo': str(evento.get('tipo', '')),
-                    'nome': str(evento.get('nome', '')),
-                    'data_evento': str(evento.get('data_evento', '')),
-                    'duracao_dias': int(evento.get('duracao_dias', 1)),
-                    'multiplicador_manual': safe_float(evento.get('multiplicador_manual')),
-                    'multiplicador_calculado': safe_float(evento.get('multiplicador_calculado')),
-                    'usar_multiplicador_manual': bool(int(evento.get('usar_multiplicador_manual', 0))),
-                    'ativo': bool(int(evento.get('ativo', 1))),
-                    'observacoes': str(evento['observacoes']) if evento.get('observacoes') else None
-                }
-                eventos_serializaveis.append(evento_limpo)
-            except Exception as e:
-                print(f"[AVISO] Erro ao processar evento {evento.get('id')}: {e}")
-                continue
-
-        print(f"[EVENTOS] Listando {len(eventos_serializaveis)} eventos")
-
-        # Testar serialização
-        try:
-            json.dumps(eventos_serializaveis)
-        except Exception as e:
-            print(f"[ERRO] Falha ao serializar: {e}")
-            return jsonify({'success': False, 'erro': 'Erro ao serializar eventos'}), 500
-
-        return jsonify({
-            'success': True,
-            'eventos': eventos_serializaveis
-        })
-
-    except Exception as e:
-        print(f"[ERRO] Erro ao listar eventos: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'erro': str(e)}), 500
-
-
-@app.route('/eventos/teste', methods=['GET'])
-def teste_eventos():
-    """Endpoint de teste simples"""
-    return jsonify({
-        'success': True,
-        'mensagem': 'Teste OK',
-        'eventos': [
-            {'id': 1, 'nome': 'Teste', 'tipo': 'BLACK_FRIDAY', 'data_evento': '2026-11-01'}
-        ]
-    })
-
-
-@app.route('/eventos/atualizar', methods=['POST'])
-def atualizar_evento():
-    """Atualiza multiplicador de um evento"""
-    try:
-        from core.event_manager import EventManager
+        from core.event_manager_v2 import EventManagerV2
 
         dados = request.get_json()
         evento_id = dados['evento_id']
-        multiplicador = dados['multiplicador']
 
-        manager = EventManager()
-        manager.atualizar_multiplicador(evento_id, multiplicador)
+        manager = EventManagerV2()
+
+        # Atualizar dados principais
+        manager.atualizar_evento(
+            evento_id=evento_id,
+            nome=dados.get('nome'),
+            impacto_percentual=dados.get('impacto_percentual'),
+            data_inicio=dados.get('data_inicio'),
+            data_fim=dados.get('data_fim'),
+            tipo=dados.get('tipo'),
+            descricao=dados.get('descricao'),
+            recorrente_anual=dados.get('recorrente_anual'),
+            usuario=dados.get('usuario', 'web')
+        )
+
+        # Atualizar filtros se fornecidos
+        if 'filtros' in dados:
+            manager.atualizar_filtros_evento(
+                evento_id=evento_id,
+                filtros=dados['filtros'],
+                usuario=dados.get('usuario', 'web')
+            )
 
         return jsonify({
             'success': True,
@@ -1045,84 +1015,213 @@ def atualizar_evento():
         })
 
     except Exception as e:
-        print(f"Erro ao atualizar evento: {e}")
+        print(f"[ERRO] atualizar_evento_v2: {e}")
         return jsonify({'success': False, 'erro': str(e)}), 500
 
 
-@app.route('/eventos/desativar', methods=['POST'])
-def desativar_evento():
-    """Desativa um evento"""
+@app.route('/eventos/v2/cancelar', methods=['POST'])
+def cancelar_evento_v2():
+    """Cancela evento V2 (mantem historico)"""
     try:
-        from core.event_manager import EventManager
+        from core.event_manager_v2 import EventManagerV2
 
         dados = request.get_json()
         evento_id = dados['evento_id']
 
-        manager = EventManager()
-        manager.desativar_evento(evento_id)
+        manager = EventManagerV2()
+        manager.cancelar_evento(evento_id, usuario=dados.get('usuario', 'web'))
 
         return jsonify({
             'success': True,
-            'mensagem': 'Evento desativado'
+            'mensagem': 'Evento cancelado'
         })
 
     except Exception as e:
-        print(f"Erro ao desativar evento: {e}")
+        print(f"[ERRO] cancelar_evento_v2: {e}")
         return jsonify({'success': False, 'erro': str(e)}), 500
 
 
-@app.route('/eventos/reativar', methods=['POST'])
-def reativar_evento():
-    """Reativa um evento"""
+@app.route('/eventos/v2/excluir', methods=['POST'])
+def excluir_evento_v2():
+    """Exclui evento V2 permanentemente"""
     try:
-        from core.event_manager import EventManager
-        import sqlite3
+        from core.event_manager_v2 import EventManagerV2
 
         dados = request.get_json()
         evento_id = dados['evento_id']
 
-        manager = EventManager()
-
-        # Reativar manualmente via SQL
-        conn = sqlite3.connect(manager.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE eventos
-            SET ativo = 1, atualizado_em = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (evento_id,))
-        conn.commit()
-        conn.close()
+        manager = EventManagerV2()
+        manager.excluir_evento(evento_id, usuario=dados.get('usuario', 'web'))
 
         return jsonify({
             'success': True,
-            'mensagem': 'Evento reativado'
+            'mensagem': 'Evento excluido permanentemente'
         })
 
     except Exception as e:
-        print(f"Erro ao reativar evento: {e}")
+        print(f"[ERRO] excluir_evento_v2: {e}")
         return jsonify({'success': False, 'erro': str(e)}), 500
 
 
-@app.route('/eventos/excluir', methods=['POST'])
-def excluir_evento():
-    """Exclui permanentemente um evento"""
+@app.route('/eventos/v2/alertas', methods=['GET'])
+def alertas_eventos_v2():
+    """Obtem alertas de eventos proximos e expirados"""
     try:
-        from core.event_manager import EventManager
+        from core.event_manager_v2 import EventManagerV2
 
-        dados = request.get_json()
-        evento_id = dados['evento_id']
+        dias = int(request.args.get('dias', 7))
 
-        manager = EventManager()
-        manager.excluir_evento(evento_id)
+        manager = EventManagerV2()
+        alertas = manager.obter_alertas(dias_antecedencia=dias)
 
         return jsonify({
             'success': True,
-            'mensagem': 'Evento excluído permanentemente'
+            'alertas': alertas
         })
 
     except Exception as e:
-        print(f"[ERRO] ao excluir evento: {e}")
+        print(f"[ERRO] alertas_eventos_v2: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/eventos/v2/importar', methods=['POST'])
+def importar_eventos_v2():
+    """Importa eventos de arquivo Excel/CSV"""
+    try:
+        from core.event_manager_v2 import EventManagerV2
+        import tempfile
+        import os
+
+        if 'arquivo' not in request.files:
+            return jsonify({'success': False, 'erro': 'Nenhum arquivo enviado'}), 400
+
+        arquivo = request.files['arquivo']
+
+        # Salvar temporariamente
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, arquivo.filename)
+        arquivo.save(temp_path)
+
+        try:
+            manager = EventManagerV2()
+            stats = manager.importar_eventos_excel(temp_path, usuario='web')
+
+            return jsonify({
+                'success': True,
+                'stats': stats
+            })
+        finally:
+            # Limpar arquivo temporario
+            os.remove(temp_path)
+            os.rmdir(temp_dir)
+
+    except Exception as e:
+        print(f"[ERRO] importar_eventos_v2: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/eventos/v2/exportar', methods=['GET'])
+def exportar_eventos_v2():
+    """Exporta eventos para Excel"""
+    try:
+        from core.event_manager_v2 import EventManagerV2
+        import tempfile
+        import os
+        from flask import send_file
+
+        # Criar arquivo temporario
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, 'eventos_exportados.xlsx')
+
+        manager = EventManagerV2()
+        total = manager.exportar_eventos_excel(temp_path)
+
+        return send_file(
+            temp_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='eventos_exportados.xlsx'
+        )
+
+    except Exception as e:
+        print(f"[ERRO] exportar_eventos_v2: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/eventos/v2/acuracia', methods=['GET'])
+def relatorio_acuracia_v2():
+    """Retorna relatorio de acuracia dos eventos"""
+    try:
+        from core.event_manager_v2 import EventManagerV2
+
+        manager = EventManagerV2()
+        relatorio = manager.obter_relatorio_acuracia()
+
+        return jsonify({
+            'success': True,
+            'relatorio': relatorio
+        })
+
+    except Exception as e:
+        print(f"[ERRO] relatorio_acuracia_v2: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/eventos/v2/calcular_fator', methods=['POST'])
+def calcular_fator_eventos_v2():
+    """Calcula fator de eventos para um item especifico"""
+    try:
+        from core.event_manager_v2 import EventManagerV2
+        from datetime import datetime, timedelta
+
+        dados = request.get_json()
+
+        manager = EventManagerV2()
+
+        # Converter datas se fornecidas
+        data_inicio = None
+        data_fim = None
+        if dados.get('data_inicio'):
+            data_inicio = datetime.strptime(dados['data_inicio'], '%Y-%m-%d').date()
+        if dados.get('data_fim'):
+            data_fim = datetime.strptime(dados['data_fim'], '%Y-%m-%d').date()
+
+        resultado = manager.calcular_fator_eventos(
+            codigo=int(dados['codigo']),
+            cod_empresa=int(dados['cod_empresa']),
+            cod_fornecedor=dados.get('cod_fornecedor'),
+            linha1=dados.get('linha1'),
+            linha3=dados.get('linha3'),
+            data_inicio=data_inicio,
+            data_fim=data_fim
+        )
+
+        return jsonify({
+            'success': True,
+            'resultado': resultado
+        })
+
+    except Exception as e:
+        print(f"[ERRO] calcular_fator_eventos_v2: {e}")
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@app.route('/eventos/v2/atualizar_status', methods=['POST'])
+def atualizar_status_eventos_v2():
+    """Atualiza status de todos os eventos (expirar pendentes, etc)"""
+    try:
+        from core.event_manager_v2 import EventManagerV2
+
+        manager = EventManagerV2()
+        stats = manager.atualizar_status_eventos()
+
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+
+    except Exception as e:
+        print(f"[ERRO] atualizar_status_eventos_v2: {e}")
         return jsonify({'success': False, 'erro': str(e)}), 500
 
 
@@ -6328,6 +6427,122 @@ def api_gerar_previsao_banco_v2_interno():
 
         print(f"  Todos os {len(lista_itens)} itens processados!", flush=True)
         print(f"  Modelos utilizados: {contagem_modelos}", flush=True)
+
+        # =====================================================
+        # PASSO 4.5: APLICAR EVENTOS SAZONAIS (V2)
+        # =====================================================
+        print(f"\n[PASSO 4.5] Aplicando eventos sazonais (EventManagerV2)...", flush=True)
+
+        eventos_aplicados_total = 0
+        eventos_info = {}
+
+        try:
+            from core.event_manager_v2 import EventManagerV2
+            from datetime import datetime as dt_eventos
+
+            manager = EventManagerV2()
+
+            # Para cada item no relatório, verificar se há eventos aplicáveis
+            for item in relatorio_itens:
+                cod_produto = item.get('cod_produto')
+                cod_fornecedor = item.get('cnpj_fornecedor')  # CNPJ do fornecedor
+                linha1 = item.get('linha')  # Linha do produto
+
+                # Verificar eventos para cada período de previsão
+                for periodo_info in item.get('previsao_por_periodo', []):
+                    data_periodo = periodo_info.get('periodo')
+                    previsao_original = periodo_info.get('previsao', 0)
+
+                    if data_periodo and previsao_original > 0:
+                        # Converter string para objeto date - suporta múltiplos formatos
+                        from calendar import monthrange
+                        from datetime import timedelta as td_eventos
+
+                        data_inicio_periodo = None
+                        data_fim_periodo = None
+
+                        try:
+                            if '-S' in str(data_periodo):
+                                # Formato semanal: YYYY-SWW (ex: 2026-S44)
+                                ano_str, sem_str = data_periodo.split('-S')
+                                ano = int(ano_str)
+                                semana = int(sem_str)
+                                # Obter segunda-feira da semana usando formato ISO
+                                data_inicio_periodo = dt_eventos.strptime(f'{ano}-W{semana:02d}-1', '%G-W%V-%u').date()
+                                # Fim da semana = domingo (6 dias depois)
+                                data_fim_periodo = data_inicio_periodo + td_eventos(days=6)
+                            else:
+                                # Formato padrão: YYYY-MM-DD
+                                data_obj = dt_eventos.strptime(data_periodo, '%Y-%m-%d').date()
+                                data_inicio_periodo = data_obj
+                                # Para previsão mensal, considerar todo o mês
+                                ultimo_dia = monthrange(data_obj.year, data_obj.month)[1]
+                                data_fim_periodo = data_obj.replace(day=ultimo_dia)
+
+                        except (ValueError, AttributeError) as e:
+                            # Se não conseguir parsear, pular este período
+                            continue
+
+                        if not data_inicio_periodo or not data_fim_periodo:
+                            continue
+
+                        # Calcular fator de eventos para este item/período
+                        # O evento pode ser filtrado por item, fornecedor, linha, filial
+                        resultado_eventos = manager.calcular_fator_eventos(
+                            codigo=cod_produto,
+                            cod_empresa=None,  # Agregado, todas as lojas
+                            cod_fornecedor=cod_fornecedor,
+                            linha1=linha1,
+                            linha3=None,
+                            data_inicio=data_inicio_periodo,
+                            data_fim=data_fim_periodo
+                        )
+
+                        fator_total = resultado_eventos.get('fator_total', 1.0)
+                        eventos_lista = resultado_eventos.get('eventos_aplicados', [])
+
+                        if fator_total != 1.0:
+                            # Aplicar multiplicador
+                            previsao_ajustada = round(previsao_original * fator_total, 1)
+                            periodo_info['previsao'] = previsao_ajustada
+                            periodo_info['previsao_original'] = previsao_original
+                            periodo_info['fator_evento'] = fator_total
+                            periodo_info['eventos_aplicados'] = [e.get('nome', '') for e in eventos_lista]
+
+                            eventos_aplicados_total += 1
+
+                            # Contar eventos únicos
+                            for ev in eventos_lista:
+                                nome_evento = ev.get('nome', 'Desconhecido')
+                                impacto = ev.get('impacto_percentual', 0)
+                                fator_ev = 1 + (impacto / 100)
+                                if nome_evento not in eventos_info:
+                                    eventos_info[nome_evento] = {'count': 0, 'fator': fator_ev}
+                                eventos_info[nome_evento]['count'] += 1
+
+                # Recalcular total da previsão do item após aplicar eventos
+                total_ajustado = sum(p.get('previsao', 0) for p in item.get('previsao_por_periodo', []))
+                item['demanda_prevista_total'] = round(total_ajustado, 1)
+
+            if eventos_aplicados_total > 0:
+                print(f"  OK {eventos_aplicados_total} previsões ajustadas por eventos", flush=True)
+                for nome_evento, info in eventos_info.items():
+                    print(f"     - {nome_evento}: {info['count']} ajustes (fator: {info['fator']:.2f}x)", flush=True)
+
+                # Recalcular série agregada de previsão após aplicar eventos
+                previsoes_agregadas_por_periodo = {d: 0 for d in datas_previsao}
+                for item in relatorio_itens:
+                    for periodo_info in item.get('previsao_por_periodo', []):
+                        data_prev = periodo_info.get('periodo')
+                        valor = periodo_info.get('previsao', 0)
+                        if data_prev in previsoes_agregadas_por_periodo:
+                            previsoes_agregadas_por_periodo[data_prev] += valor
+                print(f"  Série agregada recalculada com eventos", flush=True)
+            else:
+                print(f"  Nenhum evento aplicável no período de previsão", flush=True)
+
+        except Exception as e:
+            print(f"  Aviso: Não foi possível aplicar eventos: {e}", flush=True)
 
         # =====================================================
         # PASSO 5: CONSTRUIR SÉRIE AGREGADA (soma dos itens)

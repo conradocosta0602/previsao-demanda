@@ -714,7 +714,42 @@ class PedidoFornecedorIntegrado:
         # 8. Calcular demanda no período de cobertura
         # Fórmula simplificada: Demanda_Período = Demanda_Diária × Cobertura
         # Mantém consistência com a tela de demanda (DemandCalculator)
-        demanda_periodo = previsao_diaria * cobertura_dias
+        demanda_periodo_base = previsao_diaria * cobertura_dias
+
+        # 8.1. Aplicar eventos (promoções, sazonais, etc.)
+        # Eventos são multiplicativos: se evento1=+80% e evento2=+30%, fator = 1.8 * 1.3
+        fator_eventos = 1.0
+        eventos_aplicados = []
+        try:
+            from core.event_manager_v2 import EventManagerV2
+            event_manager = EventManagerV2()
+
+            # Calcular período de cobertura
+            from datetime import timedelta
+            data_base = datetime.now().date()
+            data_entrega = data_base + timedelta(days=lead_time)
+            data_fim_cobertura = data_entrega + timedelta(days=cobertura_dias)
+
+            # Buscar fator de eventos para o item no período
+            resultado_eventos = event_manager.calcular_fator_eventos(
+                codigo=codigo,
+                cod_empresa=cod_empresa,
+                cod_fornecedor=produto.get('codigo_fornecedor'),
+                linha1=produto.get('linha1'),
+                linha3=produto.get('linha3'),
+                data_inicio=data_entrega,
+                data_fim=data_fim_cobertura
+            )
+
+            fator_eventos = resultado_eventos['fator_total']
+            eventos_aplicados = resultado_eventos['eventos_aplicados']
+
+        except Exception as e:
+            # Se falhar, continua sem aplicar eventos
+            pass
+
+        # Aplicar fator de eventos na demanda
+        demanda_periodo = demanda_periodo_base * fator_eventos
 
         # 9. Calcular quantidade a pedir
         pedido_info = calcular_quantidade_pedido(
@@ -827,6 +862,24 @@ class PedidoFornecedorIntegrado:
                 'usado': False,
                 'metodo': 'demanda_diaria_simples'
             }
+
+        # Adicionar informações de eventos aplicados
+        resultado['eventos'] = {
+            'aplicados': len(eventos_aplicados) > 0,
+            'fator_total': round(fator_eventos, 4),
+            'impacto_percentual': round((fator_eventos - 1) * 100, 2),
+            'demanda_base': round(sanitizar_float(demanda_periodo_base, 0), 0),
+            'demanda_ajustada': round(sanitizar_float(demanda_periodo, 0), 0),
+            'lista_eventos': [
+                {
+                    'id': e.get('id'),
+                    'nome': e.get('nome'),
+                    'tipo': e.get('tipo'),
+                    'impacto': e.get('impacto_percentual')
+                }
+                for e in eventos_aplicados
+            ]
+        }
 
         return resultado
 

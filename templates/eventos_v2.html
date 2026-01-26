@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestao de Eventos V2</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f2f5;
+            color: #333;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: white;
+            color: #667eea;
+        }
+
+        .btn-primary:hover {
+            background: #f0f0f0;
+        }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.2);
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        /* Alertas */
+        .alertas-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .alerta-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            border-left: 4px solid;
+        }
+
+        .alerta-card.proximos {
+            border-color: #ffc107;
+        }
+
+        .alerta-card.ativos {
+            border-color: #28a745;
+        }
+
+        .alerta-card.expirados {
+            border-color: #6c757d;
+        }
+
+        .alerta-titulo {
+            font-weight: 600;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .alerta-valor {
+            font-size: 28px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .alerta-lista {
+            margin-top: 10px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        /* Cards principais */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 1200px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h2 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .card-body {
+            padding: 20px;
+        }
+
+        /* Formulario */
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 5px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .form-section {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .form-section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .impacto-preview {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        .impacto-valor {
+            font-size: 32px;
+            font-weight: bold;
+        }
+
+        .impacto-label {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        /* Checkbox estilizado */
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #667eea;
+        }
+
+        /* Tabela de eventos */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #666;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-ativo {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge-pendente {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .badge-expirado {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        .badge-cancelado {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .tipo-icone {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .tipo-badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .impacto-cell {
+            font-weight: 600;
+        }
+
+        .impacto-positivo {
+            color: #28a745;
+        }
+
+        .impacto-negativo {
+            color: #dc3545;
+        }
+
+        .acoes-cell {
+            display: flex;
+            gap: 5px;
+        }
+
+        .filtros-resumo {
+            font-size: 11px;
+            color: #888;
+            max-width: 200px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #eee;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #666;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: #667eea;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            font-size: 18px;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        /* Filtros dinamicos */
+        .filtro-item {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            position: relative;
+        }
+
+        .filtro-item .remove-filtro {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        /* Alertas toast */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 2000;
+        }
+
+        .toast {
+            background: white;
+            border-radius: 8px;
+            padding: 15px 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideIn 0.3s ease;
+        }
+
+        .toast-success {
+            border-left: 4px solid #28a745;
+        }
+
+        .toast-error {
+            border-left: 4px solid #dc3545;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #888;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+
+        /* Nav */
+        .nav-link {
+            color: white;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>
+                <a href="/" class="nav-link">← Voltar</a>
+                | Gestao de Eventos
+            </h1>
+            <div class="header-actions">
+                <button class="btn btn-secondary" onclick="exportarEventos()">
+                    Exportar Excel
+                </button>
+                <button class="btn btn-secondary" onclick="abrirModalImportar()">
+                    Importar Excel
+                </button>
+                <button class="btn btn-primary" onclick="abrirModalCadastro()">
+                    + Novo Evento
+                </button>
+            </div>
+        </div>
+
+        <!-- Alertas -->
+        <div class="alertas-container" id="alertasContainer">
+            <div class="alerta-card ativos">
+                <div class="alerta-titulo">Eventos Ativos</div>
+                <div class="alerta-valor" id="alertaAtivos">-</div>
+            </div>
+            <div class="alerta-card proximos">
+                <div class="alerta-titulo">Proximos (7 dias)</div>
+                <div class="alerta-valor" id="alertaProximos">-</div>
+                <div class="alerta-lista" id="listaProximos"></div>
+            </div>
+            <div class="alerta-card expirados">
+                <div class="alerta-titulo">Expirados Recentes</div>
+                <div class="alerta-valor" id="alertaExpirados">-</div>
+            </div>
+        </div>
+
+        <!-- Conteudo Principal -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Eventos Cadastrados</h2>
+                <div>
+                    <select id="filtroStatus" onchange="carregarEventos()">
+                        <option value="">Todos os Status</option>
+                        <option value="ATIVO">Ativos</option>
+                        <option value="PENDENTE">Pendentes</option>
+                        <option value="EXPIRADO">Expirados</option>
+                        <option value="CANCELADO">Cancelados</option>
+                    </select>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-container">
+                    <div id="loadingEventos" class="loading">
+                        <div class="spinner"></div>
+                        Carregando eventos...
+                    </div>
+                    <div id="emptyState" class="empty-state" style="display: none;">
+                        <div class="empty-state-icon">📅</div>
+                        <h3>Nenhum evento cadastrado</h3>
+                        <p>Clique em "Novo Evento" para comecar</p>
+                    </div>
+                    <table id="tabelaEventos" style="display: none;">
+                        <thead>
+                            <tr>
+                                <th>Evento</th>
+                                <th>Tipo</th>
+                                <th>Impacto</th>
+                                <th>Vigencia</th>
+                                <th>Filtros</th>
+                                <th>Status</th>
+                                <th>Acoes</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbodyEventos"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Cadastro -->
+    <div class="modal" id="modalCadastro">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitulo">Novo Evento</h3>
+                <button class="modal-close" onclick="fecharModal('modalCadastro')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="formEvento">
+                    <input type="hidden" id="eventoId">
+
+                    <div class="impacto-preview">
+                        <div class="impacto-label">Impacto na Demanda</div>
+                        <div class="impacto-valor" id="previewImpacto">+0%</div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Nome do Evento *</label>
+                            <input type="text" id="nome" required placeholder="Ex: Promocao Verao 2026">
+                        </div>
+                        <div class="form-group">
+                            <label>Tipo</label>
+                            <select id="tipo">
+                                <option value="PROMOCAO">Promocao</option>
+                                <option value="SAZONAL">Sazonal</option>
+                                <option value="REDUCAO">Reducao</option>
+                                <option value="CAMPANHA">Campanha</option>
+                                <option value="FERIADO">Feriado</option>
+                                <option value="CUSTOM">Customizado</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <div class="form-section-title">Impacto</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Impacto (%) *</label>
+                                <input type="number" id="impacto" required value="0" step="1"
+                                       oninput="atualizarPreviewImpacto()">
+                                <small>Positivo = aumento, Negativo = reducao</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <div class="form-section-title">Vigencia</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Data Inicio *</label>
+                                <input type="date" id="dataInicio" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Data Fim *</label>
+                                <input type="date" id="dataFim" required>
+                            </div>
+                        </div>
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="recorrente">
+                            <label for="recorrente">Evento recorrente anual</label>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <div class="form-section-title">
+                            Filtros de Aplicacao
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="adicionarFiltro()">
+                                + Adicionar Filtro
+                            </button>
+                        </div>
+                        <small style="color: #888; display: block; margin-bottom: 10px;">
+                            Sem filtros = aplica a todos os itens. Adicione filtros para restringir.
+                        </small>
+                        <div id="filtrosContainer"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Descricao</label>
+                        <textarea id="descricao" rows="2" placeholder="Observacoes sobre o evento..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="fecharModal('modalCadastro')">Cancelar</button>
+                <button class="btn btn-success" onclick="salvarEvento()">Salvar Evento</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Importar -->
+    <div class="modal" id="modalImportar">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Importar Eventos</h3>
+                <button class="modal-close" onclick="fecharModal('modalImportar')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 15px;">
+                    Selecione um arquivo Excel (.xlsx) ou CSV com os eventos a importar.
+                </p>
+                <p style="margin-bottom: 15px; font-size: 13px; color: #666;">
+                    <strong>Colunas esperadas:</strong><br>
+                    nome | tipo | impacto_percentual | data_inicio | data_fim | codigo_item | cod_empresa | cod_fornecedor | linha1 | linha3 | recorrente
+                </p>
+                <div class="form-group">
+                    <label>Arquivo</label>
+                    <input type="file" id="arquivoImportar" accept=".xlsx,.xls,.csv">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="fecharModal('modalImportar')">Cancelar</button>
+                <button class="btn btn-success" onclick="importarEventos()">Importar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Historico -->
+    <div class="modal" id="modalHistorico">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Historico do Evento</h3>
+                <button class="modal-close" onclick="fecharModal('modalHistorico')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="historicoContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        // =====================================================================
+        // INICIALIZACAO
+        // =====================================================================
+
+        document.addEventListener('DOMContentLoaded', function() {
+            carregarAlertas();
+            carregarEventos();
+        });
+
+        // =====================================================================
+        // ALERTAS
+        // =====================================================================
+
+        async function carregarAlertas() {
+            try {
+                const response = await fetch('/eventos/v2/alertas');
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('alertaAtivos').textContent = data.alertas.total_ativos;
+                    document.getElementById('alertaProximos').textContent = data.alertas.total_proximos;
+                    document.getElementById('alertaExpirados').textContent = data.alertas.expirados_recentes.length;
+
+                    // Lista de proximos
+                    const listaProximos = data.alertas.proximos.slice(0, 3).map(e =>
+                        `${e.nome} (${formatarData(e.data_inicio)})`
+                    ).join('<br>');
+                    document.getElementById('listaProximos').innerHTML = listaProximos || 'Nenhum';
+                }
+            } catch (erro) {
+                console.error('Erro ao carregar alertas:', erro);
+            }
+        }
+
+        // =====================================================================
+        // LISTAGEM
+        // =====================================================================
+
+        async function carregarEventos() {
+            const status = document.getElementById('filtroStatus').value;
+
+            document.getElementById('loadingEventos').style.display = 'block';
+            document.getElementById('tabelaEventos').style.display = 'none';
+            document.getElementById('emptyState').style.display = 'none';
+
+            try {
+                let url = '/eventos/v2/listar';
+                if (status) url += `?status=${status}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                document.getElementById('loadingEventos').style.display = 'none';
+
+                if (data.success && data.eventos.length > 0) {
+                    renderizarEventos(data.eventos);
+                    document.getElementById('tabelaEventos').style.display = 'table';
+                } else {
+                    document.getElementById('emptyState').style.display = 'block';
+                }
+            } catch (erro) {
+                document.getElementById('loadingEventos').innerHTML = 'Erro ao carregar: ' + erro.message;
+            }
+        }
+
+        function renderizarEventos(eventos) {
+            const tbody = document.getElementById('tbodyEventos');
+
+            tbody.innerHTML = eventos.map(e => {
+                const impactoClass = e.impacto_percentual >= 0 ? 'impacto-positivo' : 'impacto-negativo';
+                const impactoSinal = e.impacto_percentual >= 0 ? '+' : '';
+                const badgeClass = `badge-${e.status.toLowerCase()}`;
+
+                // Resumo dos filtros
+                let filtrosResumo = 'Todos os itens';
+                if (e.filtros && e.filtros.length > 0) {
+                    const partes = [];
+                    const f = e.filtros[0];
+                    if (f.codigo_item) partes.push(`Item: ${f.codigo_item}`);
+                    if (f.cod_empresa) partes.push(`Filial: ${f.cod_empresa}`);
+                    if (f.cod_fornecedor) partes.push(`Forn: ${f.cod_fornecedor}`);
+                    if (f.linha1) partes.push(`L1: ${f.linha1}`);
+                    if (f.linha3) partes.push(`L3: ${f.linha3}`);
+                    filtrosResumo = partes.join(', ') || 'Todos';
+                    if (e.filtros.length > 1) filtrosResumo += ` (+${e.filtros.length - 1})`;
+                }
+
+                return `
+                    <tr>
+                        <td>
+                            <strong>${e.nome}</strong>
+                            ${e.recorrente_anual ? '<span title="Recorrente anual">🔄</span>' : ''}
+                            ${e.descricao ? `<br><small style="color:#888">${e.descricao.substring(0, 50)}...</small>` : ''}
+                        </td>
+                        <td>
+                            <span class="tipo-icone">
+                                ${e.tipo_icone || '📅'} ${e.tipo_nome || e.tipo}
+                            </span>
+                        </td>
+                        <td class="impacto-cell ${impactoClass}">
+                            ${impactoSinal}${e.impacto_percentual}%
+                        </td>
+                        <td>
+                            ${formatarData(e.data_inicio)}<br>
+                            <small>ate ${formatarData(e.data_fim)}</small>
+                        </td>
+                        <td class="filtros-resumo">${filtrosResumo}</td>
+                        <td><span class="badge ${badgeClass}">${e.status}</span></td>
+                        <td class="acoes-cell">
+                            ${e.status === 'ATIVO' || e.status === 'PENDENTE' ? `
+                                <button class="btn btn-sm btn-secondary" onclick="editarEvento(${e.id})">Editar</button>
+                                <button class="btn btn-sm btn-danger" onclick="cancelarEvento(${e.id})">Cancelar</button>
+                            ` : ''}
+                            <button class="btn btn-sm btn-secondary" onclick="verHistorico(${e.id})">Hist</button>
+                            <button class="btn btn-sm btn-danger" onclick="excluirEvento(${e.id})">Excluir</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // =====================================================================
+        // CADASTRO / EDICAO
+        // =====================================================================
+
+        function abrirModalCadastro() {
+            document.getElementById('modalTitulo').textContent = 'Novo Evento';
+            document.getElementById('formEvento').reset();
+            document.getElementById('eventoId').value = '';
+            document.getElementById('filtrosContainer').innerHTML = '';
+            atualizarPreviewImpacto();
+            abrirModal('modalCadastro');
+        }
+
+        async function editarEvento(id) {
+            try {
+                const response = await fetch(`/eventos/v2/buscar/${id}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    const e = data.evento;
+
+                    document.getElementById('modalTitulo').textContent = 'Editar Evento';
+                    document.getElementById('eventoId').value = e.id;
+                    document.getElementById('nome').value = e.nome;
+                    document.getElementById('tipo').value = e.tipo;
+                    document.getElementById('impacto').value = e.impacto_percentual;
+                    document.getElementById('dataInicio').value = e.data_inicio;
+                    document.getElementById('dataFim').value = e.data_fim;
+                    document.getElementById('recorrente').checked = e.recorrente_anual === 1;
+                    document.getElementById('descricao').value = e.descricao || '';
+
+                    // Carregar filtros
+                    document.getElementById('filtrosContainer').innerHTML = '';
+                    if (e.filtros && e.filtros.length > 0) {
+                        e.filtros.forEach(f => adicionarFiltro(f));
+                    }
+
+                    atualizarPreviewImpacto();
+                    abrirModal('modalCadastro');
+                }
+            } catch (erro) {
+                mostrarToast('Erro ao carregar evento', 'error');
+            }
+        }
+
+        async function salvarEvento() {
+            const id = document.getElementById('eventoId').value;
+            const nome = document.getElementById('nome').value;
+            const tipo = document.getElementById('tipo').value;
+            const impacto = parseFloat(document.getElementById('impacto').value);
+            const dataInicio = document.getElementById('dataInicio').value;
+            const dataFim = document.getElementById('dataFim').value;
+            const recorrente = document.getElementById('recorrente').checked;
+            const descricao = document.getElementById('descricao').value;
+
+            // Validacao
+            if (!nome || !dataInicio || !dataFim) {
+                mostrarToast('Preencha todos os campos obrigatorios', 'error');
+                return;
+            }
+
+            if (new Date(dataFim) < new Date(dataInicio)) {
+                mostrarToast('Data fim deve ser maior que data inicio', 'error');
+                return;
+            }
+
+            // Coletar filtros
+            const filtros = [];
+            document.querySelectorAll('.filtro-item').forEach(item => {
+                const filtro = {};
+                const codigoItem = item.querySelector('[name="codigo_item"]').value;
+                const codEmpresa = item.querySelector('[name="cod_empresa"]').value;
+                const codFornecedor = item.querySelector('[name="cod_fornecedor"]').value;
+                const linha1 = item.querySelector('[name="linha1"]').value;
+                const linha3 = item.querySelector('[name="linha3"]').value;
+
+                if (codigoItem) filtro.codigo_item = parseInt(codigoItem);
+                if (codEmpresa) filtro.cod_empresa = parseInt(codEmpresa);
+                if (codFornecedor) filtro.cod_fornecedor = parseInt(codFornecedor);
+                if (linha1) filtro.linha1 = linha1;
+                if (linha3) filtro.linha3 = linha3;
+
+                if (Object.keys(filtro).length > 0) {
+                    filtros.push(filtro);
+                }
+            });
+
+            const dados = {
+                nome,
+                tipo,
+                impacto_percentual: impacto,
+                data_inicio: dataInicio,
+                data_fim: dataFim,
+                recorrente_anual: recorrente,
+                descricao,
+                filtros
+            };
+
+            try {
+                let url = '/eventos/v2/cadastrar';
+                if (id) {
+                    url = '/eventos/v2/atualizar';
+                    dados.evento_id = parseInt(id);
+                }
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(dados)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    mostrarToast(id ? 'Evento atualizado!' : 'Evento cadastrado!', 'success');
+                    fecharModal('modalCadastro');
+                    carregarEventos();
+                    carregarAlertas();
+                } else {
+                    mostrarToast('Erro: ' + result.erro, 'error');
+                }
+            } catch (erro) {
+                mostrarToast('Erro ao salvar: ' + erro.message, 'error');
+            }
+        }
+
+        function adicionarFiltro(dados = {}) {
+            const container = document.getElementById('filtrosContainer');
+            const idx = container.children.length;
+
+            const html = `
+                <div class="filtro-item">
+                    <button type="button" class="remove-filtro" onclick="this.parentElement.remove()">x</button>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Codigo Item</label>
+                            <input type="number" name="codigo_item" value="${dados.codigo_item || ''}" placeholder="Ex: 123456">
+                        </div>
+                        <div class="form-group">
+                            <label>Filial</label>
+                            <input type="number" name="cod_empresa" value="${dados.cod_empresa || ''}" placeholder="Ex: 1, 2, 3...">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Fornecedor</label>
+                            <input type="number" name="cod_fornecedor" value="${dados.cod_fornecedor || ''}" placeholder="Codigo fornecedor">
+                        </div>
+                        <div class="form-group">
+                            <label>Linha 1</label>
+                            <input type="text" name="linha1" value="${dados.linha1 || ''}" placeholder="Ex: TINTAS">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Linha 3</label>
+                        <input type="text" name="linha3" value="${dados.linha3 || ''}" placeholder="Ex: ACRILICA">
+                    </div>
+                </div>
+            `;
+
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function atualizarPreviewImpacto() {
+            const impacto = parseFloat(document.getElementById('impacto').value) || 0;
+            const sinal = impacto >= 0 ? '+' : '';
+            document.getElementById('previewImpacto').textContent = `${sinal}${impacto}%`;
+        }
+
+        // =====================================================================
+        // ACOES
+        // =====================================================================
+
+        async function cancelarEvento(id) {
+            if (!confirm('Deseja realmente cancelar este evento?')) return;
+
+            try {
+                const response = await fetch('/eventos/v2/cancelar', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({evento_id: id})
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    mostrarToast('Evento cancelado!', 'success');
+                    carregarEventos();
+                    carregarAlertas();
+                } else {
+                    mostrarToast('Erro: ' + result.erro, 'error');
+                }
+            } catch (erro) {
+                mostrarToast('Erro ao cancelar', 'error');
+            }
+        }
+
+        async function excluirEvento(id) {
+            if (!confirm('Deseja EXCLUIR PERMANENTEMENTE este evento?')) return;
+
+            try {
+                const response = await fetch('/eventos/v2/excluir', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({evento_id: id})
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    mostrarToast('Evento excluido!', 'success');
+                    carregarEventos();
+                    carregarAlertas();
+                } else {
+                    mostrarToast('Erro: ' + result.erro, 'error');
+                }
+            } catch (erro) {
+                mostrarToast('Erro ao excluir', 'error');
+            }
+        }
+
+        async function verHistorico(id) {
+            try {
+                const response = await fetch(`/eventos/v2/buscar/${id}`);
+                const data = await response.json();
+
+                if (data.success && data.evento.historico) {
+                    const html = data.evento.historico.map(h => `
+                        <div style="padding: 10px; border-bottom: 1px solid #eee;">
+                            <strong>${h.acao}</strong> - ${formatarDataHora(h.data_acao)}<br>
+                            <small>Usuario: ${h.usuario || 'Sistema'}</small>
+                        </div>
+                    `).join('') || '<p>Sem historico</p>';
+
+                    document.getElementById('historicoContent').innerHTML = html;
+                    abrirModal('modalHistorico');
+                }
+            } catch (erro) {
+                mostrarToast('Erro ao carregar historico', 'error');
+            }
+        }
+
+        // =====================================================================
+        // IMPORTACAO / EXPORTACAO
+        // =====================================================================
+
+        function abrirModalImportar() {
+            abrirModal('modalImportar');
+        }
+
+        async function importarEventos() {
+            const input = document.getElementById('arquivoImportar');
+            if (!input.files.length) {
+                mostrarToast('Selecione um arquivo', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('arquivo', input.files[0]);
+
+            try {
+                const response = await fetch('/eventos/v2/importar', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    mostrarToast(`Importados: ${result.stats.importados} eventos`, 'success');
+                    fecharModal('modalImportar');
+                    carregarEventos();
+                    carregarAlertas();
+                } else {
+                    mostrarToast('Erro: ' + result.erro, 'error');
+                }
+            } catch (erro) {
+                mostrarToast('Erro ao importar', 'error');
+            }
+        }
+
+        function exportarEventos() {
+            window.location.href = '/eventos/v2/exportar';
+        }
+
+        // =====================================================================
+        // UTILITARIOS
+        // =====================================================================
+
+        function abrirModal(id) {
+            document.getElementById(id).classList.add('show');
+        }
+
+        function fecharModal(id) {
+            document.getElementById(id).classList.remove('show');
+        }
+
+        function formatarData(dataStr) {
+            if (!dataStr) return '-';
+            const data = new Date(dataStr + 'T00:00:00');
+            return data.toLocaleDateString('pt-BR');
+        }
+
+        function formatarDataHora(dataStr) {
+            if (!dataStr) return '-';
+            const data = new Date(dataStr);
+            return data.toLocaleString('pt-BR');
+        }
+
+        function mostrarToast(mensagem, tipo) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${tipo}`;
+            toast.innerHTML = `
+                <span>${tipo === 'success' ? '✓' : '✗'}</span>
+                <span>${mensagem}</span>
+            `;
+            container.appendChild(toast);
+
+            setTimeout(() => toast.remove(), 5000);
+        }
+    </script>
+</body>
+</html>
