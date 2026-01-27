@@ -402,28 +402,7 @@ Na versao v3.x, o sistema usava uma formula hibrida ABC + CV. Na v4.0, simplific
 
 ### O que e o Padrao de Compra?
 
-O **Padrao de Compra** e um mecanismo de centralizacao de pedidos que permite definir, para cada SKU, que a compra ao fornecedor seja direcionada a uma **loja destino** (ex: filial 80), mesmo que o produto seja vendido em diversas outras lojas.
-
-**Problema que resolve:** Em operacoes com multiplas filiais, muitos fornecedores exigem pedidos centralizados (ex: entrega apenas no CD ou em uma filial especifica). O Padrao de Compra automatiza essa logica, agregando a demanda de todas as lojas vendedoras em um unico pedido destinado ao ponto de recebimento definido.
-
-### Como Funciona
-
-```
-Exemplo pratico:
-
-SKU 215458 - Vendido nas lojas 10, 20, 30
-Padrao de Compra definido: Destino = Loja 80
-
-SEM Padrao de Compra:
-  Pedido Loja 10: 50 un
-  Pedido Loja 20: 30 un
-  Pedido Loja 30: 20 un
-  → 3 pedidos separados ao fornecedor
-
-COM Padrao de Compra:
-  Pedido Loja 80: 100 un (soma das demandas de lojas 10+20+30)
-  → 1 pedido unico ao fornecedor, entregue na loja 80
-```
+O **Padrao de Compra** e um mecanismo de centralizacao de pedidos. Para cada SKU, define-se uma **loja destino** (ex: filial 80) que recebera o pedido ao fornecedor, mesmo que o produto seja vendido em diversas outras lojas. O sistema agrega automaticamente a demanda de todas as lojas vendedoras em um unico pedido destinado ao ponto de recebimento definido.
 
 ### Estrutura de Dados
 
@@ -439,7 +418,7 @@ CREATE TABLE padrao_compra_item (
 
 **Tabela `parametros_globais`:**
 ```sql
--- Parametro usado para ajuste de cobertura
+-- Parametro de dias adicionais de cobertura para transferencia
 INSERT INTO parametros_globais (chave, valor, descricao)
 VALUES ('dias_transferencia_padrao_compra', '10',
         'Dias adicionais de cobertura para transferencia entre filiais no padrao de compra');
@@ -457,44 +436,13 @@ A tela de **Pedido ao Fornecedor** possui um seletor de visualizacao com duas op
 Quando a visualizacao "Por Padrao de Compra" esta ativa:
 
 1. O sistema consulta a tabela `padrao_compra_item` para identificar quais SKUs possuem centralizacao
-2. Agrupa os itens por `codigo + destino + fornecedor`, somando:
-   - Quantidade de pedido de cada loja vendedora
-   - Valor total do pedido
-   - Estoque total (soma dos estoques das lojas de origem)
-   - Demanda total (soma das demandas de todas as lojas)
+2. Agrupa os itens por `codigo + destino + fornecedor`, somando quantidades de pedido, valores, estoques e demandas de todas as lojas de origem
 3. Exibe a hierarquia: **Destino > Fornecedor > Itens**
 4. Cada item mostra um badge com as lojas de origem (ex: "Lojas: 10, 20, 30")
 
 ### Ajuste de Cobertura para Transferencia
 
-Quando um item e centralizado (a loja de destino e diferente das lojas de venda), o sistema adiciona **dias extras de cobertura** para cobrir o tempo de transferencia da mercadoria do ponto de recebimento ate as lojas de venda.
-
-```
-Formula de cobertura COM Padrao de Compra:
-
-Qtd Pedido = Qtd Original + (Demanda Diaria Total × Dias Transferencia)
-
-Onde:
-- Qtd Original = calculo padrao (cobertura ABC + estoque seguranca - estoque atual)
-- Demanda Diaria Total = soma da demanda de TODAS as lojas vendedoras
-- Dias Transferencia = parametro global (padrao: 10 dias)
-```
-
-**Exemplo:**
-- SKU vendido em lojas 10, 20, 30 → Destino: Loja 80
-- Qtd pedido original (sem ajuste): 100 un
-- Demanda diaria total (todas as lojas): 8 un/dia
-- Dias de transferencia: 10 dias
-- **Qtd ajustada**: 100 + (8 × 10) = **180 un**
-
-Na tabela, itens com ajuste de transferencia exibem a quantidade original e o adicional: `180 (+80)`.
-
-### Exportacao Excel
-
-Ao exportar pedidos na visualizacao por Padrao de Compra:
-- A aba do Excel e nomeada "Por Padrao de Compra"
-- Os dados sao agrupados por destino
-- Inclui coluna de lojas de origem para rastreabilidade
+Para itens centralizados (loja destino diferente das lojas de venda), o sistema adiciona **10 dias extras de cobertura** para cobrir o tempo de transferencia da mercadoria entre filiais. Esse valor e configuravel na tabela `parametros_globais` com a chave `dias_transferencia_padrao_compra`.
 
 ### Arquivos Relacionados
 
@@ -510,16 +458,16 @@ Ao exportar pedidos na visualizacao por Padrao de Compra:
 ### FAQ - Padrao de Compra
 
 **P: Todo SKU precisa ter Padrao de Compra cadastrado?**
-R: Nao. Apenas SKUs que devem ser centralizados. Itens sem cadastro aparecem normalmente na visualizacao padrao por fornecedor.
+R: Nao. Apenas SKUs que devem ser centralizados. Itens sem cadastro aparecem normalmente na visualizacao por fornecedor.
 
 **P: Um mesmo SKU pode ter multiplas lojas de venda com destinos diferentes?**
-R: Sim. Cada combinacao `codigo + cod_empresa_venda` pode ter um `cod_empresa_destino` diferente. Porem, na pratica, o mais comum e que todas as lojas de venda de um SKU apontem para o mesmo destino.
+R: Sim. Cada combinacao `codigo + cod_empresa_venda` pode ter um `cod_empresa_destino` diferente.
 
 **P: O ajuste de +10 dias de transferencia e configuravel?**
-R: Sim. O valor e definido na tabela `parametros_globais` com a chave `dias_transferencia_padrao_compra`. Altere o valor diretamente no banco de dados.
+R: Sim. Altere o valor na tabela `parametros_globais` com a chave `dias_transferencia_padrao_compra`.
 
 **P: A demanda de cada loja de origem e calculada individualmente?**
-R: Sim. O sistema calcula a previsao de demanda de cada loja de venda usando os mesmos 6 metodos estatisticos (Bottom-Up V2). Depois, soma as quantidades de pedido para gerar o pedido centralizado.
+R: Sim. O sistema calcula a previsao de demanda de cada loja de venda usando os mesmos 6 metodos estatisticos (Bottom-Up V2). Depois, soma as quantidades para gerar o pedido centralizado.
 
 ---
 
