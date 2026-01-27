@@ -1,12 +1,11 @@
-# Sistema de Demanda e Reabastecimento v5.0
+# Sistema de Demanda e Reabastecimento v5.1
 
 Sistema completo para gestão de estoque multi-loja com Centro de Distribuição (CD), combinando previsão de demanda Bottom-Up com política de estoque baseada em curva ABC.
 
-**Novidades v5.0:**
-- Pedido Multi-Loja com layout hierarquico (Fornecedor > Loja > Itens)
-- Transferencias inteligentes entre lojas do mesmo grupo regional
-- Parametros de fornecedor (Lead Time, Ciclo, Faturamento Minimo)
-- Graceful degradation para novas tabelas
+**Novidades v5.1:**
+- **Padrao de Compra**: Centralizacao de pedidos agregando demanda de multiplas lojas em um unico destino
+- Ajuste automatico de cobertura (+10 dias) para transferencia entre filiais
+- Visualizacao integrada na tela de Pedido ao Fornecedor
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/flask-3.0.0-green.svg)](https://flask.palletsprojects.com/)
@@ -24,7 +23,8 @@ Sistema completo para gestão de estoque multi-loja com Centro de Distribuição
 5. [Modulo de Previsao de Demanda](#-modulo-de-previsao-de-demanda)
 6. [Modulo de Pedido ao Fornecedor](#-modulo-de-pedido-ao-fornecedor)
 7. [Politica de Estoque ABC](#-politica-de-estoque-abc)
-8. [Estrutura do Projeto](#-estrutura-do-projeto)
+8. [Padrao de Compra](#-padrao-de-compra-centralizacao-de-pedidos)
+9. [Estrutura do Projeto](#-estrutura-do-projeto)
 9. [Formato dos Arquivos](#-formato-dos-arquivos)
 10. [Changelog](#-changelog)
 11. [FAQ](#-faq)
@@ -72,6 +72,7 @@ Novo modulo que integra previsao de demanda com calculo de pedidos:
 | Eventos | Calendario promocional | Ativo |
 | KPIs e Metricas | Dashboard de performance | Ativo |
 | **Pedido ao Fornecedor** | Calculo integrado multi-loja | **Atualizado v5.0** |
+| **Padrao de Compra** | Centralizacao de pedidos por destino | **Novo v5.1** |
 | **Transferencias entre Lojas** | Balanceamento automatico de estoque | **Novo v5.0** |
 | **Parametros Fornecedor** | Lead Time, Ciclo, Faturamento Minimo | **Novo v5.0** |
 | Pedido Manual | Entrada manual de pedidos | Ativo |
@@ -397,6 +398,131 @@ Na versao v3.x, o sistema usava uma formula hibrida ABC + CV. Na v4.0, simplific
 
 ---
 
+## Padrao de Compra (Centralizacao de Pedidos)
+
+### O que e o Padrao de Compra?
+
+O **Padrao de Compra** e um mecanismo de centralizacao de pedidos que permite definir, para cada SKU, que a compra ao fornecedor seja direcionada a uma **loja destino** (ex: filial 80), mesmo que o produto seja vendido em diversas outras lojas.
+
+**Problema que resolve:** Em operacoes com multiplas filiais, muitos fornecedores exigem pedidos centralizados (ex: entrega apenas no CD ou em uma filial especifica). O Padrao de Compra automatiza essa logica, agregando a demanda de todas as lojas vendedoras em um unico pedido destinado ao ponto de recebimento definido.
+
+### Como Funciona
+
+```
+Exemplo pratico:
+
+SKU 215458 - Vendido nas lojas 10, 20, 30
+Padrao de Compra definido: Destino = Loja 80
+
+SEM Padrao de Compra:
+  Pedido Loja 10: 50 un
+  Pedido Loja 20: 30 un
+  Pedido Loja 30: 20 un
+  → 3 pedidos separados ao fornecedor
+
+COM Padrao de Compra:
+  Pedido Loja 80: 100 un (soma das demandas de lojas 10+20+30)
+  → 1 pedido unico ao fornecedor, entregue na loja 80
+```
+
+### Estrutura de Dados
+
+**Tabela `padrao_compra_item`:**
+```sql
+CREATE TABLE padrao_compra_item (
+    id SERIAL PRIMARY KEY,
+    codigo INTEGER NOT NULL,           -- SKU do produto
+    cod_empresa_venda INTEGER NOT NULL, -- Loja onde o produto e vendido
+    cod_empresa_destino INTEGER NOT NULL -- Loja que recebe o pedido
+);
+```
+
+**Tabela `parametros_globais`:**
+```sql
+-- Parametro usado para ajuste de cobertura
+INSERT INTO parametros_globais (chave, valor, descricao)
+VALUES ('dias_transferencia_padrao_compra', '10',
+        'Dias adicionais de cobertura para transferencia entre filiais no padrao de compra');
+```
+
+### Visualizacao na Tela de Pedido ao Fornecedor
+
+A tela de **Pedido ao Fornecedor** possui um seletor de visualizacao com duas opcoes:
+
+| Visualizacao | Descricao |
+|-------------|-----------|
+| **Por Padrao de Compra (Destino)** | **Padrao.** Agrupa pedidos pela loja destino definida no padrao de compra |
+| Por Fornecedor (Padrao) | Exibe pedidos separados por loja, sem agregacao |
+
+Quando a visualizacao "Por Padrao de Compra" esta ativa:
+
+1. O sistema consulta a tabela `padrao_compra_item` para identificar quais SKUs possuem centralizacao
+2. Agrupa os itens por `codigo + destino + fornecedor`, somando:
+   - Quantidade de pedido de cada loja vendedora
+   - Valor total do pedido
+   - Estoque total (soma dos estoques das lojas de origem)
+   - Demanda total (soma das demandas de todas as lojas)
+3. Exibe a hierarquia: **Destino > Fornecedor > Itens**
+4. Cada item mostra um badge com as lojas de origem (ex: "Lojas: 10, 20, 30")
+
+### Ajuste de Cobertura para Transferencia
+
+Quando um item e centralizado (a loja de destino e diferente das lojas de venda), o sistema adiciona **dias extras de cobertura** para cobrir o tempo de transferencia da mercadoria do ponto de recebimento ate as lojas de venda.
+
+```
+Formula de cobertura COM Padrao de Compra:
+
+Qtd Pedido = Qtd Original + (Demanda Diaria Total × Dias Transferencia)
+
+Onde:
+- Qtd Original = calculo padrao (cobertura ABC + estoque seguranca - estoque atual)
+- Demanda Diaria Total = soma da demanda de TODAS as lojas vendedoras
+- Dias Transferencia = parametro global (padrao: 10 dias)
+```
+
+**Exemplo:**
+- SKU vendido em lojas 10, 20, 30 → Destino: Loja 80
+- Qtd pedido original (sem ajuste): 100 un
+- Demanda diaria total (todas as lojas): 8 un/dia
+- Dias de transferencia: 10 dias
+- **Qtd ajustada**: 100 + (8 × 10) = **180 un**
+
+Na tabela, itens com ajuste de transferencia exibem a quantidade original e o adicional: `180 (+80)`.
+
+### Exportacao Excel
+
+Ao exportar pedidos na visualizacao por Padrao de Compra:
+- A aba do Excel e nomeada "Por Padrao de Compra"
+- Os dados sao agrupados por destino
+- Inclui coluna de lojas de origem para rastreabilidade
+
+### Arquivos Relacionados
+
+| Arquivo | Funcao |
+|---------|--------|
+| `core/padrao_compra.py` | Logica de negocio do padrao de compra |
+| `database/migration_v7_padrao_compra.sql` | Criacao das tabelas |
+| `database/importar_padrao_compra.py` | Importacao de dados via Excel/CSV |
+| `templates/pedido_fornecedor_integrado.html` | Interface integrada com toggle de visualizacao |
+| `app.py` (rota `/api/padrao-compra/buscar`) | API que retorna mapeamento de centralizacao |
+| `app.py` (rota `/api/padrao-compra/exportar`) | API de exportacao Excel |
+
+### FAQ - Padrao de Compra
+
+**P: Todo SKU precisa ter Padrao de Compra cadastrado?**
+R: Nao. Apenas SKUs que devem ser centralizados. Itens sem cadastro aparecem normalmente na visualizacao padrao por fornecedor.
+
+**P: Um mesmo SKU pode ter multiplas lojas de venda com destinos diferentes?**
+R: Sim. Cada combinacao `codigo + cod_empresa_venda` pode ter um `cod_empresa_destino` diferente. Porem, na pratica, o mais comum e que todas as lojas de venda de um SKU apontem para o mesmo destino.
+
+**P: O ajuste de +10 dias de transferencia e configuravel?**
+R: Sim. O valor e definido na tabela `parametros_globais` com a chave `dias_transferencia_padrao_compra`. Altere o valor diretamente no banco de dados.
+
+**P: A demanda de cada loja de origem e calculada individualmente?**
+R: Sim. O sistema calcula a previsao de demanda de cada loja de venda usando os mesmos 6 metodos estatisticos (Bottom-Up V2). Depois, soma as quantidades de pedido para gerar o pedido centralizado.
+
+---
+
 ## Estrutura do Projeto
 
 ```
@@ -412,6 +538,7 @@ previsao-demanda/
 |   |-- outlier_detector.py             # Deteccao de outliers
 |   |-- pedido_fornecedor_integrado.py  # NOVO - Calculo de pedidos ABC
 |   |-- auto_logger.py                  # Logging automatico
+|   |-- padrao_compra.py                # Logica de Padrao de Compra (centralizacao)
 |   |-- smart_alerts.py                 # Alertas inteligentes
 |   |-- event_manager.py                # Gerenciador de eventos
 |   |-- scenario_simulator.py           # Simulador de cenarios
@@ -431,6 +558,11 @@ previsao-demanda/
 |-- static/
 |   |-- css/style.css                   # Estilos CSS
 |   +-- js/app.js                       # JavaScript principal
+|
+|-- database/
+|   |-- migration_v7_padrao_compra.sql  # Tabelas do Padrao de Compra
+|   |-- importar_padrao_compra.py       # Importacao de dados de centralizacao
+|   +-- ...                             # Outras migrations e importadores
 |
 |-- docs/                               # Documentacao
 |   |-- GRANULARIDADE_E_PREVISOES.md    # Guia de granularidades
@@ -508,7 +640,24 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v5.0 (Janeiro 2026) - ATUAL
+### v5.1 (Janeiro 2026) - ATUAL
+
+**Novas Funcionalidades:**
+- **Padrao de Compra**: Centralizacao de pedidos por loja destino, integrando demanda de multiplas lojas vendedoras em um unico pedido
+- **Visualizacao por Destino**: Toggle na tela de Pedido ao Fornecedor para alternar entre visao padrao e visao por Padrao de Compra
+- **Ajuste de Cobertura por Transferencia**: +10 dias configuravel para cobrir tempo de transferencia entre filiais
+- **Agregacao Automatica**: Soma quantidades, estoques e demandas de todas as lojas de origem por SKU
+- **Central de Parametros**: Coluna de Padrao de Compra na tabela de produtos do fornecedor
+
+**Tabelas Criadas:**
+- `padrao_compra_item` - Mapeamento SKU > Loja Venda > Loja Destino
+- `parametros_globais` - Parametros configuravel como dias de transferencia
+
+**APIs Adicionadas:**
+- `POST /api/padrao-compra/buscar` - Consulta mapeamento de centralizacao por lista de codigos
+- `POST /api/padrao-compra/exportar` - Exportacao Excel agrupada por destino
+
+### v5.0 (Janeiro 2026)
 
 **Novas Funcionalidades:**
 - **Pedido Multi-Loja**: Layout hierarquico Fornecedor > Loja > Itens com multi-selecao
@@ -703,7 +852,7 @@ Para duvidas ou problemas:
 
 ---
 
-**Versao:** 5.0
+**Versao:** 5.1
 **Status:** Em Producao
 **Ultima Atualizacao:** Janeiro 2026
 
