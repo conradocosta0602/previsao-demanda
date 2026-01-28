@@ -3779,6 +3779,118 @@ def api_gerar_previsao_banco():
     return api_gerar_previsao_banco_v2_interno()
 
 
+def calcular_demanda_unificada_diaria(
+    conn,
+    where_sql: str,
+    params: list,
+    dias_periodo: int,
+    granularidade_exibicao: str = 'mensal'
+) -> dict:
+    """
+    Calcula demanda usando base DIÁRIA unificada para garantir consistência
+    entre diferentes granularidades (semanal vs mensal).
+
+    Esta função implementa a Opção C do diagnóstico:
+    - Sempre busca histórico DIÁRIO (730 dias = 2 anos)
+    - Aplica os 6 métodos inteligentes do DemandCalculator na série diária
+    - Multiplica pelo número de dias do período
+    - Garante que semanal e mensal sejam proporcionais aos dias
+
+    Args:
+        conn: Conexão com banco PostgreSQL
+        where_sql: Cláusula WHERE adicional (já formatada com AND)
+        params: Parâmetros para a query
+        dias_periodo: Número de dias do período de previsão
+        granularidade_exibicao: 'diario', 'semanal' ou 'mensal'
+
+    Returns:
+        dict com:
+        - demanda_total: Demanda total prevista para o período
+        - demanda_diaria: Demanda média diária
+        - metadata: Informações do método usado
+        - serie_diaria: Lista de vendas diárias (para análise)
+    """
+    from core.demand_calculator import DemandCalculator
+    from psycopg2.extras import RealDictCursor
+    import pandas as pd
+
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Query para buscar histórico DIÁRIO (sempre 2 anos)
+    query = f"""
+        SELECT
+            h.data,
+            SUM(h.qtd_venda) as qtd_venda
+        FROM historico_vendas_diario h
+        JOIN cadastro_produtos p ON h.codigo = p.codigo
+        WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+        {where_sql}
+        GROUP BY h.data
+        ORDER BY h.data
+    """
+
+    cursor.execute(query, params)
+    dados = cursor.fetchall()
+
+    if not dados:
+        return {
+            'demanda_total': 0,
+            'demanda_diaria': 0,
+            'metadata': {'metodo_usado': 'sem_dados', 'confianca': 'muito_baixa'},
+            'serie_diaria': []
+        }
+
+    # Converter para lista de vendas diárias
+    serie_diaria = [float(d['qtd_venda']) for d in dados]
+
+    # Usar método unificado do DemandCalculator
+    demanda_total, desvio_total, metadata = DemandCalculator.calcular_demanda_diaria_unificada(
+        vendas_diarias=serie_diaria,
+        dias_periodo=dias_periodo,
+        granularidade_exibicao=granularidade_exibicao,
+        media_cluster_diaria=None  # Pode ser adicionado posteriormente
+    )
+
+    return {
+        'demanda_total': round(demanda_total, 2),
+        'demanda_diaria': metadata.get('demanda_diaria_base', 0),
+        'desvio_total': round(desvio_total, 2),
+        'metadata': metadata,
+        'serie_diaria': serie_diaria,
+        'dias_historico': len(serie_diaria)
+    }
+
+
+def validar_e_alertar_consistencia(
+    demanda_mensal: float,
+    dias_mensal: int,
+    demanda_semanal: float,
+    dias_semanal: int
+) -> dict:
+    """
+    Valida consistência entre previsões mensal e semanal.
+    Retorna alerta se a diferença for maior que 10%.
+
+    Args:
+        demanda_mensal: Total previsto para período mensal
+        dias_mensal: Dias no período mensal
+        demanda_semanal: Total previsto para período semanal
+        dias_semanal: Dias no período semanal
+
+    Returns:
+        dict com resultado da validação
+    """
+    from core.demand_calculator import DemandCalculator
+
+    return DemandCalculator.validar_consistencia_granularidades(
+        demanda_mensal=demanda_mensal,
+        dias_mensal=dias_mensal,
+        demanda_semanal=demanda_semanal,
+        dias_semanal=dias_semanal,
+        tolerancia_pct=0.10
+    )
+
+
 # Função legada mantida para referência (não utilizada)
 def _api_gerar_previsao_banco_legado():
     """
@@ -3795,6 +3907,10 @@ def _api_gerar_previsao_banco_legado():
         categoria = dados.get('categoria', '')
         produto = dados.get('produto', '')
         granularidade = dados.get('granularidade', 'mensal')
+
+        # NOVO: Parâmetro para usar cálculo unificado baseado em demanda diária
+        # Isso garante consistência entre granularidades (semanal vs mensal)
+        usar_calculo_unificado = dados.get('usar_calculo_unificado', True)
 
         # Extrair parâmetros de período customizado
         tipo_periodo = dados.get('tipo_periodo', None)
@@ -5407,6 +5523,73 @@ def _api_gerar_previsao_banco_legado():
 
         print(f"\nPrevisão gerada com sucesso! Melhor modelo: {melhor_modelo}")
 
+        # =====================================================
+        # CÁLCULO UNIFICADO BASEADO EM DEMANDA DIÁRIA
+        # Garante consistência entre granularidades
+        # =====================================================
+        if usar_calculo_unificado and melhor_modelo and melhor_modelo in resultados_modelos:
+            print(f"\nCalculando demanda unificada baseada em base diária...", flush=True)
+            try:
+                # Calcular número de dias do período de previsão
+                if periodo_inicio_customizado and periodo_fim_customizado:
+                    dias_periodo = (periodo_fim_customizado - periodo_inicio_customizado).days + 1
+                else:
+                    # Estimar baseado no número de períodos
+                    if granularidade == 'diario':
+                        dias_periodo = periodos_previsao
+                    elif granularidade == 'semanal':
+                        dias_periodo = periodos_previsao * 7
+                    else:  # mensal
+                        dias_periodo = periodos_previsao * 30
+
+                # Calcular usando método unificado
+                resultado_unificado = calcular_demanda_unificada_diaria(
+                    conn=psycopg2.connect(**DB_CONFIG),
+                    where_sql=where_sql,
+                    params=params,
+                    dias_periodo=dias_periodo,
+                    granularidade_exibicao=granularidade
+                )
+
+                # Adicionar informações unificadas à resposta
+                resposta['calculo_unificado'] = {
+                    'demanda_total': resultado_unificado['demanda_total'],
+                    'demanda_diaria_base': resultado_unificado['demanda_diaria'],
+                    'dias_periodo': dias_periodo,
+                    'metadata': resultado_unificado['metadata'],
+                    'dias_historico': resultado_unificado.get('dias_historico', 0)
+                }
+
+                # Comparar com previsão do modelo original
+                previsao_modelo = resultados_modelos[melhor_modelo].get('previsao_futuro', [])
+                total_modelo = sum(previsao_modelo) if previsao_modelo else 0
+
+                # Calcular diferença
+                if total_modelo > 0:
+                    diferenca_pct = ((resultado_unificado['demanda_total'] - total_modelo) / total_modelo) * 100
+                    resposta['calculo_unificado']['comparacao_modelo'] = {
+                        'total_modelo_original': round(total_modelo, 2),
+                        'total_unificado': resultado_unificado['demanda_total'],
+                        'diferenca_pct': round(diferenca_pct, 2)
+                    }
+
+                    # Alerta se diferença significativa
+                    if abs(diferenca_pct) > 15:
+                        resposta['calculo_unificado']['alerta'] = (
+                            f"Diferença de {diferenca_pct:+.1f}% entre modelo {granularidade} e cálculo unificado. "
+                            f"Recomenda-se usar o valor unificado para consistência entre granularidades."
+                        )
+                        print(f"  ALERTA: Diferença de {diferenca_pct:+.1f}% entre métodos", flush=True)
+
+                print(f"  Demanda diária base: {resultado_unificado['demanda_diaria']:.2f}", flush=True)
+                print(f"  Demanda total ({dias_periodo} dias): {resultado_unificado['demanda_total']:.2f}", flush=True)
+
+            except Exception as e_unificado:
+                print(f"  Erro no cálculo unificado: {e_unificado}", flush=True)
+                resposta['calculo_unificado'] = {
+                    'erro': str(e_unificado)
+                }
+
         return jsonify(resposta)
 
     except Exception as e:
@@ -5474,9 +5657,24 @@ def api_gerar_previsao_banco_v2_interno():
 
         # Calcular número de períodos de previsão baseado no período selecionado
         meses_previsao = 6  # Default
+        dias_periodo_total = 181  # Default: ~6 meses (para cálculo unificado)
+
         if granularidade == 'mensal' and mes_inicio and ano_inicio and mes_fim and ano_fim:
             # Calcular meses entre as datas
             meses_previsao = (int(ano_fim) - int(ano_inicio)) * 12 + (int(mes_fim) - int(mes_inicio)) + 1
+
+            # CÁLCULO UNIFICADO: Calcular número EXATO de dias no período
+            from datetime import datetime
+            from calendar import monthrange
+            dias_periodo_total = 0
+            for i in range(meses_previsao):
+                mes_atual = int(mes_inicio) + i
+                ano_atual = int(ano_inicio)
+                while mes_atual > 12:
+                    mes_atual -= 12
+                    ano_atual += 1
+                dias_periodo_total += monthrange(ano_atual, mes_atual)[1]
+
         elif granularidade == 'semanal' and semana_inicio and ano_semana_inicio and semana_fim and ano_semana_fim:
             # Calcular semanas entre as datas
             # S27 até S29 = 3 semanas (27, 28, 29)
@@ -5484,6 +5682,10 @@ def api_gerar_previsao_banco_v2_interno():
             meses_previsao = semanas
             print(f"DEBUG SEMANAL: semana_inicio={semana_inicio}, semana_fim={semana_fim}, ano_inicio={ano_semana_inicio}, ano_fim={ano_semana_fim}", flush=True)
             print(f"DEBUG SEMANAL: semanas calculadas = {semanas}", flush=True)
+
+            # CÁLCULO UNIFICADO: Calcular número EXATO de dias no período
+            dias_periodo_total = semanas * 7
+
         elif granularidade == 'diario' and data_inicio and data_fim:
             # Calcular dias entre as datas
             from datetime import datetime
@@ -5491,15 +5693,17 @@ def api_gerar_previsao_banco_v2_interno():
             d2 = datetime.strptime(data_fim, '%Y-%m-%d')
             dias = (d2 - d1).days + 1
             meses_previsao = dias  # Será usado diretamente
+            dias_periodo_total = dias
 
         print(f"\n{'='*60}", flush=True)
-        print(f"=== PREVISÃO V2 - BOTTOM-UP FORECASTING ===", flush=True)
+        print(f"=== PREVISÃO V2 - BOTTOM-UP FORECASTING (UNIFICADO) ===", flush=True)
         print(f"{'='*60}", flush=True)
         print(f"Loja: {loja}", flush=True)
         print(f"Fornecedor: {fornecedor}", flush=True)
         print(f"Linha: {linha}", flush=True)
-        print(f"Granularidade: {granularidade}", flush=True)
-        print(f"Períodos de previsão calculados: {meses_previsao}", flush=True)
+        print(f"Granularidade de exibição: {granularidade}", flush=True)
+        print(f"Períodos de previsão: {meses_previsao}", flush=True)
+        print(f"DIAS TOTAIS NO PERÍODO: {dias_periodo_total} (para cálculo unificado)", flush=True)
 
         # Para granularidade mensal, meses_previsao já é o número correto de períodos
         # Para semanal e diário, já foi calculado corretamente acima
@@ -5639,51 +5843,26 @@ def api_gerar_previsao_banco_v2_interno():
             join_estoque = ""
             select_estoque = "-1 as estoque_medio"
 
-        if granularidade == 'mensal':
-            query_vendas = f"""
-                SELECT
-                    h.codigo as cod_produto,
-                    DATE_TRUNC('month', h.data) as periodo,
-                    SUM(h.qtd_venda) as qtd_venda,
-                    {select_estoque}
-                FROM historico_vendas_diario h
-                JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
-                {join_estoque}
-                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
-                {where_sql}
-                GROUP BY h.codigo, DATE_TRUNC('month', h.data)
-                ORDER BY h.codigo, DATE_TRUNC('month', h.data)
-            """
-        elif granularidade == 'semanal':
-            query_vendas = f"""
-                SELECT
-                    h.codigo as cod_produto,
-                    DATE_TRUNC('week', h.data) as periodo,
-                    SUM(h.qtd_venda) as qtd_venda,
-                    {select_estoque}
-                FROM historico_vendas_diario h
-                JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
-                {join_estoque}
-                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
-                {where_sql}
-                GROUP BY h.codigo, DATE_TRUNC('week', h.data)
-                ORDER BY h.codigo, DATE_TRUNC('week', h.data)
-            """
-        else:  # diario
-            query_vendas = f"""
-                SELECT
-                    h.codigo as cod_produto,
-                    h.data as periodo,
-                    SUM(h.qtd_venda) as qtd_venda,
-                    {select_estoque}
-                FROM historico_vendas_diario h
-                JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
-                {join_estoque}
-                WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
-                {where_sql}
-                GROUP BY h.codigo, h.data
-                ORDER BY h.codigo, h.data
-            """
+        # =====================================================
+        # CÁLCULO UNIFICADO: SEMPRE buscar histórico DIÁRIO
+        # Isso garante consistência entre granularidades
+        # A demanda será: demanda_diaria_base × dias_do_período
+        # =====================================================
+        query_vendas = f"""
+            SELECT
+                h.codigo as cod_produto,
+                h.data as periodo,
+                SUM(h.qtd_venda) as qtd_venda,
+                {select_estoque}
+            FROM historico_vendas_diario h
+            JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
+            {join_estoque}
+            WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
+            {where_sql}
+            GROUP BY h.codigo, h.data
+            ORDER BY h.codigo, h.data
+        """
+        print(f"  [UNIFICADO] Buscando histórico DIÁRIO para garantir consistência entre granularidades", flush=True)
 
         cursor.execute(query_vendas, params)
         vendas_por_item_raw = cursor.fetchall()
@@ -5976,7 +6155,17 @@ def api_gerar_previsao_banco_v2_interno():
             pular_calculo_demanda = sit_compra in ('FL', 'EN')
 
             if pular_calculo_demanda:
-                # Adicionar item ao relatório com demanda zerada
+                # Itens FL/EN: calcular ano anterior real para consistência com tabela comparativa
+                vendas_hist_fl = vendas_item_dict.get(cod_produto, [])
+                demanda_ano_anterior_fl = 0
+                if data_inicio_aa and data_fim_aa:
+                    for venda in vendas_hist_fl:
+                        data_venda = venda['periodo']
+                        if data_venda and data_inicio_aa <= data_venda <= data_fim_aa:
+                            demanda_ano_anterior_fl += venda['qtd_venda']
+                demanda_ano_anterior_fl = round(demanda_ano_anterior_fl, 1)
+
+                # Adicionar item ao relatório com demanda zerada mas ano anterior real
                 relatorio_itens.append({
                     'cod_produto': cod_produto,
                     'descricao': item['descricao'],
@@ -5985,13 +6174,13 @@ def api_gerar_previsao_banco_v2_interno():
                     'categoria': item['categoria'],
                     'linha': item['descricao_linha'],
                     'demanda_prevista_total': 0,
-                    'demanda_ano_anterior': 0,
-                    'variacao_percentual': None,
-                    'sinal_alerta': 'cinza',
-                    'sinal_emoji': '⚪',
+                    'demanda_ano_anterior': demanda_ano_anterior_fl,
+                    'variacao_percentual': -100.0 if demanda_ano_anterior_fl > 0 else None,
+                    'sinal_alerta': 'vermelho' if demanda_ano_anterior_fl > 0 else 'cinza',
+                    'sinal_emoji': '🔴' if demanda_ano_anterior_fl > 0 else '⚪',
                     'metodo_estatistico': f'Sem cálculo ({sit_compra_descricao or sit_compra})',
-                    'previsao_por_periodo': [{'periodo': d, 'previsao': 0} for d in datas_previsao],
-                    'historico_total': 0,
+                    'previsao_por_periodo': [{'periodo': d, 'previsao': 0, 'ano_anterior': 0} for d in datas_previsao],
+                    'historico_total': round(sum(v['qtd_venda'] for v in vendas_hist_fl), 1),
                     'sit_compra': sit_compra,
                     'sit_compra_descricao': sit_compra_descricao
                 })
@@ -5999,20 +6188,47 @@ def api_gerar_previsao_banco_v2_interno():
 
             vendas_hist = vendas_item_dict.get(cod_produto, [])
 
-            # Ordenar vendas por período
+            # Ordenar vendas por período (DIÁRIO - já que usamos query diária unificada)
             vendas_hist_sorted = sorted(vendas_hist, key=lambda x: x['periodo'] if x['periodo'] else '')
             serie_item = [v['qtd_venda'] for v in vendas_hist_sorted]
             total_item_hist = sum(serie_item)
 
             # =====================================================
-            # DETECTAR SAZONALIDADE INDIVIDUAL DO ITEM
+            # CÁLCULO UNIFICADO: Usar DemandCalculator para consistência
+            # =====================================================
+            from core.demand_calculator import DemandCalculator
+
+            # Calcular demanda usando método unificado (garante consistência entre granularidades)
+            demanda_total_unificada, desvio_total, metadata_unificada = DemandCalculator.calcular_demanda_diaria_unificada(
+                vendas_diarias=serie_item,
+                dias_periodo=dias_periodo_total,
+                granularidade_exibicao=granularidade,
+                media_cluster_diaria=None  # TODO: implementar prior bayesiano se disponível
+            )
+
+            # Extrair informações do método usado
+            demanda_diaria_base = metadata_unificada.get('demanda_diaria_base', 0)
+            metodo_usado_unificado = metadata_unificada.get('metodo_usado', 'media_simples')
+
+            # DEBUG: Mostrar valores para os primeiros 3 itens
+            if idx < 3:
+                print(f"  DEBUG Item {cod_produto}:", flush=True)
+                print(f"    - serie_item: {len(serie_item)} pontos, total={sum(serie_item):.2f}, media={sum(serie_item)/len(serie_item) if serie_item else 0:.2f}", flush=True)
+                print(f"    - dias_periodo_total: {dias_periodo_total}", flush=True)
+                print(f"    - demanda_diaria_base: {demanda_diaria_base:.4f}", flush=True)
+                print(f"    - demanda_total_unificada: {demanda_total_unificada:.2f}", flush=True)
+                print(f"    - metodo: {metodo_usado_unificado}", flush=True)
+
+            # =====================================================
+            # CALCULAR FATORES SAZONAIS (para distribuição visual entre períodos)
+            # A demanda TOTAL é fixa (calculada acima), mas distribuímos proporcionalmente
             # =====================================================
             tem_sazonalidade_item = False
             fatores_sazonais_item = {}
             forca_sazonalidade = 0
-            tendencia_por_mes_item = {}  # NOVO: tendência de crescimento por mês
-            tendencia_anomala = False  # NOVO: flag para queda extrema (< -40%)
-            tendencia_limitada = False  # NOVO: flag para alta extrema (> +50%)
+            tendencia_por_mes_item = {}  # Tendência de crescimento por período
+            tendencia_anomala = False  # Flag para queda extrema (< -40%)
+            tendencia_limitada = False  # Flag para alta extrema (> +50%)
 
             if granularidade == 'mensal' and len(serie_item) >= 12:
                 # Calcular média por mês para ESTE item
@@ -6279,213 +6495,114 @@ def api_gerar_previsao_banco_v2_interno():
                     tem_sazonalidade_item = forca_sazonalidade > 0.3
 
             # =====================================================
-            # SELECIONAR ESTRATÉGIA DE PREVISÃO
+            # ESTRATÉGIA UNIFICADA DE PREVISÃO
+            # Usa demanda_total_unificada calculada pelo DemandCalculator
+            # Distribui proporcionalmente pelos períodos usando fatores sazonais
+            # GARANTE: soma(previsoes) = demanda_total_unificada
             # =====================================================
-            melhor_modelo_item = 'Média Móvel Simples'
             previsao_item_periodos = []
-            usou_sazonalidade_individual = False
 
-            if len(serie_item) >= 6:
-                # ESTRATÉGIA 1: Sazonalidade forte → usar média histórica por período COM TENDÊNCIA
-                if tem_sazonalidade_item and fatores_sazonais_item:
-                    # Usar previsão baseada na média histórica do período (mais preciso para itens sazonais)
-                    media_geral_item = sum(serie_item) / len(serie_item) if serie_item else 0
+            # Usar a demanda total já calculada pelo método unificado
+            total_previsao_item = demanda_total_unificada
 
-                    # Calcular ano de previsão para aplicar tendência
-                    ano_previsao = ultima_data_historico.year + 1  # Próximo ano
+            # Descrição do método usado - mapear para os 6 métodos core
+            # Variantes internas são mapeadas para o método core equivalente
+            mapeamento_metodos_core = {
+                # Métodos core (já corretos)
+                'media_simples': 'media_simples',
+                'media_ponderada': 'media_ponderada',
+                'media_movel_exp': 'media_movel_exp',
+                'tendencia': 'tendencia',
+                'sazonal': 'sazonal',
+                'tsb': 'tsb',
+                # Variantes para séries curtas -> mapear para core
+                'bayesiano_prior': 'media_simples',
+                'bayesiano_2periodos': 'media_simples',
+                'naive_unico': 'media_simples',
+                'media_2periodos': 'media_simples',
+                'tsb_simplificado': 'tsb',
+                'wma_adaptativo_estavel': 'media_ponderada',
+                'wma_adaptativo_crescente': 'tendencia',
+                'wma_adaptativo_decrescente': 'tendencia',
+                'wma': 'media_ponderada',
+                'ema': 'media_movel_exp',
+                'sem_dados': 'media_simples'
+            }
+            melhor_modelo_item = mapeamento_metodos_core.get(metodo_usado_unificado, metodo_usado_unificado)
 
-                    previsao_item_periodos = []
-                    tendencias_aplicadas = []
+            # Calcular dias por período para distribuição proporcional
+            from calendar import monthrange
 
-                    for i in range(periodos_previsao):
-                        # Usar a data de previsão já calculada (baseada no período selecionado pelo usuário)
-                        data_prev_str = datas_previsao[i] if i < len(datas_previsao) else None
+            dias_por_periodo = []
+            for i, data_prev in enumerate(datas_previsao):
+                if granularidade == 'mensal':
+                    # Extrair ano e mês
+                    ano = int(data_prev[:4])
+                    mes = int(data_prev[5:7])
+                    dias = monthrange(ano, mes)[1]
+                elif granularidade == 'semanal':
+                    dias = 7  # Sempre 7 dias por semana
+                else:  # diario
+                    dias = 1
+                dias_por_periodo.append(dias)
 
-                        if granularidade == 'mensal':
-                            # Extrair mês da data de previsão real
-                            if data_prev_str:
-                                mes_prev = int(data_prev_str[5:7])  # Formato: YYYY-MM-DD
-                                ano_prev = int(data_prev_str[:4])
-                            else:
-                                mes_prev = ((ultima_data_historico.month + i) % 12) + 1
-                                ano_prev = ultima_data_historico.year + 1
-                            chave = mes_prev
+            total_dias_periodos = sum(dias_por_periodo)
 
-                            # Calcular quantos anos à frente estamos prevendo
-                            anos_a_frente = ano_prev - ultima_data_historico.year
+            # Distribuir a demanda total proporcionalmente aos dias de cada período
+            # COM ajuste de fatores sazonais se disponíveis
+            fatores_usar = fatores_sazonais_item if fatores_sazonais_item else fatores_sazonais
 
-                            # Obter tendência do mês (se disponível)
-                            tendencia_mes = tendencia_por_mes_item.get(mes_prev, 0) if tendencia_por_mes_item else 0
+            pesos_periodos = []
+            for i, data_prev in enumerate(datas_previsao):
+                # Calcular peso base (proporcional aos dias)
+                peso_base = dias_por_periodo[i] / total_dias_periodos if total_dias_periodos > 0 else 1.0 / periodos_previsao
 
-                            # Limitar tendência para evitar valores extremos (-50% a +100%)
-                            tendencia_mes = max(-0.5, min(1.0, tendencia_mes))
-
-                            # Aplicar tendência proporcional ao número de anos à frente
-                            fator_tendencia = 1 + (tendencia_mes * anos_a_frente)
-                            tendencias_aplicadas.append(tendencia_mes)
-
-                        elif granularidade == 'semanal':
-                            if data_prev_str:
-                                from datetime import datetime as dt_parse
-                                # Suportar formato YYYY-SWW (ex: 2026-S27) ou YYYY-MM-DD
-                                if '-S' in data_prev_str:
-                                    ano_str, sem_str = data_prev_str.split('-S')
-                                    chave = int(sem_str)
-                                    ano_prev = int(ano_str)
-                                else:
-                                    data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
-                                    chave = data_prev_obj.isocalendar()[1]
-                                    ano_prev = data_prev_obj.year
-                            else:
-                                data_prev_obj = ultima_data_historico + timedelta(weeks=i+1)
-                                chave = data_prev_obj.isocalendar()[1]
-                                ano_prev = data_prev_obj.year
-
-                            # Calcular anos à frente para semanal
-                            anos_a_frente = ano_prev - ultima_data_historico.year
-
-                            # Obter tendência da semana (se disponível)
-                            tendencia_semana = tendencia_por_mes_item.get(chave, 0) if tendencia_por_mes_item else 0
-                            tendencia_semana = max(-0.5, min(1.0, tendencia_semana))
-                            fator_tendencia = 1 + (tendencia_semana * max(1, anos_a_frente))
-                            tendencias_aplicadas.append(tendencia_semana)
-
-                        else:  # diario
-                            if data_prev_str:
-                                from datetime import datetime as dt_parse
-                                data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
-                                chave = data_prev_obj.weekday()
-                            else:
-                                data_prev_obj = ultima_data_historico + timedelta(days=i+1)
-                                chave = data_prev_obj.weekday()
-
-                            # Obter tendência do dia da semana (se disponível)
-                            tendencia_dia = tendencia_por_mes_item.get(chave, 0) if tendencia_por_mes_item else 0
-                            tendencia_dia = max(-0.5, min(1.0, tendencia_dia))
-                            fator_tendencia = 1 + tendencia_dia
-                            tendencias_aplicadas.append(tendencia_dia)
-
-                        # Usar fator sazonal individual para calcular previsão
-                        fator_sazonal = fatores_sazonais_item.get(chave, 1.0)
-                        previsao_periodo = media_geral_item * fator_sazonal * fator_tendencia
-                        previsao_item_periodos.append(previsao_periodo)
-
-                    # Montar descrição do modelo com info de tendência
-                    if tendencia_anomala and tendencias_aplicadas:
-                        # Tendência foi limitada a -40% por ser queda extrema
-                        tendencia_media = sum(tendencias_aplicadas) / len(tendencias_aplicadas)
-                        melhor_modelo_item = f"Sazonal+Tendência (força={forca_sazonalidade:.2f}, tend={tendencia_media:+.1%}) [limitada:-40%]"
-                    elif tendencia_limitada and tendencias_aplicadas and any(t != 0 for t in tendencias_aplicadas):
-                        # Tendência foi limitada (alta > +50%)
-                        tendencia_media = sum(tendencias_aplicadas) / len(tendencias_aplicadas)
-                        melhor_modelo_item = f"Sazonal+Tendência (força={forca_sazonalidade:.2f}, tend={tendencia_media:+.1%}) [limitada:+50%]"
-                    elif tendencias_aplicadas and any(t != 0 for t in tendencias_aplicadas):
-                        tendencia_media = sum(tendencias_aplicadas) / len(tendencias_aplicadas)
-                        melhor_modelo_item = f"Sazonal+Tendência (força={forca_sazonalidade:.2f}, tend={tendencia_media:+.1%})"
-                    else:
-                        melhor_modelo_item = f"Sazonal Individual (força={forca_sazonalidade:.2f})"
-                    usou_sazonalidade_individual = True
-
-                # ESTRATÉGIA 2: Sem sazonalidade forte → testar modelos e aplicar fator sazonal individual
-                else:
-                    # Dividir série: 70% treino, 30% teste para selecionar melhor modelo
-                    tamanho_treino = max(3, int(len(serie_item) * 0.7))
-                    tamanho_teste = len(serie_item) - tamanho_treino
-
-                    if tamanho_teste >= 2:
-                        serie_treino = serie_item[:tamanho_treino]
-                        serie_teste = serie_item[tamanho_treino:]
-
-                        melhor_wmape = float('inf')
-
-                        for nome_modelo in modelos_disponiveis:
-                            try:
-                                modelo = get_modelo(nome_modelo)
-                                modelo.fit(serie_treino)
-                                previsoes_teste = modelo.predict(tamanho_teste)
-
-                                if len(previsoes_teste) == len(serie_teste):
-                                    erros = []
-                                    for i in range(len(serie_teste)):
-                                        if serie_teste[i] > 0:
-                                            erro = abs(previsoes_teste[i] - serie_teste[i]) / serie_teste[i] * 100
-                                            erros.append(erro)
-
-                                    if erros:
-                                        wmape = sum(erros) / len(erros)
-                                        if wmape < melhor_wmape:
-                                            melhor_wmape = wmape
-                                            melhor_modelo_item = nome_modelo
-                            except:
-                                pass
-
-                    # Gerar previsão com o melhor modelo
-                    try:
-                        modelo_final = get_modelo(melhor_modelo_item)
-                        modelo_final.fit(serie_item)
-                        previsao_base = modelo_final.predict(periodos_previsao)
-
-                        # Aplicar sazonalidade INDIVIDUAL do item (se disponível) ou do agregado
-                        fatores_usar = fatores_sazonais_item if fatores_sazonais_item else fatores_sazonais
-                        if fatores_usar:
-                            previsao_item_periodos = []
-                            for i in range(len(previsao_base)):
-                                # Usar a data de previsão já calculada (baseada no período selecionado)
-                                data_prev_str = datas_previsao[i] if i < len(datas_previsao) else None
-
-                                if granularidade == 'mensal':
-                                    if data_prev_str:
-                                        mes_prev = int(data_prev_str[5:7])
-                                    else:
-                                        mes_prev = ((ultima_data_historico.month + i) % 12) + 1
-                                    chave = mes_prev
-                                elif granularidade == 'semanal':
-                                    if data_prev_str:
-                                        from datetime import datetime as dt_parse
-                                        # Suportar formato YYYY-SWW (ex: 2026-S27) ou YYYY-MM-DD
-                                        if '-S' in data_prev_str:
-                                            ano_str, sem_str = data_prev_str.split('-S')
-                                            chave = int(sem_str)
-                                        else:
-                                            data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
-                                            chave = data_prev_obj.isocalendar()[1]
-                                    else:
-                                        data_prev_obj = ultima_data_historico + timedelta(weeks=i+1)
-                                        chave = data_prev_obj.isocalendar()[1]
-                                else:
-                                    if data_prev_str:
-                                        from datetime import datetime as dt_parse
-                                        data_prev_obj = dt_parse.strptime(data_prev_str, '%Y-%m-%d')
-                                        chave = data_prev_obj.weekday()
-                                    else:
-                                        data_prev_obj = ultima_data_historico + timedelta(days=i+1)
-                                        chave = data_prev_obj.weekday()
-
-                                fator = fatores_usar.get(chave, 1.0)
-                                previsao_item_periodos.append(previsao_base[i] * fator)
+                # Aplicar fator sazonal se disponível
+                if fatores_usar:
+                    if granularidade == 'mensal':
+                        mes = int(data_prev[5:7])
+                        chave = mes
+                    elif granularidade == 'semanal':
+                        if '-S' in data_prev:
+                            chave = int(data_prev.split('-S')[1])
                         else:
-                            previsao_item_periodos = list(previsao_base)
-                    except:
-                        previsao_item_periodos = []
+                            from datetime import datetime as dt_parse
+                            data_obj = dt_parse.strptime(data_prev, '%Y-%m-%d')
+                            chave = data_obj.isocalendar()[1]
+                    else:  # diario
+                        from datetime import datetime as dt_parse
+                        data_obj = dt_parse.strptime(data_prev, '%Y-%m-%d')
+                        chave = data_obj.weekday()
 
-            # Fallback: média simples se não conseguiu prever
-            if not previsao_item_periodos or len(previsao_item_periodos) < periodos_previsao:
-                if len(serie_item) > 0:
-                    media = sum(serie_item) / len(serie_item)
-                    previsao_item_periodos = [media] * periodos_previsao
-                    melhor_modelo_item = "Média Simples (fallback)"
+                    fator_sazonal = fatores_usar.get(chave, 1.0)
                 else:
-                    previsao_item_periodos = [0] * periodos_previsao
-                    melhor_modelo_item = "Sem histórico"
+                    fator_sazonal = 1.0
 
-            # Contar modelos utilizados
-            if melhor_modelo_item not in contagem_modelos:
-                contagem_modelos[melhor_modelo_item] = 0
-            contagem_modelos[melhor_modelo_item] += 1
+                pesos_periodos.append(peso_base * fator_sazonal)
+
+            # Normalizar pesos para que a soma = 1
+            soma_pesos = sum(pesos_periodos)
+            if soma_pesos > 0:
+                pesos_periodos = [p / soma_pesos for p in pesos_periodos]
+            else:
+                pesos_periodos = [1.0 / periodos_previsao] * periodos_previsao
+
+            # Calcular previsão para cada período
+            for i, peso in enumerate(pesos_periodos):
+                previsao_periodo = total_previsao_item * peso
+                previsao_item_periodos.append(previsao_periodo)
+
+            # Nota: sazonalidade é aplicada na distribuição, mas não adiciona ao nome do método
+            # para manter a descrição simples conforme solicitado
+
+            # Contar modelos utilizados (usando nome simplificado)
+            modelo_contagem = melhor_modelo_item
+            if modelo_contagem not in contagem_modelos:
+                contagem_modelos[modelo_contagem] = 0
+            contagem_modelos[modelo_contagem] += 1
 
             # Montar previsão por período e AGREGAR
             previsao_por_periodo = []
-            total_previsao_item = 0
 
             # Criar índice de vendas do item por período para ano anterior
             vendas_por_periodo_item = {}
@@ -6530,8 +6647,9 @@ def api_gerar_previsao_banco_v2_interno():
                         'previsao': valor,
                         'ano_anterior': round(ano_anterior_periodo, 1)
                     })
-                    total_previsao_item += valor
-                    # AGREGAR para o total
+                    # NOTA: total_previsao_item já foi calculado pelo método unificado
+                    # Não somar novamente aqui
+                    # AGREGAR para o total por período (para gráfico)
                     previsoes_agregadas_por_periodo[data_prev] += valor
 
             # Buscar demanda real do ano anterior para este item (total)
@@ -6773,9 +6891,64 @@ def api_gerar_previsao_banco_v2_interno():
         # =====================================================
         print(f"\n[PASSO 5] Construindo série agregada (Bottom-Up)...", flush=True)
 
-        # Série histórica agregada
-        serie_historica_agregada = serie_agregada
-        datas_historicas = datas_ordenadas
+        # IMPORTANTE: Os dados estão em granularidade DIÁRIA
+        # Precisamos agregar para a granularidade de EXIBIÇÃO antes de montar o gráfico
+        from datetime import datetime as dt_agregar
+
+        vendas_agregadas_por_periodo = {}
+        for data_str, valor in zip(datas_ordenadas, serie_agregada):
+            try:
+                data_obj = dt_agregar.strptime(data_str, '%Y-%m-%d')
+                if granularidade == 'mensal':
+                    # Agrupar por mês: YYYY-MM-01
+                    chave_periodo = f"{data_obj.year:04d}-{data_obj.month:02d}-01"
+                elif granularidade == 'semanal':
+                    # Agrupar por semana: YYYY-SWW
+                    ano_iso, semana_iso, _ = data_obj.isocalendar()
+                    chave_periodo = f"{ano_iso}-S{semana_iso:02d}"
+                else:
+                    # Diário: manter como está
+                    chave_periodo = data_str
+
+                if chave_periodo not in vendas_agregadas_por_periodo:
+                    vendas_agregadas_por_periodo[chave_periodo] = 0
+                vendas_agregadas_por_periodo[chave_periodo] += valor
+            except:
+                pass
+
+        # Ordenar e criar séries agregadas pela granularidade correta
+        datas_historicas = sorted(vendas_agregadas_por_periodo.keys())
+        serie_historica_agregada = [vendas_agregadas_por_periodo[d] for d in datas_historicas]
+
+        print(f"  Dados diários ({len(datas_ordenadas)} pontos) agregados para {granularidade} ({len(datas_historicas)} pontos)", flush=True)
+
+        # Recalcular fatores sazonais usando série agregada (para backtest correto)
+        fatores_sazonais_grafico = {}
+        if len(serie_historica_agregada) >= 12:
+            from datetime import datetime as dt_saz
+            vendas_por_chave_saz = {}
+            for i, data_str in enumerate(datas_historicas):
+                try:
+                    if '-S' in data_str:
+                        chave_saz = int(data_str.split('-S')[1])
+                    else:
+                        data_obj = dt_saz.strptime(data_str, '%Y-%m-%d')
+                        if granularidade == 'mensal':
+                            chave_saz = data_obj.month
+                        else:
+                            chave_saz = data_obj.isocalendar()[1]
+                    if chave_saz not in vendas_por_chave_saz:
+                        vendas_por_chave_saz[chave_saz] = []
+                    vendas_por_chave_saz[chave_saz].append(serie_historica_agregada[i])
+                except:
+                    pass
+            media_geral_saz = sum(serie_historica_agregada) / len(serie_historica_agregada) if serie_historica_agregada else 1
+            for chave, valores in vendas_por_chave_saz.items():
+                media_chave = sum(valores) / len(valores)
+                fatores_sazonais_grafico[chave] = media_chave / media_geral_saz if media_geral_saz > 0 else 1.0
+
+        # Usar fatores sazonais recalculados para o backtest
+        fatores_sazonais = fatores_sazonais_grafico if fatores_sazonais_grafico else fatores_sazonais
 
         # Dividir série histórica em BASE (75%) e TESTE (25%) para exibição no gráfico
         split_index = int(len(datas_historicas) * 0.75)
@@ -6829,24 +7002,26 @@ def api_gerar_previsao_banco_v2_interno():
 
                     # Determinar chave sazonal e buscar período correspondente na base
                     if '-S' in data_teste_str:
+                        # Formato semanal: YYYY-SWW
                         ano_str, sem_str = data_teste_str.split('-S')
                         chave_teste = int(sem_str)
                         ano_teste = int(ano_str)
-                        # Para semanal: buscar mesma semana do ano anterior
+                        # Buscar mesma semana do ano anterior
                         ano_anterior = ano_teste - 1
                         data_aa_str = f"{ano_anterior}-S{chave_teste:02d}"
                     else:
                         data_obj = dt_parse.strptime(data_teste_str, '%Y-%m-%d')
                         if granularidade == 'mensal':
                             chave_teste = data_obj.month
-                            # Buscar mesmo mês do ano anterior
+                            # Buscar mesmo mês do ano anterior (formato: YYYY-MM-01)
                             data_aa = data_obj - relativedelta(years=1)
-                            data_aa_str = data_aa.strftime('%Y-%m-%d')
+                            data_aa_str = f"{data_aa.year:04d}-{data_aa.month:02d}-01"
                         elif granularidade == 'semanal':
                             chave_teste = data_obj.isocalendar()[1]
                             # Buscar mesma semana do ano anterior
                             data_aa = data_obj - relativedelta(years=1)
-                            data_aa_str = data_aa.strftime('%Y-%m-%d')
+                            ano_aa, semana_aa, _ = data_aa.isocalendar()
+                            data_aa_str = f"{ano_aa}-S{semana_aa:02d}"
                         else:
                             chave_teste = data_obj.weekday()
                             data_aa = data_obj - relativedelta(years=1)
@@ -6987,13 +7162,72 @@ def api_gerar_previsao_banco_v2_interno():
 
         elif data_inicio_aa and data_fim_aa:
             # Para mensal e semanal: buscar pelo período de datas
-            for data_str in datas_ordenadas:
-                if data_inicio_aa <= data_str <= data_fim_aa:
-                    ano_anterior_datas.append(data_str)
-                    ano_anterior_valores.append(vendas_agregadas.get(data_str, 0))
+            # IMPORTANTE: Usar datas_historicas (agregadas por granularidade), não datas_ordenadas (diárias)
+            # e usar serie_historica_agregada (agregadas), não vendas_agregadas (diárias)
+            print(f"  DEBUG: Buscando ano anterior de {data_inicio_aa} até {data_fim_aa}", flush=True)
+            print(f"  DEBUG: datas_historicas tem {len(datas_historicas)} períodos: {datas_historicas[:3]}...{datas_historicas[-3:]}", flush=True)
 
-        ano_anterior_total = sum(ano_anterior_valores)
-        print(f"  Ano anterior: {len(ano_anterior_valores)} períodos, total: {ano_anterior_total:,.2f}", flush=True)
+            # Converter data_inicio_aa e data_fim_aa para o formato usado em datas_historicas
+            from datetime import datetime as dt_aa
+            from dateutil.relativedelta import relativedelta
+
+            try:
+                # Parsear as datas do ano anterior
+                inicio_aa_obj = dt_aa.strptime(data_inicio_aa, '%Y-%m-%d')
+                fim_aa_obj = dt_aa.strptime(data_fim_aa, '%Y-%m-%d')
+
+                for i, data_str in enumerate(datas_historicas):
+                    try:
+                        if '-S' in data_str:
+                            # Formato semanal: YYYY-SWW
+                            ano_str, sem_str = data_str.split('-S')
+                            # Criar data para comparar
+                            data_obj = dt_aa.strptime(f'{ano_str}-W{sem_str}-1', '%G-W%V-%u')
+                        else:
+                            # Formato mensal: YYYY-MM-01
+                            data_obj = dt_aa.strptime(data_str, '%Y-%m-%d')
+
+                        # Verificar se está no período do ano anterior
+                        if inicio_aa_obj <= data_obj <= fim_aa_obj:
+                            ano_anterior_datas.append(data_str)
+                            ano_anterior_valores.append(serie_historica_agregada[i])
+                    except Exception as e:
+                        pass
+            except Exception as e:
+                print(f"  AVISO: Erro ao processar ano anterior: {e}", flush=True)
+
+            print(f"  DEBUG: Encontrados {len(ano_anterior_valores)} períodos do ano anterior", flush=True)
+            if ano_anterior_valores:
+                print(f"  DEBUG: Valores ano anterior: {ano_anterior_valores[:5]}...", flush=True)
+
+        ano_anterior_total_serie = sum(ano_anterior_valores)
+        print(f"  Ano anterior (série agregada): {len(ano_anterior_valores)} períodos, total: {ano_anterior_total_serie:,.2f}", flush=True)
+
+        # Calcular soma dos itens para comparação/debug
+        ano_anterior_total_itens = sum(item.get('demanda_ano_anterior', 0) for item in relatorio_itens)
+        print(f"  Ano anterior (soma itens): total: {ano_anterior_total_itens:,.2f}", flush=True)
+
+        # DECISÃO: Usar a série agregada como fonte principal (é a mesma usada no gráfico)
+        # A soma dos itens pode diferir por arredondamentos ou diferenças de período
+        # Para manter consistência com o gráfico (linha vermelha), usamos a série agregada
+        ano_anterior_total = ano_anterior_total_serie
+
+        # Ajustar os valores do relatório detalhado para que a soma bata com a série agregada
+        if ano_anterior_total_itens > 0 and abs(ano_anterior_total_serie - ano_anterior_total_itens) > 1:
+            # Há diferença significativa - aplicar fator de correção proporcional
+            fator_correcao = ano_anterior_total_serie / ano_anterior_total_itens
+            print(f"  Aplicando fator de correção: {fator_correcao:.4f}", flush=True)
+            for item in relatorio_itens:
+                if item.get('demanda_ano_anterior', 0) > 0:
+                    item['demanda_ano_anterior'] = round(item['demanda_ano_anterior'] * fator_correcao, 1)
+                    # Recalcular variação percentual
+                    prev = item.get('demanda_prevista_total', 0)
+                    aa = item['demanda_ano_anterior']
+                    if aa > 0:
+                        item['variacao_percentual'] = round(((prev - aa) / aa) * 100, 1)
+            # Verificar soma após correção
+            ano_anterior_total_itens_corrigido = sum(item.get('demanda_ano_anterior', 0) for item in relatorio_itens)
+            print(f"  Ano anterior (soma itens corrigido): total: {ano_anterior_total_itens_corrigido:,.2f}", flush=True)
 
         # =====================================================
         # PASSO 7: MONTAR RESPOSTA

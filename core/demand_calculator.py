@@ -1,18 +1,467 @@
 """
 Módulo de Cálculo Avançado de Demanda
 Oferece múltiplos métodos para calcular demanda média de forma mais assertiva
+Inclui tratamento especial para séries curtas (< 12 períodos)
 """
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Dict, List
+from typing import Tuple, Dict, List, Optional
 from scipy import stats
 
 
 class DemandCalculator:
     """
     Calculadora de demanda com múltiplos métodos estatísticos
+    Inclui tratamento inteligente para séries curtas
     """
+
+    # =====================================================
+    # MÉTODOS PARA SÉRIES CURTAS (< 12 períodos)
+    # =====================================================
+
+    @staticmethod
+    def calcular_demanda_serie_muito_curta(
+        vendas: List[float],
+        media_cluster: Optional[float] = None
+    ) -> Tuple[float, float, Dict]:
+        """
+        Método para séries muito curtas (1-2 períodos)
+        Usa abordagem Naïve com ajuste de confiança e prior bayesiano
+
+        Args:
+            vendas: Lista de vendas (1-2 valores)
+            media_cluster: Média de produtos similares (opcional, para prior bayesiano)
+
+        Returns:
+            (demanda, desvio, metadata)
+        """
+        if len(vendas) == 0:
+            return 0.0, 0.0, {'metodo_usado': 'sem_dados', 'confianca': 'muito_baixa'}
+
+        if len(vendas) == 1:
+            valor = vendas[0]
+
+            # Se temos média do cluster, fazer média bayesiana
+            if media_cluster is not None and media_cluster > 0:
+                # Peso 30% para o único dado, 70% para o prior (cluster)
+                demanda = 0.3 * valor + 0.7 * media_cluster
+                # Desvio estimado: 50% da demanda (alta incerteza)
+                desvio = demanda * 0.5
+                metodo = 'bayesiano_prior'
+            else:
+                # Naïve: usar o único valor disponível
+                demanda = valor
+                # Desvio heurístico: 40% do valor (alta incerteza)
+                desvio = max(valor * 0.4, 1.0)
+                metodo = 'naive_unico'
+
+            return demanda, desvio, {
+                'metodo_usado': metodo,
+                'confianca': 'muito_baixa',
+                'num_periodos': 1,
+                'fator_seguranca_recomendado': 2.0  # Dobrar estoque de segurança
+            }
+
+        # 2 períodos
+        media = np.mean(vendas)
+        variacao = abs(vendas[1] - vendas[0])
+
+        # Se temos média do cluster, combinar
+        if media_cluster is not None and media_cluster > 0:
+            # Peso 50% para dados, 50% para prior
+            demanda = 0.5 * media + 0.5 * media_cluster
+            metodo = 'bayesiano_2periodos'
+        else:
+            demanda = media
+            metodo = 'media_2periodos'
+
+        # Desvio baseado na variação entre os 2 pontos
+        # Se variação alta, mais incerteza
+        cv_estimado = variacao / media if media > 0 else 0.5
+        desvio = demanda * max(0.3, min(0.6, cv_estimado))
+
+        return demanda, desvio, {
+            'metodo_usado': metodo,
+            'confianca': 'muito_baixa',
+            'num_periodos': 2,
+            'variacao_detectada': round(variacao, 2),
+            'fator_seguranca_recomendado': 1.8
+        }
+
+    @staticmethod
+    def calcular_demanda_serie_curta(
+        vendas: List[float],
+        media_cluster: Optional[float] = None
+    ) -> Tuple[float, float, Dict]:
+        """
+        Método para séries curtas (3-6 períodos)
+        Usa SMA/WMA adaptativo com tendência simplificada
+
+        Args:
+            vendas: Lista de vendas (3-6 valores)
+            media_cluster: Média de produtos similares (opcional)
+
+        Returns:
+            (demanda, desvio, metadata)
+        """
+        n = len(vendas)
+        vendas_array = np.array(vendas)
+
+        # Calcular estatísticas básicas
+        media = np.mean(vendas_array)
+        desvio_base = np.std(vendas_array, ddof=1) if n > 1 else media * 0.3
+
+        # Verificar intermitência (muitos zeros)
+        zeros_pct = (vendas_array == 0).sum() / n
+        if zeros_pct > 0.4:
+            # Demanda intermitente - usar TSB simplificado
+            demandas_nz = vendas_array[vendas_array > 0]
+            if len(demandas_nz) > 0:
+                prob_demanda = len(demandas_nz) / n
+                media_nz = np.mean(demandas_nz)
+                demanda = prob_demanda * media_nz
+                desvio = demanda * 0.5  # Alta incerteza
+                return demanda, desvio, {
+                    'metodo_usado': 'tsb_simplificado',
+                    'confianca': 'baixa',
+                    'num_periodos': n,
+                    'zeros_pct': round(zeros_pct * 100, 1),
+                    'fator_seguranca_recomendado': 1.6
+                }
+
+        # Detectar tendência simples (comparar primeira e segunda metade)
+        meio = n // 2
+        media_primeira = np.mean(vendas_array[:meio])
+        media_segunda = np.mean(vendas_array[meio:])
+
+        tendencia = 'estavel'
+        fator_tendencia = 1.0
+
+        if media_primeira > 0:
+            variacao_tendencia = (media_segunda - media_primeira) / media_primeira
+            if variacao_tendencia > 0.15:
+                tendencia = 'crescente'
+                fator_tendencia = 1.0 + (variacao_tendencia * 0.5)  # Projetar parcialmente
+            elif variacao_tendencia < -0.15:
+                tendencia = 'decrescente'
+                fator_tendencia = 1.0 + (variacao_tendencia * 0.5)
+
+        # WMA com janela = n (todos os dados, mais peso nos recentes)
+        pesos = np.arange(1, n + 1)
+        pesos = pesos / pesos.sum()
+        demanda_wma = np.sum(vendas_array * pesos)
+
+        # Aplicar fator de tendência
+        demanda = demanda_wma * fator_tendencia
+
+        # Combinar com prior se disponível
+        if media_cluster is not None and media_cluster > 0:
+            # Peso proporcional ao número de dados (mais dados = menos prior)
+            peso_dados = min(0.8, n * 0.15)  # 3 períodos = 45%, 6 períodos = 80%
+            demanda = peso_dados * demanda + (1 - peso_dados) * media_cluster
+
+        # Ajustar desvio pela incerteza (série curta)
+        fator_incerteza = 1.5 - (n * 0.1)  # 3 períodos = 1.2, 6 períodos = 0.9
+        desvio = desvio_base * max(1.0, fator_incerteza)
+
+        return demanda, desvio, {
+            'metodo_usado': f'wma_adaptativo_{tendencia}',
+            'confianca': 'baixa',
+            'num_periodos': n,
+            'tendencia_detectada': tendencia,
+            'fator_tendencia': round(fator_tendencia, 3),
+            'fator_seguranca_recomendado': 1.5
+        }
+
+    @staticmethod
+    def calcular_demanda_serie_media(
+        vendas: List[float]
+    ) -> Tuple[float, float, Dict]:
+        """
+        Método para séries médias (7-11 períodos)
+        Usa métodos completos mas sem sazonalidade (ciclo incompleto)
+
+        Args:
+            vendas: Lista de vendas (7-11 valores)
+
+        Returns:
+            (demanda, desvio, metadata)
+        """
+        n = len(vendas)
+        vendas_array = np.array(vendas)
+
+        # Verificar intermitência
+        zeros_pct = (vendas_array == 0).sum() / n
+        if zeros_pct > 0.3:
+            # Usar TSB completo
+            demanda, desvio = DemandCalculator.calcular_demanda_tsb(vendas)
+            return demanda, desvio, {
+                'metodo_usado': 'tsb',
+                'confianca': 'media',
+                'num_periodos': n,
+                'zeros_pct': round(zeros_pct * 100, 1),
+                'fator_seguranca_recomendado': 1.3
+            }
+
+        # Calcular CV para determinar variabilidade
+        media = np.mean(vendas_array)
+        desvio_base = np.std(vendas_array, ddof=1)
+        cv = desvio_base / media if media > 0 else 0.5
+
+        # Detectar tendência com regressão
+        X = np.arange(n)
+        slope, intercept, r_value, _, _ = stats.linregress(X, vendas_array)
+
+        tendencia_significativa = abs(r_value) > 0.5  # Correlação moderada
+
+        if tendencia_significativa:
+            # Usar regressão para projetar
+            demanda = intercept + slope * n  # Próximo período
+            demanda = max(0, demanda)
+            metodo = 'tendencia'
+        elif cv > 0.5:
+            # Alta variabilidade - usar EMA
+            demanda, desvio = DemandCalculator.calcular_demanda_ema(vendas)
+            return demanda, desvio, {
+                'metodo_usado': 'ema',
+                'confianca': 'media',
+                'num_periodos': n,
+                'cv': round(cv, 2),
+                'fator_seguranca_recomendado': 1.3
+            }
+        else:
+            # Demanda estável - usar WMA
+            demanda, desvio = DemandCalculator.calcular_demanda_wma(vendas)
+            return demanda, desvio, {
+                'metodo_usado': 'wma',
+                'confianca': 'media',
+                'num_periodos': n,
+                'cv': round(cv, 2),
+                'fator_seguranca_recomendado': 1.2
+            }
+
+        # Calcular desvio dos resíduos para tendência
+        y_pred = intercept + slope * X
+        residuos = vendas_array - y_pred
+        desvio = np.std(residuos, ddof=2) if n > 2 else desvio_base
+
+        return demanda, desvio, {
+            'metodo_usado': metodo,
+            'confianca': 'media',
+            'num_periodos': n,
+            'r_squared': round(r_value ** 2, 3),
+            'slope': round(slope, 3),
+            'fator_seguranca_recomendado': 1.2
+        }
+
+    @staticmethod
+    def calcular_demanda_adaptativa(
+        vendas: List[float],
+        granularidade: str = 'mensal',
+        media_cluster: Optional[float] = None
+    ) -> Tuple[float, float, Dict]:
+        """
+        MÉTODO PRINCIPAL ADAPTATIVO
+        Seleciona automaticamente a melhor estratégia baseada no tamanho da série
+
+        Args:
+            vendas: Lista de vendas
+            granularidade: 'diario', 'semanal' ou 'mensal'
+            media_cluster: Média de produtos similares (para prior bayesiano)
+
+        Returns:
+            (demanda, desvio, metadata)
+        """
+        n = len(vendas)
+
+        # Definir limiares baseados na granularidade
+        if granularidade == 'diario':
+            # Diário: precisa de mais dados para padrões
+            limiar_muito_curta = 7    # < 1 semana
+            limiar_curta = 30         # < 1 mês
+            limiar_media = 90         # < 3 meses
+        elif granularidade == 'semanal':
+            limiar_muito_curta = 2    # < 2 semanas
+            limiar_curta = 8          # < 2 meses
+            limiar_media = 26         # < 6 meses
+        else:  # mensal
+            limiar_muito_curta = 2    # < 2 meses
+            limiar_curta = 6          # < 6 meses
+            limiar_media = 11         # < 1 ano
+
+        # Selecionar método baseado no tamanho
+        if n <= limiar_muito_curta:
+            demanda, desvio, metadata = DemandCalculator.calcular_demanda_serie_muito_curta(
+                vendas, media_cluster
+            )
+            metadata['categoria_serie'] = 'muito_curta'
+
+        elif n <= limiar_curta:
+            demanda, desvio, metadata = DemandCalculator.calcular_demanda_serie_curta(
+                vendas, media_cluster
+            )
+            metadata['categoria_serie'] = 'curta'
+
+        elif n <= limiar_media:
+            demanda, desvio, metadata = DemandCalculator.calcular_demanda_serie_media(vendas)
+            metadata['categoria_serie'] = 'media'
+
+        else:
+            # Série longa - usar método inteligente completo
+            demanda, desvio, metadata = DemandCalculator.calcular_demanda_inteligente(vendas)
+            metadata['categoria_serie'] = 'longa'
+            metadata['fator_seguranca_recomendado'] = 1.0
+
+        metadata['granularidade'] = granularidade
+        metadata['tamanho_serie'] = n
+
+        return demanda, desvio, metadata
+
+    @staticmethod
+    def calcular_demanda_diaria_unificada(
+        vendas_diarias: List[float],
+        dias_periodo: int,
+        granularidade_exibicao: str = 'mensal',
+        media_cluster_diaria: Optional[float] = None
+    ) -> Tuple[float, float, Dict]:
+        """
+        MÉTODO UNIFICADO PARA CONSISTÊNCIA ENTRE GRANULARIDADES
+
+        Calcula demanda usando SEMPRE a base diária, garantindo que:
+        - Semanal e mensal produzam resultados proporcionais aos dias
+        - Os 6 métodos inteligentes são aplicados na série diária
+        - Fatores sazonais podem ser aplicados depois na exibição
+
+        Fluxo:
+        1. Recebe histórico DIÁRIO (730 dias = 2 anos)
+        2. Aplica os 6 métodos na série diária
+        3. Calcula demanda_diaria_base
+        4. Multiplica pelos dias do período solicitado
+
+        Args:
+            vendas_diarias: Lista de vendas diárias (ordenadas do mais antigo ao mais recente)
+            dias_periodo: Número de dias do período de previsão (ex: 181 para Jan-Jun, 217 para Sem 1-31)
+            granularidade_exibicao: 'diario', 'semanal' ou 'mensal' (para metadata)
+            media_cluster_diaria: Média diária de produtos similares (para prior bayesiano)
+
+        Returns:
+            (demanda_total_periodo, desvio_total, metadata)
+
+        Exemplo:
+            # Para Jan-Jun 2026 (181 dias)
+            demanda, desvio, meta = calcular_demanda_diaria_unificada(historico_diario, 181, 'mensal')
+
+            # Para Semana 1-31 2026 (217 dias)
+            demanda, desvio, meta = calcular_demanda_diaria_unificada(historico_diario, 217, 'semanal')
+
+            # Ambos devem ser proporcionais: demanda_semanal / demanda_mensal ≈ 217/181 = 1.20
+        """
+        if not vendas_diarias or len(vendas_diarias) == 0:
+            return 0.0, 0.0, {
+                'metodo_usado': 'sem_dados',
+                'confianca': 'muito_baixa',
+                'demanda_diaria_base': 0,
+                'dias_periodo': dias_periodo,
+                'granularidade_exibicao': granularidade_exibicao
+            }
+
+        # 1. Calcular demanda diária usando método adaptativo
+        demanda_diaria, desvio_diario, metadata = DemandCalculator.calcular_demanda_adaptativa(
+            vendas=vendas_diarias,
+            granularidade='diario',
+            media_cluster=media_cluster_diaria
+        )
+
+        # 2. Calcular demanda total para o período
+        demanda_total = demanda_diaria * dias_periodo
+
+        # 3. Calcular desvio total (propagação de incerteza)
+        # Desvio do período = desvio_diario * sqrt(dias)
+        import math
+        desvio_total = desvio_diario * math.sqrt(dias_periodo)
+
+        # 4. Enriquecer metadata
+        metadata['calculo_unificado'] = True
+        metadata['demanda_diaria_base'] = round(demanda_diaria, 4)
+        metadata['desvio_diario_base'] = round(desvio_diario, 4)
+        metadata['dias_periodo'] = dias_periodo
+        metadata['granularidade_exibicao'] = granularidade_exibicao
+        metadata['demanda_total_calculada'] = round(demanda_total, 2)
+
+        # 5. Calcular métricas auxiliares para validação
+        if granularidade_exibicao == 'mensal':
+            # Converter para equivalente mensal (30 dias)
+            metadata['demanda_mensal_equivalente'] = round(demanda_diaria * 30, 2)
+            metadata['num_meses_equivalente'] = round(dias_periodo / 30, 2)
+        elif granularidade_exibicao == 'semanal':
+            # Converter para equivalente semanal (7 dias)
+            metadata['demanda_semanal_equivalente'] = round(demanda_diaria * 7, 2)
+            metadata['num_semanas_equivalente'] = round(dias_periodo / 7, 2)
+
+        return demanda_total, desvio_total, metadata
+
+    @staticmethod
+    def validar_consistencia_granularidades(
+        demanda_mensal: float,
+        dias_mensal: int,
+        demanda_semanal: float,
+        dias_semanal: int,
+        tolerancia_pct: float = 0.10
+    ) -> Dict:
+        """
+        Valida se as previsões mensal e semanal são consistentes.
+
+        Args:
+            demanda_mensal: Demanda total prevista no período mensal
+            dias_mensal: Dias no período mensal (ex: 181 para Jan-Jun)
+            demanda_semanal: Demanda total prevista no período semanal
+            dias_semanal: Dias no período semanal (ex: 217 para Sem 1-31)
+            tolerancia_pct: Tolerância aceitável (padrão: 10%)
+
+        Returns:
+            Dict com:
+            - consistente: bool
+            - demanda_diaria_mensal: float
+            - demanda_diaria_semanal: float
+            - diferenca_pct: float
+            - alerta: str (se inconsistente)
+        """
+        # Calcular demanda diária equivalente de cada granularidade
+        demanda_diaria_mensal = demanda_mensal / dias_mensal if dias_mensal > 0 else 0
+        demanda_diaria_semanal = demanda_semanal / dias_semanal if dias_semanal > 0 else 0
+
+        # Calcular diferença percentual
+        if demanda_diaria_mensal > 0:
+            diferenca_pct = abs(demanda_diaria_semanal - demanda_diaria_mensal) / demanda_diaria_mensal
+        elif demanda_diaria_semanal > 0:
+            diferenca_pct = abs(demanda_diaria_semanal - demanda_diaria_mensal) / demanda_diaria_semanal
+        else:
+            diferenca_pct = 0
+
+        consistente = diferenca_pct <= tolerancia_pct
+
+        resultado = {
+            'consistente': consistente,
+            'demanda_diaria_mensal': round(demanda_diaria_mensal, 4),
+            'demanda_diaria_semanal': round(demanda_diaria_semanal, 4),
+            'diferenca_pct': round(diferenca_pct * 100, 2),
+            'tolerancia_pct': tolerancia_pct * 100
+        }
+
+        if not consistente:
+            resultado['alerta'] = (
+                f"ATENÇÃO: Diferença de {resultado['diferenca_pct']:.1f}% entre granularidades. "
+                f"Demanda diária via mensal: {demanda_diaria_mensal:.2f}, "
+                f"via semanal: {demanda_diaria_semanal:.2f}. "
+                f"Verifique sazonalidade ou padrões específicos."
+            )
+
+        return resultado
+
+    # =====================================================
+    # MÉTODOS ORIGINAIS (mantidos para compatibilidade)
+    # =====================================================
 
     @staticmethod
     def calcular_demanda_ema(
