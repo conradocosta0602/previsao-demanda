@@ -1198,164 +1198,190 @@ function ajustarLimitesPrevisao() {
     helpText.textContent = helpMessage;
 }
 
-// Carregar lojas do banco de dados
+// =====================================================
+// FUNÇÕES DE CARREGAMENTO COM MULTI-SELECT
+// =====================================================
+
+// Carregar lojas do banco de dados (multi-select)
 async function carregarLojas() {
     try {
-        const select = document.getElementById('loja_banco');
-        if (!select) {
-            console.warn('Elemento loja_banco nao encontrado');
+        const container = document.querySelector('[data-id="loja_banco"]');
+        if (!container) {
+            console.warn('Container loja_banco nao encontrado');
             return;
         }
 
         const response = await fetch('/api/lojas');
         const lojas = await response.json();
 
-        select.innerHTML = '';
-        lojas.forEach(loja => {
-            const option = document.createElement('option');
-            option.value = loja.cod_empresa;  // Usar cod_empresa como value
-            option.textContent = loja.nome_loja;
-            select.appendChild(option);
+        const options = lojas.map(l => ({
+            value: l.cod_empresa.toString(),
+            label: l.nome_loja
+        }));
+
+        MultiSelect.create('loja_banco', options, {
+            allSelectedText: 'Todas as lojas',
+            noneSelectedText: 'Nenhuma loja',
+            countSelectedText: '{count} lojas',
+            selectAllByDefault: true,
+            onchange: () => carregarProdutosFiltrados()
         });
 
-        // Ao mudar loja, recarregar produtos
-        select.addEventListener('change', () => carregarProdutosFiltrados());
     } catch (error) {
         console.error('Erro ao carregar lojas:', error);
     }
 }
 
-// Carregar fornecedores do banco de dados
+// Carregar fornecedores do banco de dados (multi-select)
 async function carregarFornecedores() {
     try {
-        const select = document.getElementById('fornecedor_banco');
-        if (!select) {
-            console.warn('Elemento fornecedor_banco nao encontrado');
+        const container = document.querySelector('[data-id="fornecedor_banco"]');
+        if (!container) {
+            console.warn('Container fornecedor_banco nao encontrado');
             return;
         }
 
         const response = await fetch('/api/fornecedores');
         const fornecedores = await response.json();
 
-        select.innerHTML = '';
-        fornecedores.forEach(forn => {
-            const option = document.createElement('option');
-            option.value = forn.nome_fornecedor;
-            option.textContent = forn.nome_fornecedor;
-            select.appendChild(option);
+        const options = fornecedores.map(f => ({
+            value: f.nome_fornecedor,
+            label: f.nome_fornecedor
+        }));
+
+        MultiSelect.create('fornecedor_banco', options, {
+            allSelectedText: 'Todos os fornecedores',
+            noneSelectedText: 'Nenhum fornecedor',
+            countSelectedText: '{count} fornecedores',
+            selectAllByDefault: true,
+            onchange: () => {
+                carregarProdutosFiltrados();
+            }
         });
 
-        // Ao mudar fornecedor, recarregar produtos
-        select.addEventListener('change', () => carregarProdutosFiltrados());
     } catch (error) {
         console.error('Erro ao carregar fornecedores:', error);
     }
 }
 
-// Carregar linhas (categorias nivel 1) do banco de dados
+// Carregar linhas (categorias nivel 1) do banco de dados (multi-select)
 async function carregarLinhas() {
     try {
-        const select = document.getElementById('linha_banco');
-        if (!select) {
-            console.warn('Elemento linha_banco nao encontrado');
+        const container = document.querySelector('[data-id="linha_banco"]');
+        if (!container) {
+            console.warn('Container linha_banco nao encontrado');
             return;
         }
 
         const response = await fetch('/api/linhas');
         const linhas = await response.json();
 
-        select.innerHTML = '';
-        linhas.forEach(item => {
-            const option = document.createElement('option');
-            option.value = item.linha;
-            option.textContent = item.linha;
-            select.appendChild(option);
+        const options = linhas.map(l => ({
+            value: l.linha,
+            label: l.linha
+        }));
+
+        MultiSelect.create('linha_banco', options, {
+            allSelectedText: 'Todas as linhas',
+            noneSelectedText: 'Nenhuma linha',
+            countSelectedText: '{count} linhas',
+            selectAllByDefault: true,
+            onchange: () => {
+                carregarSublinhas();
+                carregarProdutosFiltrados();
+            }
         });
 
-        // Ao mudar linha, recarregar sublinhas e produtos
-        select.addEventListener('change', () => {
-            carregarSublinhas();
-            carregarProdutosFiltrados();
-        });
     } catch (error) {
         console.error('Erro ao carregar linhas:', error);
     }
 }
 
-// Carregar sublinhas (categorias nivel 3) do banco de dados
+// Carregar sublinhas (categorias nivel 3) do banco de dados (multi-select)
 async function carregarSublinhas() {
     try {
-        const linhaSelect = document.getElementById('linha_banco');
-        const select = document.getElementById('sublinha_banco');
-        if (!select) {
-            console.warn('Elemento sublinha_banco nao encontrado');
+        const container = document.querySelector('[data-id="sublinha_banco"]');
+        if (!container) {
+            console.warn('Container sublinha_banco nao encontrado');
             return;
         }
 
-        const linha = linhaSelect ? linhaSelect.value : '';
-        const url = linha && linha !== 'TODAS'
-            ? `/api/sublinhas?linha=${encodeURIComponent(linha)}`
-            : '/api/sublinhas';
+        // Obter linha selecionada
+        const linhasSelecionadas = MultiSelect.getSelected('linha_banco');
+        let url = '/api/sublinhas';
+        if (linhasSelecionadas.length > 0) {
+            url += '?linha=' + encodeURIComponent(JSON.stringify(linhasSelecionadas));
+        }
 
         const response = await fetch(url);
         const sublinhas = await response.json();
 
-        select.innerHTML = '';
-        sublinhas.forEach(item => {
-            const option = document.createElement('option');
-            option.value = item.codigo_linha;
-            option.textContent = item.descricao_linha;
-            select.appendChild(option);
-        });
+        const options = sublinhas.map(s => ({
+            value: s.codigo_linha,
+            label: s.descricao_linha
+        }));
 
-        // Ao mudar sublinha, recarregar produtos
-        select.addEventListener('change', () => carregarProdutosFiltrados());
+        if (MultiSelect.instances['sublinha_banco']) {
+            MultiSelect.updateOptions('sublinha_banco', options);
+        } else {
+            MultiSelect.create('sublinha_banco', options, {
+                allSelectedText: 'Todas as sublinhas',
+                noneSelectedText: 'Nenhuma sublinha',
+                countSelectedText: '{count} sublinhas',
+                selectAllByDefault: true,
+                onchange: () => carregarProdutosFiltrados()
+            });
+        }
+
     } catch (error) {
         console.error('Erro ao carregar sublinhas:', error);
     }
 }
 
-// Carregar produtos filtrados do banco de dados
+// Carregar produtos filtrados do banco de dados (multi-select)
 async function carregarProdutosFiltrados() {
     try {
-        const select = document.getElementById('produto_banco');
-        if (!select) {
-            console.warn('Elemento produto_banco nao encontrado');
+        const container = document.querySelector('[data-id="produto_banco"]');
+        if (!container) {
+            console.warn('Container produto_banco nao encontrado');
             return;
         }
 
-        const lojaEl = document.getElementById('loja_banco');
-        const fornecedorEl = document.getElementById('fornecedor_banco');
-        const linhaEl = document.getElementById('linha_banco');
-        const sublinhaEl = document.getElementById('sublinha_banco');
-
-        const loja = lojaEl ? lojaEl.value : '';
-        const fornecedor = fornecedorEl ? fornecedorEl.value : '';
-        const linha = linhaEl ? linhaEl.value : '';
-        const sublinha = sublinhaEl ? sublinhaEl.value : '';
+        // Obter valores dos filtros
+        const lojas = MultiSelect.getSelected('loja_banco');
+        const fornecedores = MultiSelect.getSelected('fornecedor_banco');
+        const linhas = MultiSelect.getSelected('linha_banco');
+        const sublinhas = MultiSelect.getSelected('sublinha_banco');
 
         // Construir URL com filtros
         const params = new URLSearchParams();
-        if (loja && loja !== 'TODAS') params.append('loja', loja);
-        if (fornecedor && fornecedor !== 'TODOS') params.append('fornecedor', fornecedor);
-        if (linha && linha !== 'TODAS') params.append('linha', linha);
-        if (sublinha && sublinha !== 'TODAS') params.append('sublinha', sublinha);
+        if (lojas.length > 0) params.append('loja', JSON.stringify(lojas));
+        if (fornecedores.length > 0) params.append('fornecedor', JSON.stringify(fornecedores));
+        if (linhas.length > 0) params.append('linha', JSON.stringify(linhas));
+        if (sublinhas.length > 0) params.append('sublinha', JSON.stringify(sublinhas));
 
         const url = '/api/produtos_completo' + (params.toString() ? '?' + params.toString() : '');
 
         const response = await fetch(url);
         const produtos = await response.json();
 
-        select.innerHTML = '';
-        produtos.forEach(prod => {
-            const option = document.createElement('option');
-            option.value = prod.codigo;
-            // Mostrar codigo + descricao para facilitar identificacao
-            option.textContent = prod.codigo === 'TODOS'
-                ? prod.descricao
-                : `${prod.codigo} - ${prod.descricao}`;
-            select.appendChild(option);
-        });
+        const options = produtos.map(p => ({
+            value: p.codigo.toString(),
+            label: p.codigo === 'TODOS' ? p.descricao : `${p.codigo} - ${p.descricao}`
+        }));
+
+        if (MultiSelect.instances['produto_banco']) {
+            MultiSelect.updateOptions('produto_banco', options);
+        } else {
+            MultiSelect.create('produto_banco', options, {
+                allSelectedText: 'Todos os produtos',
+                noneSelectedText: 'Nenhum produto',
+                countSelectedText: '{count} produtos',
+                selectAllByDefault: true,
+                maxHeight: '300px'
+            });
+        }
+
     } catch (error) {
         console.error('Erro ao carregar produtos:', error);
     }
@@ -1541,6 +1567,160 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     rowVariacao += '</tr>';
 
     tbody.innerHTML = rowPrevisao + rowReal + rowVariacao;
+
+    // Se houver dados por fornecedor e mais de um fornecedor, exibir seção adicional
+    if (resultado.comparacao_yoy_por_fornecedor && resultado.comparacao_yoy_por_fornecedor.length > 1) {
+        preencherTabelaComparativaPorFornecedor(resultado, granularidade);
+    }
+}
+
+// Preencher tabela comparativa por fornecedor (quando múltiplos fornecedores selecionados)
+function preencherTabelaComparativaPorFornecedor(resultado, granularidade = 'mensal') {
+    const container = document.getElementById('tabelaComparativa').parentElement;
+    const dadosFornecedores = resultado.comparacao_yoy_por_fornecedor || [];
+    const periodos = resultado.periodos_previsao_formatados || [];
+
+    if (!dadosFornecedores.length || !periodos.length) return;
+
+    // Remover tabela de fornecedores anterior se existir
+    const tabelaAnterior = document.getElementById('tabelaFornecedoresComparativa');
+    if (tabelaAnterior) {
+        tabelaAnterior.remove();
+    }
+
+    // Criar nova div para tabela por fornecedor
+    const divFornecedores = document.createElement('div');
+    divFornecedores.id = 'tabelaFornecedoresComparativa';
+    divFornecedores.style.marginTop = '20px';
+
+    // Função para formatar período
+    const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    function formatarPeriodo(dataStr) {
+        if (!dataStr) return '';
+        const data = parseLocalDate(dataStr);
+        if (!data || isNaN(data.getTime())) return dataStr;
+        if (granularidade === 'semanal') {
+            const semana = Math.ceil((data.getDate() + new Date(data.getFullYear(), data.getMonth(), 1).getDay()) / 7);
+            return `S${semana}/${data.getFullYear().toString().slice(-2)}`;
+        } else if (granularidade === 'diario') {
+            return `${data.getDate().toString().padStart(2, '0')}/${(data.getMonth() + 1).toString().padStart(2, '0')}`;
+        } else {
+            return `${meses[data.getMonth()]}/${data.getFullYear().toString().slice(-2)}`;
+        }
+    }
+
+    // Calcular tamanhos dinâmicos
+    const numPeriodos = periodos.length;
+    let fontSize = numPeriodos <= 6 ? '0.85em' : (numPeriodos <= 12 ? '0.75em' : '0.65em');
+    let padding = numPeriodos <= 6 ? '6px' : (numPeriodos <= 12 ? '4px' : '3px');
+
+    // Montar tabela
+    let html = `
+        <h3 style="color: #667eea; margin-bottom: 15px; margin-top: 20px;">
+            Comparativo por Fornecedor (Previsao vs Ano Anterior)
+        </h3>
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: ${fontSize};">
+                <thead>
+                    <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                        <th style="padding: ${padding}; text-align: left; border: 1px solid #ddd; min-width: 120px;">Fornecedor</th>
+                        <th style="padding: ${padding}; text-align: left; border: 1px solid #ddd; min-width: 80px;">Tipo</th>`;
+
+    // Cabeçalhos de período
+    periodos.forEach(periodo => {
+        html += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd;">${formatarPeriodo(periodo)}</th>`;
+    });
+
+    html += `<th style="padding: ${padding}; text-align: center; border: 1px solid #ddd; background: #5a67d8; font-weight: bold;">TOTAL</th>
+                        <th style="padding: ${padding}; text-align: center; border: 1px solid #ddd; background: #5a67d8; font-weight: bold;">Var %</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+    // Linhas por fornecedor
+    dadosFornecedores.forEach((forn, idx) => {
+        const bgColor = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
+
+        // Linha Previsão
+        html += `<tr style="background: ${bgColor};">
+            <td rowspan="3" style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; vertical-align: middle;">${forn.nome_fornecedor}</td>
+            <td style="padding: ${padding}; border: 1px solid #ddd; color: #059669;">Previsao</td>`;
+
+        let totalPrevForn = 0;
+        periodos.forEach(periodo => {
+            const valor = forn.previsao_por_periodo[periodo]?.previsao || 0;
+            totalPrevForn += valor;
+            html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd;">${formatNumber(valor)}</td>`;
+        });
+
+        const variacaoForn = forn.variacao_percentual;
+        const varColor = variacaoForn >= 0 ? '#10b981' : '#ef4444';
+        const varSinal = variacaoForn >= 0 ? '+' : '';
+
+        html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #e0e7ff;">${formatNumber(totalPrevForn)}</td>
+            <td rowspan="3" style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; color: ${varColor}; vertical-align: middle;">${variacaoForn !== null ? varSinal + variacaoForn.toFixed(1) + '%' : 'N/A'}</td>
+        </tr>`;
+
+        // Linha Ano Anterior
+        html += `<tr style="background: ${bgColor};">
+            <td style="padding: ${padding}; border: 1px solid #ddd; color: #6b7280;">Ano Ant.</td>`;
+
+        let totalAAForn = 0;
+        periodos.forEach(periodo => {
+            const valor = forn.previsao_por_periodo[periodo]?.ano_anterior || 0;
+            totalAAForn += valor;
+            html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; color: #6b7280;">${formatNumber(valor)}</td>`;
+        });
+
+        html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #f3f4f6;">${formatNumber(totalAAForn)}</td>
+        </tr>`;
+
+        // Linha Variação por período
+        html += `<tr style="background: ${bgColor}; border-bottom: 2px solid #ddd;">
+            <td style="padding: ${padding}; border: 1px solid #ddd; color: #f59e0b;">Var %</td>`;
+
+        periodos.forEach(periodo => {
+            const var_p = forn.previsao_por_periodo[periodo]?.variacao_percentual;
+            if (var_p !== null && var_p !== undefined) {
+                const vColor = var_p >= 0 ? '#10b981' : '#ef4444';
+                const vSinal = var_p >= 0 ? '+' : '';
+                html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; color: ${vColor}; font-weight: 500;">${vSinal}${var_p.toFixed(1)}%</td>`;
+            } else {
+                html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; color: #9ca3af;">N/A</td>`;
+            }
+        });
+
+        html += `<td style="padding: ${padding}; border: 1px solid #ddd;"></td>
+        </tr>`;
+    });
+
+    // Linha TOTAL CONSOLIDADO
+    let totalPrevConsolidado = dadosFornecedores.reduce((sum, f) => sum + f.previsao_total, 0);
+    let totalAAConsolidado = dadosFornecedores.reduce((sum, f) => sum + f.ano_anterior_total, 0);
+    let variacaoConsolidada = totalAAConsolidado > 0 ? ((totalPrevConsolidado - totalAAConsolidado) / totalAAConsolidado * 100) : 0;
+    let varConsolidadaColor = variacaoConsolidada >= 0 ? '#10b981' : '#ef4444';
+    let varConsolidadaSinal = variacaoConsolidada >= 0 ? '+' : '';
+
+    html += `<tr style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); font-weight: bold;">
+        <td colspan="2" style="padding: ${padding}; border: 1px solid #ddd;">TOTAL CONSOLIDADO</td>`;
+
+    // Totais por período
+    periodos.forEach(periodo => {
+        let totalPeriodo = 0;
+        dadosFornecedores.forEach(f => {
+            totalPeriodo += f.previsao_por_periodo[periodo]?.previsao || 0;
+        });
+        html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd;">${formatNumber(totalPeriodo)}</td>`;
+    });
+
+    html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; background: #fcd34d;">${formatNumber(totalPrevConsolidado)}</td>
+        <td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; color: ${varConsolidadaColor};">${varConsolidadaSinal}${variacaoConsolidada.toFixed(1)}%</td>
+    </tr>`;
+
+    html += `</tbody></table></div>`;
+
+    divFornecedores.innerHTML = html;
+    container.appendChild(divFornecedores);
 }
 
 // Criar gráfico de previsão simplificado com 3 linhas + ano anterior
@@ -1959,12 +2139,20 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
     try {
         // Coletar dados do formulário
         const dadosPeriodo = coletarDadosPeriodo();
+
+        // Obter valores dos multi-selects (retorna array vazio se todos selecionados)
+        const lojas = MultiSelect.getSelected('loja_banco');
+        const fornecedores = MultiSelect.getSelected('fornecedor_banco');
+        const linhas = MultiSelect.getSelected('linha_banco');
+        const sublinhas = MultiSelect.getSelected('sublinha_banco');
+        const produtos = MultiSelect.getSelected('produto_banco');
+
         const dados = {
-            loja: document.getElementById('loja_banco').value,
-            fornecedor: document.getElementById('fornecedor_banco').value,
-            linha: document.getElementById('linha_banco').value,
-            sublinha: document.getElementById('sublinha_banco').value,
-            produto: document.getElementById('produto_banco').value,
+            loja: lojas.length > 0 ? lojas : 'TODAS',
+            fornecedor: fornecedores.length > 0 ? fornecedores : 'TODOS',
+            linha: linhas.length > 0 ? linhas : 'TODAS',
+            sublinha: sublinhas.length > 0 ? sublinhas : 'TODAS',
+            produto: produtos.length > 0 ? produtos : 'TODOS',
             granularidade: document.getElementById('granularidade_banco').value,
             ...dadosPeriodo  // Inclui os dados de período específicos
         };
@@ -1972,6 +2160,11 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
         console.log('=== DADOS ENVIADOS ===');
         console.log('Granularidade:', dados.granularidade);
         console.log('Tipo período:', dados.tipo_periodo);
+        console.log('Lojas:', dados.loja);
+        console.log('Fornecedores:', dados.fornecedor);
+        console.log('Linhas:', dados.linha);
+        console.log('Sublinhas:', dados.sublinha);
+        console.log('Produtos:', dados.produto);
         console.log('Dados completos:', JSON.stringify(dados, null, 2));
 
         // Enviar requisição (Bottom-Up com sazonalidade, tendência e limitadores)

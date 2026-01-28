@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KPIs - Demanda e Reabastecimento</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script src="{{ url_for('static', filename='js/multi-select.js') }}"></script>
     <style>
         .kpi-container {
             max-width: 1400px;
@@ -386,35 +388,23 @@
         <div class="filters-section">
             <div class="filters-grid">
                 <div class="filter-group">
-                    <label for="filter-loja">🏪 Loja</label>
-                    <select id="filter-loja">
-                        <option value="">Todas as Lojas</option>
-                        <!-- Preenchido dinamicamente -->
-                    </select>
+                    <label>Loja</label>
+                    <div class="multi-select-container" data-id="filter-loja"></div>
                 </div>
 
                 <div class="filter-group">
-                    <label for="filter-produto">📦 Produto</label>
-                    <select id="filter-produto">
-                        <option value="">Todos os Produtos</option>
-                        <!-- Preenchido dinamicamente -->
-                    </select>
+                    <label>Produto</label>
+                    <div class="multi-select-container" data-id="filter-produto"></div>
                 </div>
 
                 <div class="filter-group">
-                    <label for="filter-categoria">🏷️ Categoria</label>
-                    <select id="filter-categoria">
-                        <option value="">Todas as Categorias</option>
-                        <!-- Preenchido dinamicamente -->
-                    </select>
+                    <label>Categoria</label>
+                    <div class="multi-select-container" data-id="filter-categoria"></div>
                 </div>
 
                 <div class="filter-group">
-                    <label for="filter-fornecedor">🚚 Fornecedor</label>
-                    <select id="filter-fornecedor">
-                        <option value="">Todos os Fornecedores</option>
-                        <!-- Preenchido dinamicamente -->
-                    </select>
+                    <label>Fornecedor</label>
+                    <div class="multi-select-container" data-id="filter-fornecedor"></div>
                 </div>
             </div>
 

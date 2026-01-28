@@ -3093,33 +3093,85 @@ def kpis():
 
 @app.route('/api/kpis/filtros', methods=['GET'])
 def kpis_filtros():
-    """Retorna opções para filtros de KPIs"""
+    """Retorna opções para filtros de KPIs - Busca dados reais do banco"""
     try:
-        # TODO: Buscar do banco de dados ou cache
-        # Por enquanto, retornar dados mockados
-        filtros = {
-            'lojas': [
-                {'id': 1, 'nome': 'Loja 1'},
-                {'id': 2, 'nome': 'Loja 2'},
-                {'id': 3, 'nome': 'Loja 3'}
-            ],
-            'produtos': [
-                {'id': 1001, 'nome': 'Produto A'},
-                {'id': 1002, 'nome': 'Produto B'},
-                {'id': 1003, 'nome': 'Produto C'}
-            ],
-            'categorias': [
-                'Alimentos',
-                'Bebidas',
-                'Limpeza',
-                'Higiene'
-            ],
-            'fornecedores': [
-                'Fornecedor 1',
-                'Fornecedor 2',
-                'Fornecedor 3'
-            ]
-        }
+        # Tentar buscar dados reais do banco de dados
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            # Buscar lojas
+            cursor.execute("""
+                SELECT DISTINCT cod_empresa as id, nome_empresa as nome
+                FROM lojas
+                ORDER BY nome_empresa
+            """)
+            lojas = cursor.fetchall()
+
+            # Buscar produtos
+            cursor.execute("""
+                SELECT DISTINCT codigo as id, descricao as nome
+                FROM produtos_ativos
+                ORDER BY descricao
+                LIMIT 500
+            """)
+            produtos = cursor.fetchall()
+
+            # Buscar categorias (linhas)
+            cursor.execute("""
+                SELECT DISTINCT categoria as nome
+                FROM produtos_ativos
+                WHERE categoria IS NOT NULL AND categoria != ''
+                ORDER BY categoria
+            """)
+            categorias = [row['nome'] for row in cursor.fetchall()]
+
+            # Buscar fornecedores
+            cursor.execute("""
+                SELECT DISTINCT nome_fornecedor as nome
+                FROM produtos_ativos
+                WHERE nome_fornecedor IS NOT NULL AND nome_fornecedor != ''
+                ORDER BY nome_fornecedor
+            """)
+            fornecedores = [row['nome'] for row in cursor.fetchall()]
+
+            cursor.close()
+            conn.close()
+
+            filtros = {
+                'lojas': [dict(row) for row in lojas] if lojas else [],
+                'produtos': [dict(row) for row in produtos] if produtos else [],
+                'categorias': categorias,
+                'fornecedores': fornecedores
+            }
+
+        except Exception as db_error:
+            print(f"Erro ao buscar do banco, usando dados mockados: {db_error}")
+            # Fallback para dados mockados se o banco não estiver disponível
+            filtros = {
+                'lojas': [
+                    {'id': 1, 'nome': 'Loja 1'},
+                    {'id': 2, 'nome': 'Loja 2'},
+                    {'id': 3, 'nome': 'Loja 3'}
+                ],
+                'produtos': [
+                    {'id': 1001, 'nome': 'Produto A'},
+                    {'id': 1002, 'nome': 'Produto B'},
+                    {'id': 1003, 'nome': 'Produto C'}
+                ],
+                'categorias': [
+                    'Alimentos',
+                    'Bebidas',
+                    'Limpeza',
+                    'Higiene'
+                ],
+                'fornecedores': [
+                    'Fornecedor 1',
+                    'Fornecedor 2',
+                    'Fornecedor 3'
+                ]
+            }
+
         return jsonify(filtros)
     except Exception as e:
         print(f"Erro ao buscar filtros: {e}")
@@ -3131,10 +3183,30 @@ def kpis_dados():
     """Retorna dados de KPIs com base nos filtros"""
     try:
         visao = request.args.get('visao', 'mensal')
-        loja = request.args.get('loja', '')
-        produto = request.args.get('produto', '')
-        categoria = request.args.get('categoria', '')
-        fornecedor = request.args.get('fornecedor', '')
+
+        # Suporte a arrays JSON para filtros
+        loja_param = request.args.get('loja', '')
+        produto_param = request.args.get('produto', '')
+        categoria_param = request.args.get('categoria', '')
+        fornecedor_param = request.args.get('fornecedor', '')
+
+        # Parsear arrays JSON se necessário
+        try:
+            loja = json.loads(loja_param) if loja_param and loja_param.startswith('[') else loja_param
+        except:
+            loja = loja_param
+        try:
+            produto = json.loads(produto_param) if produto_param and produto_param.startswith('[') else produto_param
+        except:
+            produto = produto_param
+        try:
+            categoria = json.loads(categoria_param) if categoria_param and categoria_param.startswith('[') else categoria_param
+        except:
+            categoria = categoria_param
+        try:
+            fornecedor = json.loads(fornecedor_param) if fornecedor_param and fornecedor_param.startswith('[') else fornecedor_param
+        except:
+            fornecedor = fornecedor_param
 
         # TODO: Buscar dados reais do banco/cache baseado nos filtros
         # Por enquanto, retornar dados mockados
@@ -3468,10 +3540,12 @@ def api_linhas():
 def api_sublinhas():
     """Retorna lista de sublinhas (categorias nivel 3) do banco"""
     try:
+        import json as json_lib
+
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Parametro de filtro por linha
+        # Parametro de filtro por linha (suporta array JSON ou string única)
         linha = request.args.get('linha', 'TODAS')
 
         query = """
@@ -3482,8 +3556,20 @@ def api_sublinhas():
         params = []
 
         if linha and linha != 'TODAS':
-            query += " AND categoria = %s"
-            params.append(linha)
+            # Verificar se é um array JSON
+            try:
+                if linha.startswith('['):
+                    linhas_lista = json_lib.loads(linha)
+                    if linhas_lista:
+                        placeholders = ', '.join(['%s'] * len(linhas_lista))
+                        query += f" AND categoria IN ({placeholders})"
+                        params.extend(linhas_lista)
+                else:
+                    query += " AND categoria = %s"
+                    params.append(linha)
+            except:
+                query += " AND categoria = %s"
+                params.append(linha)
 
         query += " ORDER BY descricao_linha"
 
@@ -3507,6 +3593,8 @@ def api_sublinhas():
 def api_produtos_completo():
     """Retorna lista de produtos com dados completos (fornecedor, linha, sublinha)"""
     try:
+        import json as json_lib
+
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -3515,6 +3603,17 @@ def api_produtos_completo():
         fornecedor = request.args.get('fornecedor', 'TODOS')
         linha = request.args.get('linha', 'TODAS')
         sublinha = request.args.get('sublinha', 'TODAS')
+
+        # Helper para parsear JSON array ou retornar valor único
+        def parse_filter(value, exclude_value):
+            if not value or value == exclude_value:
+                return None
+            try:
+                if value.startswith('['):
+                    return json_lib.loads(value)
+            except:
+                pass
+            return [value]
 
         query = """
             SELECT DISTINCT
@@ -3530,32 +3629,40 @@ def api_produtos_completo():
         """
         params = []
 
-        # Filtrar por fornecedor
-        if fornecedor and fornecedor != 'TODOS':
-            query += " AND p.nome_fornecedor = %s"
-            params.append(fornecedor)
+        # Filtrar por fornecedor (suporta array JSON ou string única)
+        fornecedores = parse_filter(fornecedor, 'TODOS')
+        if fornecedores:
+            placeholders = ', '.join(['%s'] * len(fornecedores))
+            query += f" AND p.nome_fornecedor IN ({placeholders})"
+            params.extend(fornecedores)
 
-        # Filtrar por linha
-        if linha and linha != 'TODAS':
-            query += " AND p.categoria = %s"
-            params.append(linha)
+        # Filtrar por linha (suporta array JSON ou string única)
+        linhas = parse_filter(linha, 'TODAS')
+        if linhas:
+            placeholders = ', '.join(['%s'] * len(linhas))
+            query += f" AND p.categoria IN ({placeholders})"
+            params.extend(linhas)
 
-        # Filtrar por sublinha
-        if sublinha and sublinha != 'TODAS':
-            query += " AND p.codigo_linha = %s"
-            params.append(sublinha)
+        # Filtrar por sublinha (suporta array JSON ou string única)
+        sublinhas = parse_filter(sublinha, 'TODAS')
+        if sublinhas:
+            placeholders = ', '.join(['%s'] * len(sublinhas))
+            query += f" AND p.codigo_linha IN ({placeholders})"
+            params.extend(sublinhas)
 
-        # Se filtrar por loja especifica, mostrar so produtos com vendas nessa loja
-        if loja and loja != 'TODAS':
-            query += """
+        # Filtrar por loja (suporta array JSON ou string única)
+        lojas = parse_filter(loja, 'TODAS')
+        if lojas:
+            placeholders = ', '.join(['%s'] * len(lojas))
+            query += f"""
                 AND EXISTS (
                     SELECT 1 FROM historico_vendas_diario h
-                    WHERE h.codigo = p.cod_produto AND h.cod_empresa = %s
+                    WHERE h.codigo = p.cod_produto AND h.cod_empresa IN ({placeholders})
                 )
             """
-            params.append(int(loja))
+            params.extend([int(l) for l in lojas])
 
-        query += " ORDER BY p.descricao"
+        query += " ORDER BY p.descricao LIMIT 1000"
 
         cursor.execute(query, params)
         produtos = cursor.fetchall()
@@ -5406,25 +5513,27 @@ def api_gerar_previsao_banco_v2_interno():
         where_conditions = []
         params = []
 
-        if loja and loja != 'TODAS':
-            where_conditions.append("h.cod_empresa = %s")
-            params.append(int(loja))
+        # Helper para adicionar filtro com suporte a array
+        def add_filter(field, value, exclude_value, convert_int=False):
+            if value and value != exclude_value:
+                if isinstance(value, list):
+                    if len(value) == 1:
+                        where_conditions.append(f"{field} = %s")
+                        params.append(int(value[0]) if convert_int else value[0])
+                    elif len(value) > 1:
+                        placeholders = ', '.join(['%s'] * len(value))
+                        where_conditions.append(f"{field} IN ({placeholders})")
+                        params.extend([int(v) if convert_int else v for v in value])
+                else:
+                    where_conditions.append(f"{field} = %s")
+                    params.append(int(value) if convert_int else value)
 
-        if fornecedor and fornecedor != 'TODOS':
-            where_conditions.append("p.nome_fornecedor = %s")
-            params.append(fornecedor)
-
-        if linha and linha != 'TODAS':
-            where_conditions.append("p.categoria = %s")
-            params.append(linha)
-
-        if sublinha and sublinha != 'TODAS':
-            where_conditions.append("p.codigo_linha = %s")
-            params.append(sublinha)
-
-        if produto and produto != 'TODOS':
-            where_conditions.append("h.codigo = %s")
-            params.append(int(produto))
+        # Aplicar filtros com suporte a arrays (multi-select)
+        add_filter("h.cod_empresa", loja, 'TODAS', convert_int=True)
+        add_filter("p.nome_fornecedor", fornecedor, 'TODOS')
+        add_filter("p.categoria", linha, 'TODAS')
+        add_filter("p.codigo_linha", sublinha, 'TODAS')
+        add_filter("h.codigo", produto, 'TODOS', convert_int=True)
 
         where_sql = ""
         if where_conditions:
@@ -6378,18 +6487,54 @@ def api_gerar_previsao_banco_v2_interno():
             previsao_por_periodo = []
             total_previsao_item = 0
 
+            # Criar índice de vendas do item por período para ano anterior
+            vendas_por_periodo_item = {}
+            for venda in vendas_hist_sorted:
+                data_venda = venda['periodo']
+                if data_venda:
+                    vendas_por_periodo_item[data_venda] = vendas_por_periodo_item.get(data_venda, 0) + venda['qtd_venda']
+
             for i, data_prev in enumerate(datas_previsao):
                 if i < len(previsao_item_periodos):
                     valor = round(previsao_item_periodos[i], 1)
+
+                    # Calcular ano anterior para este período específico
+                    ano_anterior_periodo = 0
+                    try:
+                        from dateutil.relativedelta import relativedelta
+                        if '-S' in data_prev:
+                            # Formato semanal: buscar mesma semana ano anterior
+                            ano_str, sem_str = data_prev.split('-S')
+                            data_aa = f"{int(ano_str)-1}-S{sem_str}"
+                            ano_anterior_periodo = vendas_por_periodo_item.get(data_aa, 0)
+                        else:
+                            # Formato data: buscar mesmo período ano anterior
+                            data_obj = dt.strptime(data_prev, '%Y-%m-%d')
+                            data_aa = data_obj - relativedelta(years=1)
+                            if granularidade == 'mensal':
+                                # Buscar qualquer data do mesmo mês/ano anterior
+                                for data_v, qtd in vendas_por_periodo_item.items():
+                                    try:
+                                        dv = dt.strptime(data_v, '%Y-%m-%d')
+                                        if dv.year == data_aa.year and dv.month == data_aa.month:
+                                            ano_anterior_periodo += qtd
+                                    except:
+                                        pass
+                            else:
+                                ano_anterior_periodo = vendas_por_periodo_item.get(data_aa.strftime('%Y-%m-%d'), 0)
+                    except Exception:
+                        pass
+
                     previsao_por_periodo.append({
                         'periodo': data_prev,
-                        'previsao': valor
+                        'previsao': valor,
+                        'ano_anterior': round(ano_anterior_periodo, 1)
                     })
                     total_previsao_item += valor
                     # AGREGAR para o total
                     previsoes_agregadas_por_periodo[data_prev] += valor
 
-            # Buscar demanda real do ano anterior para este item
+            # Buscar demanda real do ano anterior para este item (total)
             demanda_ano_anterior_item = 0
             if data_inicio_aa and data_fim_aa:
                 for venda in vendas_hist_sorted:
@@ -6559,6 +6704,69 @@ def api_gerar_previsao_banco_v2_interno():
 
         except Exception as e:
             print(f"  Aviso: Não foi possível aplicar eventos: {e}", flush=True)
+
+        # =====================================================
+        # PASSO 4.6: MONTAR COMPARACAO YoY POR FORNECEDOR
+        # =====================================================
+        print(f"\n[PASSO 4.6] Montando comparação YoY por fornecedor...", flush=True)
+
+        # Agrupar dados por fornecedor
+        comparacao_por_fornecedor = {}
+
+        for item in relatorio_itens:
+            nome_forn = item.get('nome_fornecedor', 'SEM FORNECEDOR')
+            if nome_forn not in comparacao_por_fornecedor:
+                comparacao_por_fornecedor[nome_forn] = {
+                    'nome_fornecedor': nome_forn,
+                    'previsao_total': 0,
+                    'ano_anterior_total': 0,
+                    'previsao_por_periodo': {}
+                }
+
+            # Agregar totais
+            comparacao_por_fornecedor[nome_forn]['previsao_total'] += item.get('demanda_prevista_total', 0)
+            comparacao_por_fornecedor[nome_forn]['ano_anterior_total'] += item.get('demanda_ano_anterior', 0)
+
+            # Agregar por período
+            for periodo_info in item.get('previsao_por_periodo', []):
+                periodo = periodo_info.get('periodo', '')
+                previsao = periodo_info.get('previsao', 0)
+                ano_anterior = periodo_info.get('ano_anterior', 0)
+
+                if periodo not in comparacao_por_fornecedor[nome_forn]['previsao_por_periodo']:
+                    comparacao_por_fornecedor[nome_forn]['previsao_por_periodo'][periodo] = {
+                        'previsao': 0,
+                        'ano_anterior': 0
+                    }
+                comparacao_por_fornecedor[nome_forn]['previsao_por_periodo'][periodo]['previsao'] += previsao
+                comparacao_por_fornecedor[nome_forn]['previsao_por_periodo'][periodo]['ano_anterior'] += ano_anterior
+
+        # Calcular variação percentual por fornecedor
+        for nome_forn, dados in comparacao_por_fornecedor.items():
+            if dados['ano_anterior_total'] > 0:
+                dados['variacao_percentual'] = round(
+                    ((dados['previsao_total'] - dados['ano_anterior_total']) / dados['ano_anterior_total']) * 100, 1
+                )
+            else:
+                dados['variacao_percentual'] = None
+
+            # Calcular variação por período
+            for periodo, valores in dados['previsao_por_periodo'].items():
+                if valores['ano_anterior'] > 0:
+                    valores['variacao_percentual'] = round(
+                        ((valores['previsao'] - valores['ano_anterior']) / valores['ano_anterior']) * 100, 1
+                    )
+                else:
+                    valores['variacao_percentual'] = None
+
+        # Converter para lista ordenada por previsão total (descendente)
+        comparacao_yoy_por_fornecedor = sorted(
+            comparacao_por_fornecedor.values(),
+            key=lambda x: x['previsao_total'],
+            reverse=True
+        )
+
+        print(f"  Comparação YoY montada para {len(comparacao_yoy_por_fornecedor)} fornecedores", flush=True)
 
         # =====================================================
         # PASSO 5: CONSTRUIR SÉRIE AGREGADA (soma dos itens)
@@ -6884,7 +7092,9 @@ def api_gerar_previsao_banco_v2_interno():
                 'rupturas_saneadas': estatisticas_saneamento.get('rupturas_saneadas', 0),
                 'metodos_usados': estatisticas_saneamento.get('metodos', {}),
                 'descricao': 'Rupturas (venda=0 E estoque=0) foram substituídas por valores estimados usando interpolação sazonal'
-            }
+            },
+            'comparacao_yoy_por_fornecedor': comparacao_yoy_por_fornecedor,
+            'periodos_previsao_formatados': datas_previsao
         }
 
         cursor.close()

@@ -6,6 +6,7 @@
     <title>Simulador de Cenários - Previsão de Demanda</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="{{ url_for('static', filename='js/multi-select.js') }}"></script>
     <style>
         .simulator-container {
             max-width: 1400px;
@@ -398,8 +399,8 @@
                 <div class="control-section">
                     <h3>🏪 Ajuste por Loja</h3>
                     <div class="select-control">
-                        <label>Selecione a Loja</label>
-                        <select id="lojaSelect"></select>
+                        <label>Selecione a(s) Loja(s)</label>
+                        <div class="multi-select-container" data-id="lojaSelect"></div>
                     </div>
                     <div class="slider-control">
                         <label>Percentual</label>
@@ -417,8 +418,8 @@
                 <div class="control-section">
                     <h3>📦 Ajuste por SKU</h3>
                     <div class="select-control">
-                        <label>Selecione o SKU</label>
-                        <select id="skuSelect"></select>
+                        <label>Selecione o(s) SKU(s)</label>
+                        <div class="multi-select-container" data-id="skuSelect"></div>
                     </div>
                     <div class="slider-control">
                         <label>Percentual</label>

@@ -101,17 +101,31 @@ function mostrarSemDados() {
 function popularDropdowns() {
     // Extrair lojas únicas
     const lojas = [...new Set(dadosOriginais.previsoes.map(p => p.loja))].sort();
-    const lojaSelect = document.getElementById('lojaSelect');
-    lojaSelect.innerHTML = lojas.map(loja =>
-        `<option value="${loja}">${loja}</option>`
-    ).join('');
+    const lojasOptions = lojas.map(loja => ({
+        value: loja,
+        label: loja
+    }));
+
+    // Criar MultiSelect para lojas
+    MultiSelect.create('lojaSelect', lojasOptions, {
+        allSelectedText: 'Todas as lojas',
+        selectAllByDefault: true,
+        onchange: () => {} // Não recarrega automaticamente
+    });
 
     // Extrair SKUs únicos
     const skus = [...new Set(dadosOriginais.previsoes.map(p => p.sku))].sort();
-    const skuSelect = document.getElementById('skuSelect');
-    skuSelect.innerHTML = skus.map(sku =>
-        `<option value="${sku}">${sku}</option>`
-    ).join('');
+    const skusOptions = skus.map(sku => ({
+        value: sku,
+        label: sku
+    }));
+
+    // Criar MultiSelect para SKUs
+    MultiSelect.create('skuSelect', skusOptions, {
+        allSelectedText: 'Todos os SKUs',
+        selectAllByDefault: true,
+        onchange: () => {} // Não recarrega automaticamente
+    });
 }
 
 // ===========================
@@ -176,22 +190,38 @@ function aplicarAjusteGlobal() {
 }
 
 function aplicarAjustePorLoja() {
-    const loja = document.getElementById('lojaSelect').value;
+    const lojasSelecionadas = MultiSelect.getSelected('lojaSelect') || [];
     const percentual = parseFloat(document.getElementById('lojaSlider').value);
 
-    console.log(`🏪 Aplicando ajuste na loja ${loja}: ${percentual}%`);
+    if (lojasSelecionadas.length === 0) {
+        alert('Selecione pelo menos uma loja.');
+        return;
+    }
 
-    aplicarAjustePorLojaInterno(loja, percentual);
+    console.log(`🏪 Aplicando ajuste nas lojas ${lojasSelecionadas.join(', ')}: ${percentual}%`);
+
+    // Aplicar ajuste para cada loja selecionada
+    lojasSelecionadas.forEach(loja => {
+        aplicarAjustePorLojaInterno(loja, percentual);
+    });
     renderizarEstado();
 }
 
 function aplicarAjustePorSKU() {
-    const sku = document.getElementById('skuSelect').value;
+    const skusSelecionados = MultiSelect.getSelected('skuSelect') || [];
     const percentual = parseFloat(document.getElementById('skuSlider').value);
 
-    console.log(`📦 Aplicando ajuste no SKU ${sku}: ${percentual}%`);
+    if (skusSelecionados.length === 0) {
+        alert('Selecione pelo menos um SKU.');
+        return;
+    }
 
-    aplicarAjustePorSKUInterno(sku, percentual);
+    console.log(`📦 Aplicando ajuste nos SKUs ${skusSelecionados.join(', ')}: ${percentual}%`);
+
+    // Aplicar ajuste para cada SKU selecionado
+    skusSelecionados.forEach(sku => {
+        aplicarAjustePorSKUInterno(sku, percentual);
+    });
     renderizarEstado();
 }
 

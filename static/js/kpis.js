@@ -4,10 +4,10 @@
 // Estado Global
 let currentView = 'mensal';
 let filtros = {
-    loja: '',
-    produto: '',
-    categoria: '',
-    fornecedor: ''
+    loja: [],
+    produto: [],
+    categoria: [],
+    fornecedor: []
 };
 
 let charts = {}; // Armazena instâncias dos gráficos
@@ -29,39 +29,61 @@ function carregarFiltros() {
     fetch('/api/kpis/filtros')
         .then(response => response.json())
         .then(data => {
-            preencherSelect('filter-loja', data.lojas || []);
-            preencherSelect('filter-produto', data.produtos || []);
-            preencherSelect('filter-categoria', data.categorias || []);
-            preencherSelect('filter-fornecedor', data.fornecedores || []);
+            // Criar multi-select para Loja
+            const lojasOptions = (data.lojas || []).map(l => ({
+                value: (l.id || l.codigo || l).toString(),
+                label: l.nome || l.descricao || l
+            }));
+            MultiSelect.create('filter-loja', lojasOptions, {
+                allSelectedText: 'Todas as lojas',
+                selectAllByDefault: true,
+                onchange: () => {} // Não recarrega automaticamente, aguarda botão "Aplicar"
+            });
+
+            // Criar multi-select para Produto
+            const produtosOptions = (data.produtos || []).map(p => ({
+                value: (p.id || p.codigo || p).toString(),
+                label: p.nome || p.descricao || p
+            }));
+            MultiSelect.create('filter-produto', produtosOptions, {
+                allSelectedText: 'Todos os produtos',
+                selectAllByDefault: true,
+                onchange: () => {}
+            });
+
+            // Criar multi-select para Categoria
+            const categoriasOptions = (data.categorias || []).map(c => ({
+                value: (c.id || c.codigo || c).toString(),
+                label: c.nome || c.descricao || c
+            }));
+            MultiSelect.create('filter-categoria', categoriasOptions, {
+                allSelectedText: 'Todas as categorias',
+                selectAllByDefault: true,
+                onchange: () => {}
+            });
+
+            // Criar multi-select para Fornecedor
+            const fornecedoresOptions = (data.fornecedores || []).map(f => ({
+                value: (f.id || f.codigo || f).toString(),
+                label: f.nome || f.descricao || f
+            }));
+            MultiSelect.create('filter-fornecedor', fornecedoresOptions, {
+                allSelectedText: 'Todos os fornecedores',
+                selectAllByDefault: true,
+                onchange: () => {}
+            });
         })
         .catch(error => {
             console.error('Erro ao carregar filtros:', error);
         });
 }
 
-function preencherSelect(selectId, opcoes) {
-    const select = document.getElementById(selectId);
-    const optionDefault = select.querySelector('option[value=""]');
-
-    // Limpar opções anteriores (mantendo a primeira)
-    select.innerHTML = '';
-    select.appendChild(optionDefault);
-
-    // Adicionar novas opções
-    opcoes.forEach(opcao => {
-        const option = document.createElement('option');
-        option.value = opcao.id || opcao.codigo;
-        option.textContent = opcao.nome || opcao.descricao || opcao;
-        select.appendChild(option);
-    });
-}
-
 function aplicarFiltros() {
     filtros = {
-        loja: document.getElementById('filter-loja').value,
-        produto: document.getElementById('filter-produto').value,
-        categoria: document.getElementById('filter-categoria').value,
-        fornecedor: document.getElementById('filter-fornecedor').value
+        loja: MultiSelect.getSelected('filter-loja') || [],
+        produto: MultiSelect.getSelected('filter-produto') || [],
+        categoria: MultiSelect.getSelected('filter-categoria') || [],
+        fornecedor: MultiSelect.getSelected('filter-fornecedor') || []
     };
 
     console.log('Aplicando filtros:', filtros);
@@ -69,12 +91,13 @@ function aplicarFiltros() {
 }
 
 function limparFiltros() {
-    document.getElementById('filter-loja').value = '';
-    document.getElementById('filter-produto').value = '';
-    document.getElementById('filter-categoria').value = '';
-    document.getElementById('filter-fornecedor').value = '';
+    // Selecionar todos os itens em cada multi-select
+    MultiSelect.selectAll('filter-loja');
+    MultiSelect.selectAll('filter-produto');
+    MultiSelect.selectAll('filter-categoria');
+    MultiSelect.selectAll('filter-fornecedor');
 
-    filtros = { loja: '', produto: '', categoria: '', fornecedor: '' };
+    filtros = { loja: [], produto: [], categoria: [], fornecedor: [] };
     carregarDados();
 }
 
@@ -102,10 +125,22 @@ function mudarVisao(visao) {
 
 // ===== CARREGAMENTO DE DADOS =====
 function carregarDados() {
-    const params = new URLSearchParams({
-        visao: currentView,
-        ...filtros
-    });
+    const params = new URLSearchParams();
+    params.append('visao', currentView);
+
+    // Adicionar filtros como JSON arrays
+    if (filtros.loja && filtros.loja.length > 0) {
+        params.append('loja', JSON.stringify(filtros.loja));
+    }
+    if (filtros.produto && filtros.produto.length > 0) {
+        params.append('produto', JSON.stringify(filtros.produto));
+    }
+    if (filtros.categoria && filtros.categoria.length > 0) {
+        params.append('categoria', JSON.stringify(filtros.categoria));
+    }
+    if (filtros.fornecedor && filtros.fornecedor.length > 0) {
+        params.append('fornecedor', JSON.stringify(filtros.fornecedor));
+    }
 
     mostrarLoading(true);
 

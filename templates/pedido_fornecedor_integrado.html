@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pedido ao Fornecedor - Integrado</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/multi-select.js') }}"></script>
     <style>
         * { box-sizing: border-box; }
 
@@ -797,40 +798,34 @@
 
                 <div class="filtro-grupo">
                     <label>Loja/CD</label>
-                    <select id="cod_empresa" multiple>
-                    </select>
-                    <div class="filtro-hint">Ctrl+Click para selecionar varias</div>
+                    <div class="multi-select-container" data-id="cod_empresa"></div>
                 </div>
 
                 <div class="filtro-grupo">
                     <label>Fornecedor</label>
-                    <select id="fornecedor" multiple>
-                    </select>
-                    <div class="filtro-hint">Ctrl+Click para selecionar varios</div>
+                    <div class="multi-select-container" data-id="fornecedor"></div>
                 </div>
 
                 <div class="filtro-grupo">
                     <label>Linha 1</label>
-                    <select id="linha1" multiple>
-                    </select>
-                    <div class="filtro-hint">Ctrl+Click para selecionar varias</div>
+                    <div class="multi-select-container" data-id="linha1"></div>
                 </div>
 
                 <div class="filtro-grupo">
                     <label>Linha 3</label>
-                    <select id="linha3" multiple>
-                    </select>
-                    <div class="filtro-hint">Ctrl+Click para selecionar varias</div>
+                    <div class="multi-select-container" data-id="linha3"></div>
                 </div>
 
                 <div class="filtro-grupo">
                     <label>Cobertura</label>
                     <select id="cobertura_dias">
                         <option value="">Automatica (ABC)</option>
-                        <option value="15">15 dias</option>
-                        <option value="21">21 dias</option>
                         <option value="30">30 dias</option>
                         <option value="45">45 dias</option>
+                        <option value="60">60 dias</option>
+                        <option value="75">75 dias</option>
+                        <option value="90">90 dias</option>
+                        <option value="120">120 dias</option>
                     </select>
                 </div>
 
@@ -970,62 +965,129 @@
                     fetch('/api/sublinhas')
                 ]);
 
-                const lojas = await lojasResp.json();
+                const todasEmpresas = await lojasResp.json();
                 const fornecedores = await fornResp.json();
                 const linhas1 = await linha1Resp.json();
                 const linhas3 = await linha3Resp.json();
 
-                const selectLoja = document.getElementById('cod_empresa');
-                lojas.forEach(l => {
-                    const opt = document.createElement('option');
-                    opt.value = l.cod_empresa;
-                    opt.textContent = l.nome_loja;
-                    selectLoja.appendChild(opt);
+                // Criar MultiSelect para Loja/CD (filtro único)
+                // Excluir a opção "TODAS" que vem da API
+                const empresasOptions = todasEmpresas
+                    .filter(l => l.cod_empresa !== 'TODAS' && l.cod_empresa !== null && l.cod_empresa !== undefined)
+                    .map(l => ({
+                        value: l.cod_empresa.toString(),
+                        label: l.nome_loja
+                    }));
+
+                MultiSelect.create('cod_empresa', empresasOptions, {
+                    allSelectedText: 'Todas as lojas/CDs',
+                    noneSelectedText: 'Nenhuma loja/CD',
+                    countSelectedText: '{count} selecionados',
+                    selectAllByDefault: true
                 });
 
-                const selectForn = document.getElementById('fornecedor');
-                fornecedores.forEach(f => {
-                    const opt = document.createElement('option');
-                    opt.value = f.nome_fornecedor;
-                    opt.textContent = f.nome_fornecedor;
-                    selectForn.appendChild(opt);
+                // Criar MultiSelect para Fornecedores
+                const fornecedoresOptions = fornecedores.map(f => ({
+                    value: f.nome_fornecedor,
+                    label: f.nome_fornecedor
+                }));
+                MultiSelect.create('fornecedor', fornecedoresOptions, {
+                    allSelectedText: 'Todos os fornecedores',
+                    noneSelectedText: 'Nenhum fornecedor',
+                    countSelectedText: '{count} fornecedores',
+                    selectAllByDefault: true
                 });
 
-                // Linha 1 (categoria)
-                const selectLinha1 = document.getElementById('linha1');
+                // Criar MultiSelect para Linha 1 (categoria)
+                const linha1Options = [];
                 if (Array.isArray(linhas1)) {
                     linhas1.forEach(l => {
                         if (l.linha && l.linha !== 'TODAS') {
-                            const opt = document.createElement('option');
-                            opt.value = l.linha;
-                            opt.textContent = l.linha;
-                            selectLinha1.appendChild(opt);
+                            linha1Options.push({
+                                value: l.linha,
+                                label: l.linha
+                            });
                         }
                     });
                 }
+                MultiSelect.create('linha1', linha1Options, {
+                    allSelectedText: 'Todas as linhas',
+                    noneSelectedText: 'Nenhuma linha',
+                    countSelectedText: '{count} linhas',
+                    selectAllByDefault: true,
+                    onchange: () => carregarLinhas3Filtradas()
+                });
 
-                // Linha 3 (sublinha)
-                const selectLinha3 = document.getElementById('linha3');
+                // Criar MultiSelect para Linha 3 (sublinha)
+                const linha3Options = [];
                 if (Array.isArray(linhas3)) {
                     linhas3.forEach(l => {
                         if (l.codigo_linha && l.codigo_linha !== 'TODAS') {
-                            const opt = document.createElement('option');
-                            opt.value = l.codigo_linha;
-                            opt.textContent = `${l.codigo_linha} - ${l.descricao_linha}`;
-                            selectLinha3.appendChild(opt);
+                            linha3Options.push({
+                                value: l.codigo_linha,
+                                label: `${l.codigo_linha} - ${l.descricao_linha}`
+                            });
                         }
                     });
                 }
+                MultiSelect.create('linha3', linha3Options, {
+                    allSelectedText: 'Todas as sublinhas',
+                    noneSelectedText: 'Nenhuma sublinha',
+                    countSelectedText: '{count} sublinhas',
+                    selectAllByDefault: true
+                });
+
             } catch (e) {
                 console.error('Erro ao carregar filtros:', e);
             }
         }
 
+        // Carregar Linha 3 filtrada pela Linha 1 selecionada
+        async function carregarLinhas3Filtradas() {
+            try {
+                const linhasSelecionadas = MultiSelect.getSelected('linha1');
+                let url = '/api/sublinhas';
+                if (linhasSelecionadas.length > 0) {
+                    url += '?linha=' + encodeURIComponent(JSON.stringify(linhasSelecionadas));
+                }
+
+                const response = await fetch(url);
+                const linhas3 = await response.json();
+
+                const linha3Options = [];
+                if (Array.isArray(linhas3)) {
+                    linhas3.forEach(l => {
+                        if (l.codigo_linha && l.codigo_linha !== 'TODAS') {
+                            linha3Options.push({
+                                value: l.codigo_linha,
+                                label: `${l.codigo_linha} - ${l.descricao_linha}`
+                            });
+                        }
+                    });
+                }
+
+                MultiSelect.updateOptions('linha3', linha3Options);
+            } catch (e) {
+                console.error('Erro ao carregar linhas3 filtradas:', e);
+            }
+        }
+
         // Helper: obter valores selecionados de um multi-select
         function getSelectedValues(selectId) {
+            // Usar MultiSelect se disponivel
+            if (MultiSelect && MultiSelect.instances[selectId]) {
+                const selected = MultiSelect.getSelected(selectId);
+                // getSelected retorna array vazio se todos selecionados,
+                // mas precisamos retornar os valores reais para a API
+                if (selected.length === 0) {
+                    return MultiSelect.getSelectedAll(selectId);
+                }
+                return selected;
+            }
+            // Fallback para select nativo
             const select = document.getElementById(selectId);
+            if (!select) return [];
             const selected = Array.from(select.selectedOptions).map(opt => opt.value);
-            // Se nenhum selecionado, retorna array vazio (API tratara como "todos")
             return selected;
         }
 
@@ -1076,7 +1138,10 @@
             try {
                 const tipoPedido = document.getElementById('tipo_pedido').value;
                 const cobertura = document.getElementById('cobertura_dias').value;
+
+                // Obter lojas/CDs selecionados
                 const empresasSelecionadas = getSelectedValues('cod_empresa');
+
                 const fornecedoresSelecionados = getSelectedValues('fornecedor');
                 const linha1Selecionadas = getSelectedValues('linha1');
                 const linha3Selecionadas = getSelectedValues('linha3');
@@ -2109,6 +2174,7 @@
                             quantidade_pedido: 0,
                             cue: item.cue || item.preco || 0,
                             valor_pedido: 0,
+                            demanda_total: 0,
                             lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
                             lojas_origem: [],
                             criticas: []
@@ -2117,12 +2183,11 @@
                     // Somar quantidades
                     itensAgrupados[item.codigo].quantidade_pedido += (item.quantidade_pedido || 0);
                     itensAgrupados[item.codigo].valor_pedido += (item.valor_pedido || 0);
+                    itensAgrupados[item.codigo].demanda_total += (item.demanda_prevista_diaria || item.demanda_diaria || 0);
 
-                    // Adicionar loja origem se diferente do destino
-                    if (String(lojaVenda) !== String(codDestino)) {
-                        if (!itensAgrupados[item.codigo].lojas_origem.includes(lojaVenda)) {
-                            itensAgrupados[item.codigo].lojas_origem.push(lojaVenda);
-                        }
+                    // Registrar loja de origem
+                    if (!itensAgrupados[item.codigo].lojas_origem.includes(lojaVenda)) {
+                        itensAgrupados[item.codigo].lojas_origem.push(lojaVenda);
                     }
 
                     // Verificar criticas
@@ -2130,6 +2195,18 @@
                     if (!padraoCompraMap[chave]) {
                         if (!itensAgrupados[item.codigo].criticas.includes('Sem padrao de compra')) {
                             itensAgrupados[item.codigo].criticas.push('Sem padrao de compra');
+                        }
+                    }
+                });
+
+                // Ajuste de transferencia para itens centralizados
+                Object.values(itensAgrupados).forEach(item => {
+                    const isCentralizado = item.lojas_origem.some(loja => String(loja) !== String(item.cod_empresa_destino));
+                    if (isCentralizado && item.demanda_total > 0) {
+                        const qtdAdicional = Math.ceil(item.demanda_total * diasTransferenciaGlobal);
+                        item.quantidade_pedido += qtdAdicional;
+                        if (item.cue > 0) {
+                            item.valor_pedido = item.quantidade_pedido * item.cue;
                         }
                     }
                 });
@@ -2250,38 +2327,143 @@
             const tipoPedido = document.getElementById('tipo_pedido')?.value || 'reabastecimento';
             const isPlanejado = tipoPedido === 'planejado' || dadosPedidoAtual.tipo_pedido === 'planejado';
 
-            // Usar todos os dados sem filtrar por fornecedor
-            const dadosCompletos = {
-                ...dadosPedidoAtual,
-                exportar_todos: true  // Flag para indicar exportacao completa
-            };
-
-            // Escolher endpoint correto baseado no tipo de pedido
-            const endpoint = isPlanejado
-                ? '/api/pedido_planejado/exportar'
-                : '/api/pedido_fornecedor_integrado/exportar';
+            // Verificar se esta na visao Padrao de Compra
+            const visualizacao = document.getElementById('visualizacao')?.value || 'padrao';
+            const isPadraoCompra = visualizacao === 'padrao_compra';
 
             try {
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(dadosCompletos)
-                });
+                if (isPadraoCompra && !isPlanejado) {
+                    // Na visao Padrao de Compra: agregar itens por codigo+destino antes de exportar
+                    const todosItens = dadosPedidoAtual.itens_pedido;
+                    const codigos = [...new Set(todosItens.map(i => i.codigo))];
 
-                if (!response.ok) throw new Error('Erro ao exportar');
+                    // Buscar mapeamento de padrao de compra
+                    const resp = await fetch('/api/padrao-compra/buscar', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ codigos: codigos })
+                    });
+                    const padraoData = await resp.json();
 
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
+                    let padraoCompraMap = {};
+                    if (padraoData.success && padraoData.padroes) {
+                        padraoData.padroes.forEach(p => {
+                            const chave = `${p.codigo}|${p.cod_empresa_venda}`;
+                            padraoCompraMap[chave] = p.cod_empresa_destino;
+                        });
+                    }
 
-                // Nome do arquivo inclui "TODOS" e a data
-                const tipoNome = isPlanejado ? 'planejado' : 'pedido';
-                const destino = document.getElementById('destino')?.value || '';
-                const sufixo = destino === 'CD' ? '_CD' : '';
-                a.download = `${tipoNome}_TODOS_FORNECEDORES${sufixo}_${new Date().toISOString().slice(0,10)}.xlsx`;
-                a.click();
-                window.URL.revokeObjectURL(url);
+                    // Agrupar todos os itens por codigo+destino (consolidar lojas origem)
+                    const itensAgrupados = {};
+                    todosItens.forEach(item => {
+                        const lojaVenda = item.cod_loja || item.cod_empresa;
+                        const chave = `${item.codigo}|${lojaVenda}`;
+                        const destino = padraoCompraMap[chave] || lojaVenda;
+                        const nomeForn = item.nome_fornecedor || 'Sem Fornecedor';
+                        const chaveAgrupamento = `${item.codigo}|${destino}|${nomeForn}`;
+
+                        if (!itensAgrupados[chaveAgrupamento]) {
+                            itensAgrupados[chaveAgrupamento] = {
+                                codigo: item.codigo,
+                                descricao: item.descricao || '',
+                                categoria: item.linha1 || item.categoria || '',
+                                curva_abc: item.curva_abc || 'B',
+                                nome_fornecedor: nomeForn,
+                                codigo_fornecedor: item.codigo_fornecedor || '',
+                                cod_empresa_destino: destino,
+                                quantidade_pedido: 0,
+                                cue: item.cue || item.preco || 0,
+                                valor_pedido: 0,
+                                demanda_total: 0,
+                                lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
+                                lojas_origem: [],
+                                criticas: []
+                            };
+                        }
+                        itensAgrupados[chaveAgrupamento].quantidade_pedido += (item.quantidade_pedido || 0);
+                        itensAgrupados[chaveAgrupamento].valor_pedido += (item.valor_pedido || 0);
+                        itensAgrupados[chaveAgrupamento].demanda_total += (item.demanda_prevista_diaria || item.demanda_diaria || 0);
+
+                        if (!itensAgrupados[chaveAgrupamento].lojas_origem.includes(lojaVenda)) {
+                            itensAgrupados[chaveAgrupamento].lojas_origem.push(lojaVenda);
+                        }
+                    });
+
+                    // Ajuste de transferencia: adicionar dias de transferencia para itens centralizados
+                    Object.values(itensAgrupados).forEach(item => {
+                        const isCentralizado = item.lojas_origem.some(loja => String(loja) !== String(item.cod_empresa_destino));
+                        if (isCentralizado && item.demanda_total > 0) {
+                            const qtdAdicional = Math.ceil(item.demanda_total * diasTransferenciaGlobal);
+                            item.quantidade_pedido += qtdAdicional;
+                            if (item.cue > 0) {
+                                item.valor_pedido = item.quantidade_pedido * item.cue;
+                            }
+                        }
+                    });
+
+                    // Converter para array
+                    const linhasExcel = Object.values(itensAgrupados).map(item => ({
+                        ...item,
+                        lojas_origem: item.lojas_origem.join(', '),
+                        criticas: item.criticas.join('; ')
+                    }));
+
+                    const dadosExportar = {
+                        linhas_excel: linhasExcel,
+                        estatisticas: {
+                            total_itens: linhasExcel.length,
+                            valor_total: linhasExcel.reduce((s, i) => s + (i.valor_pedido || 0), 0),
+                            destino: 'TODOS'
+                        },
+                        criticas: []
+                    };
+
+                    const response = await fetch('/api/padrao-compra/exportar', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(dadosExportar)
+                    });
+
+                    if (!response.ok) throw new Error('Erro ao exportar');
+
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `pedido_PADRAO_COMPRA_TODOS_${new Date().toISOString().slice(0,10)}.xlsx`;
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                } else {
+                    // Visao padrao (por fornecedor): exportar sem agregar
+                    const dadosCompletos = {
+                        ...dadosPedidoAtual,
+                        exportar_todos: true
+                    };
+
+                    const endpoint = isPlanejado
+                        ? '/api/pedido_planejado/exportar'
+                        : '/api/pedido_fornecedor_integrado/exportar';
+
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(dadosCompletos)
+                    });
+
+                    if (!response.ok) throw new Error('Erro ao exportar');
+
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+
+                    const tipoNome = isPlanejado ? 'planejado' : 'pedido';
+                    const destino = document.getElementById('destino')?.value || '';
+                    const sufixo = destino === 'CD' ? '_CD' : '';
+                    a.download = `${tipoNome}_TODOS_FORNECEDORES${sufixo}_${new Date().toISOString().slice(0,10)}.xlsx`;
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                }
             } catch (e) {
                 alert('Erro ao exportar: ' + e.message);
             } finally {

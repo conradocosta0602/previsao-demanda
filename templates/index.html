@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/multi-select.js') }}"></script>
 </head>
 <body>
     <div class="container">
@@ -33,38 +34,28 @@
                     <!-- FORMULÁRIO BANCO DE DADOS -->
                     <form id="bancoForm" style="display: block;">
                         <div class="config-compact">
-                            <label for="loja_banco">Loja:</label>
-                            <select id="loja_banco" name="loja" required>
-                                <option value="">Carregando...</option>
-                            </select>
+                            <label>Loja:</label>
+                            <div class="multi-select-container" data-id="loja_banco"></div>
                         </div>
 
                         <div class="config-compact">
-                            <label for="fornecedor_banco">Fornecedor:</label>
-                            <select id="fornecedor_banco" name="fornecedor">
-                                <option value="">Carregando...</option>
-                            </select>
+                            <label>Fornecedor:</label>
+                            <div class="multi-select-container" data-id="fornecedor_banco"></div>
                         </div>
 
                         <div class="config-compact">
-                            <label for="linha_banco">Linha 1:</label>
-                            <select id="linha_banco" name="linha">
-                                <option value="">Carregando...</option>
-                            </select>
+                            <label>Linha 1:</label>
+                            <div class="multi-select-container" data-id="linha_banco"></div>
                         </div>
 
                         <div class="config-compact">
-                            <label for="sublinha_banco">Linha 3:</label>
-                            <select id="sublinha_banco" name="sublinha">
-                                <option value="">Carregando...</option>
-                            </select>
+                            <label>Linha 3:</label>
+                            <div class="multi-select-container" data-id="sublinha_banco"></div>
                         </div>
 
                         <div class="config-compact">
-                            <label for="produto_banco">Produto:</label>
-                            <select id="produto_banco" name="produto" required>
-                                <option value="">Carregando...</option>
-                            </select>
+                            <label>Produto:</label>
+                            <div class="multi-select-container" data-id="produto_banco"></div>
                         </div>
 
                         <div class="config-compact">
