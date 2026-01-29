@@ -1714,7 +1714,7 @@ function preencherTabelaComparativaPorFornecedor(resultado, granularidade = 'men
     });
 
     html += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; background: #fcd34d;">${formatNumber(totalPrevConsolidado)}</td>
-        <td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; color: ${varConsolidadaColor};">${varConsolidadaSinal}${variacaoConsolidada.toFixed(1)}%</td>
+        <td style="padding: ${padding}; text-align: center; border: 1px solid #ddd;"></td>
     </tr>`;
 
     html += `</tbody></table></div>`;
@@ -2430,6 +2430,21 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
 
             // Armazenar dados para validação de demanda (v6.0)
             armazenarDadosPrevisao(resultado);
+
+            // Configurar botão de download Excel
+            const downloadBtn = document.getElementById('downloadBtn');
+            if (downloadBtn && resultado.arquivo_saida) {
+                downloadBtn.href = `/download/${resultado.arquivo_saida}`;
+                downloadBtn.style.opacity = '1';
+                downloadBtn.style.pointerEvents = 'auto';
+                downloadBtn.style.cursor = 'pointer';
+            } else if (downloadBtn) {
+                // Se não houver arquivo, desabilitar o botão visualmente
+                downloadBtn.href = '#';
+                downloadBtn.style.opacity = '0.5';
+                downloadBtn.style.pointerEvents = 'none';
+                downloadBtn.style.cursor = 'not-allowed';
+            }
 
         } else {
             // Mostrar erro
