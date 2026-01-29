@@ -5389,15 +5389,70 @@ def _api_gerar_previsao_banco_legado():
                         previsao_item_periodos = [p * proporcao_item for p in previsoes_modelo]
                         melhor_modelo_item = melhor_modelo + " (proporcional)"
 
-                    # Montar previsão por período
+                    # Montar previsão por período COM ano anterior por período
                     previsao_por_periodo = []
                     total_previsao_item = 0
+
+                    # Criar índice de vendas do item por período para ano anterior
+                    # IMPORTANTE: Agregar vendas diárias por SEMANA ISO para granularidade semanal
+                    vendas_por_periodo_item = {}
+                    from datetime import datetime as dt_agreg_item
+
+                    for venda in vendas_hist_sorted:
+                        data_venda = venda['periodo']
+                        if data_venda:
+                            if granularidade == 'semanal':
+                                # Converter data diária para semana ISO
+                                try:
+                                    data_obj = dt_agreg_item.strptime(data_venda, '%Y-%m-%d')
+                                    ano_iso, semana_iso, _ = data_obj.isocalendar()
+                                    chave_periodo = f"{ano_iso}-S{semana_iso}"
+                                except:
+                                    chave_periodo = data_venda
+                            elif granularidade == 'mensal':
+                                # Converter data diária para mês
+                                try:
+                                    data_obj = dt_agreg_item.strptime(data_venda, '%Y-%m-%d')
+                                    chave_periodo = f"{data_obj.year}-{data_obj.month:02d}"
+                                except:
+                                    chave_periodo = data_venda
+                            else:
+                                chave_periodo = data_venda
+
+                            vendas_por_periodo_item[chave_periodo] = vendas_por_periodo_item.get(chave_periodo, 0) + venda['qtd_venda']
+
                     for i, data_prev in enumerate(datas_previsao):
                         if i < len(previsao_item_periodos):
                             prev_periodo = round(previsao_item_periodos[i], 1)
+
+                            # Calcular ano anterior para este período específico
+                            ano_anterior_periodo = 0
+                            try:
+                                from dateutil.relativedelta import relativedelta
+                                if '-S' in data_prev:
+                                    # Formato semanal: buscar mesma semana ano anterior
+                                    ano_str, sem_str = data_prev.split('-S')
+                                    data_aa = f"{int(ano_str)-1}-S{sem_str}"
+                                    ano_anterior_periodo = vendas_por_periodo_item.get(data_aa, 0)
+                                elif granularidade == 'mensal':
+                                    # Formato mensal: buscar mesmo mês ano anterior
+                                    from datetime import datetime as dt_aa
+                                    data_obj = dt_aa.strptime(data_prev, '%Y-%m-%d')
+                                    chave_aa = f"{data_obj.year - 1}-{data_obj.month:02d}"
+                                    ano_anterior_periodo = vendas_por_periodo_item.get(chave_aa, 0)
+                                else:
+                                    # Formato data diária: buscar mesmo dia ano anterior
+                                    from datetime import datetime as dt_aa
+                                    data_obj = dt_aa.strptime(data_prev, '%Y-%m-%d')
+                                    data_aa = data_obj - relativedelta(years=1)
+                                    ano_anterior_periodo = vendas_por_periodo_item.get(data_aa.strftime('%Y-%m-%d'), 0)
+                            except Exception:
+                                pass
+
                             previsao_por_periodo.append({
                                 'periodo': data_prev,
-                                'previsao': prev_periodo
+                                'previsao': prev_periodo,
+                                'ano_anterior': round(ano_anterior_periodo, 1)
                             })
                             total_previsao_item += prev_periodo
 
@@ -6761,11 +6816,32 @@ def api_gerar_previsao_banco_v2_interno():
             previsao_por_periodo = []
 
             # Criar índice de vendas do item por período para ano anterior
+            # IMPORTANTE: Agregar vendas diárias por SEMANA ISO para granularidade semanal
             vendas_por_periodo_item = {}
+            from datetime import datetime as dt_agreg_item2
+
             for venda in vendas_hist_sorted:
                 data_venda = venda['periodo']
                 if data_venda:
-                    vendas_por_periodo_item[data_venda] = vendas_por_periodo_item.get(data_venda, 0) + venda['qtd_venda']
+                    if granularidade == 'semanal':
+                        # Converter data diária para semana ISO
+                        try:
+                            data_obj = dt_agreg_item2.strptime(data_venda, '%Y-%m-%d')
+                            ano_iso, semana_iso, _ = data_obj.isocalendar()
+                            chave_periodo = f"{ano_iso}-S{semana_iso}"
+                        except:
+                            chave_periodo = data_venda
+                    elif granularidade == 'mensal':
+                        # Converter data diária para mês
+                        try:
+                            data_obj = dt_agreg_item2.strptime(data_venda, '%Y-%m-%d')
+                            chave_periodo = f"{data_obj.year}-{data_obj.month:02d}"
+                        except:
+                            chave_periodo = data_venda
+                    else:
+                        chave_periodo = data_venda
+
+                    vendas_por_periodo_item[chave_periodo] = vendas_por_periodo_item.get(chave_periodo, 0) + venda['qtd_venda']
 
             for i, data_prev in enumerate(datas_previsao):
                 if i < len(previsao_item_periodos):
@@ -6780,21 +6856,16 @@ def api_gerar_previsao_banco_v2_interno():
                             ano_str, sem_str = data_prev.split('-S')
                             data_aa = f"{int(ano_str)-1}-S{sem_str}"
                             ano_anterior_periodo = vendas_por_periodo_item.get(data_aa, 0)
+                        elif granularidade == 'mensal':
+                            # Formato mensal: buscar mesmo mês ano anterior
+                            data_obj = dt.strptime(data_prev, '%Y-%m-%d')
+                            chave_aa = f"{data_obj.year - 1}-{data_obj.month:02d}"
+                            ano_anterior_periodo = vendas_por_periodo_item.get(chave_aa, 0)
                         else:
-                            # Formato data: buscar mesmo período ano anterior
+                            # Formato data diária: buscar mesmo dia ano anterior
                             data_obj = dt.strptime(data_prev, '%Y-%m-%d')
                             data_aa = data_obj - relativedelta(years=1)
-                            if granularidade == 'mensal':
-                                # Buscar qualquer data do mesmo mês/ano anterior
-                                for data_v, qtd in vendas_por_periodo_item.items():
-                                    try:
-                                        dv = dt.strptime(data_v, '%Y-%m-%d')
-                                        if dv.year == data_aa.year and dv.month == data_aa.month:
-                                            ano_anterior_periodo += qtd
-                                    except:
-                                        pass
-                            else:
-                                ano_anterior_periodo = vendas_por_periodo_item.get(data_aa.strftime('%Y-%m-%d'), 0)
+                            ano_anterior_periodo = vendas_por_periodo_item.get(data_aa.strftime('%Y-%m-%d'), 0)
                     except Exception:
                         pass
 
