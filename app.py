@@ -7053,6 +7053,19 @@ def api_gerar_previsao_banco_v2_interno():
 
         # Calcular variação percentual por fornecedor
         for nome_forn, dados in comparacao_por_fornecedor.items():
+            # IMPORTANTE: Recalcular totais a partir da soma por período
+            # para garantir consistência com os valores exibidos na tabela
+            previsao_total_calculado = sum(
+                p.get('previsao', 0) for p in dados['previsao_por_periodo'].values()
+            )
+            ano_anterior_total_calculado = sum(
+                p.get('ano_anterior', 0) for p in dados['previsao_por_periodo'].values()
+            )
+
+            # Usar valores calculados para consistência visual
+            dados['previsao_total'] = round(previsao_total_calculado, 1)
+            dados['ano_anterior_total'] = round(ano_anterior_total_calculado, 1)
+
             if dados['ano_anterior_total'] > 0:
                 dados['variacao_percentual'] = round(
                     ((dados['previsao_total'] - dados['ano_anterior_total']) / dados['ano_anterior_total']) * 100, 1
