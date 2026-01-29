@@ -1723,6 +1723,172 @@ function preencherTabelaComparativaPorFornecedor(resultado, granularidade = 'men
     container.appendChild(divFornecedores);
 }
 
+// Exportar tabela comparativa para Excel
+function exportarTabelaComparativa() {
+    // Verificar se há dados de previsão disponíveis (usa variável global dadosPrevisaoAtual)
+    if (!dadosPrevisaoAtual) {
+        alert('Nenhuma previsão disponível para exportar. Por favor, gere uma previsão primeiro.');
+        return;
+    }
+
+    const resultado = dadosPrevisaoAtual;
+    const melhorModelo = resultado.melhor_modelo || 'Bottom-Up (Individual por Item)';
+    const granularidade = resultado.granularidade || 'mensal';
+
+    // Extrair dados da previsão
+    const previsoes = resultado.modelos[melhorModelo]?.futuro?.valores || [];
+    const datasPrevisao = resultado.modelos[melhorModelo]?.futuro?.datas || [];
+    const valoresReal = resultado.ano_anterior?.valores || [];
+
+    if (previsoes.length === 0) {
+        alert('Não há dados de previsão para exportar.');
+        return;
+    }
+
+    // Formatar períodos para exibição
+    const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+    function formatarPeriodo(dataStr) {
+        if (!dataStr) return '';
+        const data = parseLocalDate(dataStr);
+        if (!data || isNaN(data.getTime())) return dataStr;
+
+        if (granularidade === 'semanal') {
+            const d = new Date(Date.UTC(data.getFullYear(), data.getMonth(), data.getDate()));
+            const dayNum = d.getUTCDay() || 7;
+            d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            return `S${weekNum}/${data.getFullYear()}`;
+        } else if (granularidade === 'diario' || granularidade === 'diaria') {
+            const dia = data.getDate().toString().padStart(2, '0');
+            const mes = (data.getMonth() + 1).toString().padStart(2, '0');
+            return `${dia}/${mes}/${data.getFullYear()}`;
+        } else {
+            return `${meses[data.getMonth()]}/${data.getFullYear()}`;
+        }
+    }
+
+    // Construir arrays de dados
+    const periodos = datasPrevisao.map(d => formatarPeriodo(d));
+    const variacoes = previsoes.map((prev, i) => {
+        const real = valoresReal[i] || 0;
+        return real > 0 ? ((prev - real) / real * 100) : 0;
+    });
+
+    // Calcular totais
+    const totalPrevisao = previsoes.reduce((sum, v) => sum + v, 0);
+    const totalReal = valoresReal.slice(0, previsoes.length).reduce((sum, v) => sum + v, 0);
+    const variacaoTotal = totalReal > 0 ? ((totalPrevisao - totalReal) / totalReal * 100) : 0;
+
+    // Extrair filtros atuais
+    const filtros = resultado.filtros || {
+        loja: document.getElementById('lojaSelect')?.value || 'Todos',
+        fornecedor: document.getElementById('fornecedorSelect')?.selectedOptions ?
+            Array.from(document.getElementById('fornecedorSelect').selectedOptions).map(o => o.text).join(', ') : 'Todos',
+        linha: document.getElementById('linhaSelect')?.selectedOptions ?
+            Array.from(document.getElementById('linhaSelect').selectedOptions).map(o => o.text).join(', ') : 'Todos',
+        sublinha: document.getElementById('sublinhaSelect')?.selectedOptions ?
+            Array.from(document.getElementById('sublinhaSelect').selectedOptions).map(o => o.text).join(', ') : 'Todos',
+        produto: document.getElementById('produtoSelect')?.selectedOptions ?
+            Array.from(document.getElementById('produtoSelect').selectedOptions).map(o => o.text).join(', ') : 'Todos'
+    };
+
+    // Extrair dados por fornecedor (se houver múltiplos fornecedores)
+    let fornecedoresData = [];
+    if (resultado.comparacao_yoy_por_fornecedor && resultado.comparacao_yoy_por_fornecedor.length > 0) {
+        fornecedoresData = resultado.comparacao_yoy_por_fornecedor.map(forn => {
+            // Converter previsao_por_periodo para usar os períodos formatados
+            const previsaoPorPeriodoFormatado = {};
+            const periodosPorPeriodo = forn.previsao_por_periodo || {};
+
+            // Mapear as datas originais para períodos formatados
+            datasPrevisao.forEach((dataOriginal, idx) => {
+                const periodoFormatado = periodos[idx];
+                // Buscar o período correspondente nos dados do fornecedor
+                // O backend usa a data original como chave
+                if (periodosPorPeriodo[dataOriginal]) {
+                    previsaoPorPeriodoFormatado[periodoFormatado] = periodosPorPeriodo[dataOriginal];
+                } else {
+                    // Tentar buscar pelo período formatado (caso já venha formatado)
+                    const periodoExistente = Object.keys(periodosPorPeriodo).find(p =>
+                        formatarPeriodo(p) === periodoFormatado || p === periodoFormatado
+                    );
+                    if (periodoExistente) {
+                        previsaoPorPeriodoFormatado[periodoFormatado] = periodosPorPeriodo[periodoExistente];
+                    }
+                }
+            });
+
+            return {
+                nome_fornecedor: forn.nome_fornecedor || 'SEM NOME',
+                previsao_total: forn.previsao_total || 0,
+                ano_anterior_total: forn.ano_anterior_total || 0,
+                variacao_percentual: forn.variacao_percentual || 0,
+                previsao_por_periodo: previsaoPorPeriodoFormatado
+            };
+        });
+    }
+
+    // Montar dados para enviar ao servidor
+    const dadosExportacao = {
+        periodos: periodos,
+        previsao: previsoes.map(v => Math.round(v)),
+        real: valoresReal.slice(0, previsoes.length).map(v => Math.round(v)),
+        variacao: variacoes,
+        granularidade: granularidade,
+        total_previsao: Math.round(totalPrevisao),
+        total_real: Math.round(totalReal),
+        variacao_total: variacaoTotal,
+        filtros: filtros,
+        fornecedores: fornecedoresData  // Dados por fornecedor
+    };
+
+    // Mostrar indicador de loading no botão
+    const btn = document.getElementById('btnExportarTabelaComparativa');
+    const textoOriginal = btn.innerHTML;
+    btn.innerHTML = '<span>⏳</span> Exportando...';
+    btn.disabled = true;
+
+    // Fazer requisição POST para exportar
+    fetch('/api/exportar_tabela_comparativa', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(dadosExportacao)
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Erro ao gerar arquivo Excel');
+        }
+        return response.blob();
+    })
+    .then(blob => {
+        // Criar link de download
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tabela_comparativa_${granularidade}_${new Date().toISOString().slice(0,10)}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+
+        // Restaurar botão
+        btn.innerHTML = textoOriginal;
+        btn.disabled = false;
+    })
+    .catch(error => {
+        console.error('Erro ao exportar:', error);
+        alert('Erro ao exportar tabela comparativa: ' + error.message);
+
+        // Restaurar botão
+        btn.innerHTML = textoOriginal;
+        btn.disabled = false;
+    });
+}
+
 // Criar gráfico de previsão simplificado com 3 linhas + ano anterior
 function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorModelo, granularidade = 'mensal', anoAnterior = null) {
     const canvas = document.getElementById('previsaoChart');

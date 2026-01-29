@@ -200,7 +200,18 @@
 
                     <!-- Tabela Comparativa - Meses nas Colunas -->
                     <div class="card-compact">
-                        <h3 style="color: #667eea; margin-bottom: 15px;">📋 Tabela Comparativa</h3>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3 style="color: #667eea; margin: 0;">📋 Tabela Comparativa</h3>
+                            <button id="btnExportarTabelaComparativa" onclick="exportarTabelaComparativa()"
+                                    style="padding: 6px 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                                           color: white; border: none; border-radius: 5px; cursor: pointer;
+                                           font-size: 0.85em; display: flex; align-items: center; gap: 5px;
+                                           transition: transform 0.2s, box-shadow 0.2s;"
+                                    onmouseover="this.style.transform='scale(1.02)'; this.style.boxShadow='0 2px 8px rgba(16,185,129,0.3)';"
+                                    onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='none';">
+                                <span>📥</span> Exportar Excel
+                            </button>
+                        </div>
                         <div style="overflow-x: auto;">
                             <table id="tabelaComparativa" style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
                                 <thead id="tabelaComparativaHeader">

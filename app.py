@@ -5606,6 +5606,184 @@ def _api_gerar_previsao_banco_legado():
 
 
 # ==============================================================================
+# EXPORTAR TABELA COMPARATIVA PARA EXCEL
+# ==============================================================================
+
+@app.route('/api/exportar_tabela_comparativa', methods=['POST'])
+def api_exportar_tabela_comparativa():
+    """
+    Exporta a tabela comparativa (Previsão vs Ano Anterior) para Excel.
+    Inclui tabela consolidada e detalhamento por fornecedor quando houver múltiplos.
+    Recebe os dados já processados do frontend para garantir consistência visual.
+    """
+    try:
+        import io
+        from datetime import datetime
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        dados = request.get_json()
+
+        if not dados:
+            return jsonify({'erro': 'Dados não fornecidos'}), 400
+
+        # Extrair dados do request
+        periodos = dados.get('periodos', [])
+        previsao_valores = dados.get('previsao', [])
+        real_valores = dados.get('real', [])
+        variacao_valores = dados.get('variacao', [])
+        granularidade = dados.get('granularidade', 'mensal')
+        total_previsao = dados.get('total_previsao', 0)
+        total_real = dados.get('total_real', 0)
+        variacao_total = dados.get('variacao_total', 0)
+        filtros = dados.get('filtros', {})
+        fornecedores_data = dados.get('fornecedores', [])  # Dados por fornecedor
+
+        # Criar Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # =====================================================
+            # ABA 1: Informações
+            # =====================================================
+            info_data = {
+                'Informação': ['Data de Exportação', 'Granularidade', 'Loja', 'Fornecedor', 'Linha', 'Sublinha', 'Produto'],
+                'Valor': [
+                    datetime.now().strftime('%d/%m/%Y %H:%M'),
+                    granularidade.capitalize(),
+                    filtros.get('loja', 'Todos'),
+                    filtros.get('fornecedor', 'Todos'),
+                    filtros.get('linha', 'Todos'),
+                    filtros.get('sublinha', 'Todos'),
+                    filtros.get('produto', 'Todos')
+                ]
+            }
+            df_info = pd.DataFrame(info_data)
+            df_info.to_excel(writer, sheet_name='Informações', index=False)
+
+            # Ajustar largura das colunas na aba de informações
+            worksheet_info = writer.sheets['Informações']
+            worksheet_info.column_dimensions['A'].width = 20
+            worksheet_info.column_dimensions['B'].width = 40
+
+            # =====================================================
+            # ABA 2: Tabela Comparativa Consolidada
+            # =====================================================
+            df_data = {
+                'Tipo': ['Previsão', 'Real (Ano Ant.)', 'Variação %']
+            }
+            # Adicionar cada período como coluna
+            for i, periodo in enumerate(periodos):
+                df_data[periodo] = [
+                    previsao_valores[i] if i < len(previsao_valores) else 0,
+                    real_valores[i] if i < len(real_valores) else 0,
+                    f"{variacao_valores[i]:+.1f}%" if i < len(variacao_valores) else "0.0%"
+                ]
+            # Coluna TOTAL
+            df_data['TOTAL'] = [
+                total_previsao,
+                total_real,
+                f"{variacao_total:+.1f}%"
+            ]
+
+            df_consolidado = pd.DataFrame(df_data)
+            df_consolidado.to_excel(writer, sheet_name='Tabela Comparativa', index=False)
+
+            # Ajustar largura das colunas
+            worksheet = writer.sheets['Tabela Comparativa']
+            worksheet.column_dimensions['A'].width = 18
+            for idx in range(len(periodos) + 1):  # +1 para TOTAL
+                col_letter = get_column_letter(idx + 2)
+                worksheet.column_dimensions[col_letter].width = 12
+
+            # =====================================================
+            # ABA 3: Comparativo por Fornecedor (se houver múltiplos)
+            # =====================================================
+            if fornecedores_data and len(fornecedores_data) > 0:
+                # Criar lista de linhas para o DataFrame
+                linhas_fornecedores = []
+
+                for forn in fornecedores_data:
+                    nome_forn = forn.get('nome_fornecedor', 'SEM NOME')
+                    previsao_por_periodo = forn.get('previsao_por_periodo', {})
+                    previsao_total_forn = forn.get('previsao_total', 0)
+                    ano_anterior_total_forn = forn.get('ano_anterior_total', 0)
+                    variacao_forn = forn.get('variacao_percentual', 0) or 0
+
+                    # Linha de Previsão
+                    linha_prev = {'Fornecedor': nome_forn, 'Tipo': 'Previsão'}
+                    for periodo in periodos:
+                        valor = previsao_por_periodo.get(periodo, {}).get('previsao', 0)
+                        linha_prev[periodo] = round(valor, 0)
+                    linha_prev['TOTAL'] = round(previsao_total_forn, 0)
+                    linha_prev['Var %'] = ''
+                    linhas_fornecedores.append(linha_prev)
+
+                    # Linha de Ano Anterior
+                    linha_aa = {'Fornecedor': '', 'Tipo': 'Ano Ant.'}
+                    for periodo in periodos:
+                        valor = previsao_por_periodo.get(periodo, {}).get('ano_anterior', 0)
+                        linha_aa[periodo] = round(valor, 0)
+                    linha_aa['TOTAL'] = round(ano_anterior_total_forn, 0)
+                    linha_aa['Var %'] = ''
+                    linhas_fornecedores.append(linha_aa)
+
+                    # Linha de Variação
+                    linha_var = {'Fornecedor': '', 'Tipo': 'Var %'}
+                    for periodo in periodos:
+                        var_periodo = previsao_por_periodo.get(periodo, {}).get('variacao_percentual', 0)
+                        if var_periodo is not None:
+                            linha_var[periodo] = f"{var_periodo:+.1f}%"
+                        else:
+                            linha_var[periodo] = '-'
+                    linha_var['TOTAL'] = ''
+                    linha_var['Var %'] = f"{variacao_forn:+.1f}%"
+                    linhas_fornecedores.append(linha_var)
+
+                # Adicionar linha de TOTAL CONSOLIDADO
+                linha_total_prev = {'Fornecedor': 'TOTAL CONSOLIDADO', 'Tipo': ''}
+                for i, periodo in enumerate(periodos):
+                    linha_total_prev[periodo] = previsao_valores[i] if i < len(previsao_valores) else 0
+                linha_total_prev['TOTAL'] = total_previsao
+                linha_total_prev['Var %'] = f"{variacao_total:+.1f}%"
+                linhas_fornecedores.append(linha_total_prev)
+
+                # Criar DataFrame e exportar
+                df_fornecedores = pd.DataFrame(linhas_fornecedores)
+                # Reordenar colunas
+                colunas_ordem = ['Fornecedor', 'Tipo'] + periodos + ['TOTAL', 'Var %']
+                df_fornecedores = df_fornecedores[colunas_ordem]
+                df_fornecedores.to_excel(writer, sheet_name='Por Fornecedor', index=False)
+
+                # Ajustar largura das colunas
+                worksheet_forn = writer.sheets['Por Fornecedor']
+                worksheet_forn.column_dimensions['A'].width = 25  # Fornecedor
+                worksheet_forn.column_dimensions['B'].width = 12  # Tipo
+                for idx in range(len(periodos)):
+                    col_letter = get_column_letter(idx + 3)
+                    worksheet_forn.column_dimensions[col_letter].width = 11
+                worksheet_forn.column_dimensions[get_column_letter(len(periodos) + 3)].width = 12  # TOTAL
+                worksheet_forn.column_dimensions[get_column_letter(len(periodos) + 4)].width = 10  # Var %
+
+        output.seek(0)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'tabela_comparativa_{granularidade}_{timestamp}.xlsx'
+
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        print(f"Erro ao exportar tabela comparativa: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==============================================================================
 # API V2 - BOTTOM-UP FORECASTING (Calcula itens primeiro, depois agrega)
 # ==============================================================================
 
@@ -6495,27 +6673,22 @@ def api_gerar_previsao_banco_v2_interno():
                     tem_sazonalidade_item = forca_sazonalidade > 0.3
 
             # =====================================================
-            # ESTRATÉGIA UNIFICADA DE PREVISÃO
-            # Usa demanda_total_unificada calculada pelo DemandCalculator
-            # Distribui proporcionalmente pelos períodos usando fatores sazonais
-            # GARANTE: soma(previsoes) = demanda_total_unificada
+            # ESTRATÉGIA UNIFICADA DE PREVISÃO (V2 - DEMANDA DIÁRIA POR PERÍODO)
+            # Calcula demanda diária ESPECÍFICA de cada período baseada no histórico
+            # Fórmula: previsao_mes = media_diaria_do_mes × dias_do_mes
+            # GARANTE: Janeiro/2026 tem MESMA previsão independente de quantos meses são previstos
             # =====================================================
             previsao_item_periodos = []
-
-            # Usar a demanda total já calculada pelo método unificado
-            total_previsao_item = demanda_total_unificada
+            from calendar import monthrange
 
             # Descrição do método usado - mapear para os 6 métodos core
-            # Variantes internas são mapeadas para o método core equivalente
             mapeamento_metodos_core = {
-                # Métodos core (já corretos)
                 'media_simples': 'media_simples',
                 'media_ponderada': 'media_ponderada',
                 'media_movel_exp': 'media_movel_exp',
                 'tendencia': 'tendencia',
                 'sazonal': 'sazonal',
                 'tsb': 'tsb',
-                # Variantes para séries curtas -> mapear para core
                 'bayesiano_prior': 'media_simples',
                 'bayesiano_2periodos': 'media_simples',
                 'naive_unico': 'media_simples',
@@ -6530,67 +6703,86 @@ def api_gerar_previsao_banco_v2_interno():
             }
             melhor_modelo_item = mapeamento_metodos_core.get(metodo_usado_unificado, metodo_usado_unificado)
 
-            # Calcular dias por período para distribuição proporcional
-            from calendar import monthrange
+            # =====================================================
+            # CALCULAR DEMANDA DIÁRIA ESPECÍFICA POR PERÍODO
+            # Agrupa histórico por mês/semana para calcular média específica
+            # =====================================================
 
-            dias_por_periodo = []
-            for i, data_prev in enumerate(datas_previsao):
+            # Agrupar vendas diárias por período (mês ou semana)
+            vendas_por_periodo_hist = {}  # {chave_periodo: [lista de vendas diárias]}
+
+            for venda in vendas_hist_sorted:
+                data_venda = venda['periodo']
+                if not data_venda:
+                    continue
+
                 if granularidade == 'mensal':
-                    # Extrair ano e mês
+                    # Chave = mês (1-12)
+                    chave = int(data_venda[5:7])
+                elif granularidade == 'semanal':
+                    # Chave = semana ISO (1-53)
+                    from datetime import datetime as dt_parse
+                    try:
+                        data_obj = dt_parse.strptime(data_venda, '%Y-%m-%d')
+                        chave = data_obj.isocalendar()[1]
+                    except:
+                        continue
+                else:  # diário
+                    # Chave = dia da semana (0-6)
+                    from datetime import datetime as dt_parse
+                    try:
+                        data_obj = dt_parse.strptime(data_venda, '%Y-%m-%d')
+                        chave = data_obj.weekday()
+                    except:
+                        continue
+
+                if chave not in vendas_por_periodo_hist:
+                    vendas_por_periodo_hist[chave] = []
+                vendas_por_periodo_hist[chave].append(venda['qtd_venda'])
+
+            # Calcular média diária por período
+            media_diaria_por_periodo = {}
+            for chave, vendas_lista in vendas_por_periodo_hist.items():
+                if len(vendas_lista) > 0:
+                    media_diaria_por_periodo[chave] = sum(vendas_lista) / len(vendas_lista)
+                else:
+                    media_diaria_por_periodo[chave] = 0
+
+            # Fallback: demanda diária geral (caso não tenha histórico do período)
+            demanda_diaria_geral = metadata_unificada.get('demanda_diaria_base', 0)
+            if demanda_diaria_geral == 0 and len(serie_item) > 0:
+                demanda_diaria_geral = sum(serie_item) / len(serie_item)
+
+            # Calcular previsão de cada período usando SUA demanda diária específica
+            total_previsao_item = 0
+            for i, data_prev in enumerate(datas_previsao):
+                # Determinar dias e chave do período
+                if granularidade == 'mensal':
                     ano = int(data_prev[:4])
                     mes = int(data_prev[5:7])
-                    dias = monthrange(ano, mes)[1]
+                    dias_periodo = monthrange(ano, mes)[1]
+                    chave_periodo = mes
                 elif granularidade == 'semanal':
-                    dias = 7  # Sempre 7 dias por semana
-                else:  # diario
-                    dias = 1
-                dias_por_periodo.append(dias)
-
-            total_dias_periodos = sum(dias_por_periodo)
-
-            # Distribuir a demanda total proporcionalmente aos dias de cada período
-            # COM ajuste de fatores sazonais se disponíveis
-            fatores_usar = fatores_sazonais_item if fatores_sazonais_item else fatores_sazonais
-
-            pesos_periodos = []
-            for i, data_prev in enumerate(datas_previsao):
-                # Calcular peso base (proporcional aos dias)
-                peso_base = dias_por_periodo[i] / total_dias_periodos if total_dias_periodos > 0 else 1.0 / periodos_previsao
-
-                # Aplicar fator sazonal se disponível
-                if fatores_usar:
-                    if granularidade == 'mensal':
-                        mes = int(data_prev[5:7])
-                        chave = mes
-                    elif granularidade == 'semanal':
-                        if '-S' in data_prev:
-                            chave = int(data_prev.split('-S')[1])
-                        else:
-                            from datetime import datetime as dt_parse
-                            data_obj = dt_parse.strptime(data_prev, '%Y-%m-%d')
-                            chave = data_obj.isocalendar()[1]
-                    else:  # diario
+                    dias_periodo = 7
+                    if '-S' in data_prev:
+                        chave_periodo = int(data_prev.split('-S')[1])
+                    else:
                         from datetime import datetime as dt_parse
                         data_obj = dt_parse.strptime(data_prev, '%Y-%m-%d')
-                        chave = data_obj.weekday()
+                        chave_periodo = data_obj.isocalendar()[1]
+                else:  # diário
+                    dias_periodo = 1
+                    from datetime import datetime as dt_parse
+                    data_obj = dt_parse.strptime(data_prev, '%Y-%m-%d')
+                    chave_periodo = data_obj.weekday()
 
-                    fator_sazonal = fatores_usar.get(chave, 1.0)
-                else:
-                    fator_sazonal = 1.0
+                # Usar demanda diária ESPECÍFICA do período (se disponível)
+                demanda_diaria_periodo = media_diaria_por_periodo.get(chave_periodo, demanda_diaria_geral)
 
-                pesos_periodos.append(peso_base * fator_sazonal)
-
-            # Normalizar pesos para que a soma = 1
-            soma_pesos = sum(pesos_periodos)
-            if soma_pesos > 0:
-                pesos_periodos = [p / soma_pesos for p in pesos_periodos]
-            else:
-                pesos_periodos = [1.0 / periodos_previsao] * periodos_previsao
-
-            # Calcular previsão para cada período
-            for i, peso in enumerate(pesos_periodos):
-                previsao_periodo = total_previsao_item * peso
+                # Previsão do período = demanda_diaria_do_periodo × dias
+                previsao_periodo = demanda_diaria_periodo * dias_periodo
                 previsao_item_periodos.append(previsao_periodo)
+                total_previsao_item += previsao_periodo
 
             # Nota: sazonalidade é aplicada na distribuição, mas não adiciona ao nome do método
             # para manter a descrição simples conforme solicitado
