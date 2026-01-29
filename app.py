@@ -5765,7 +5765,14 @@ def api_exportar_tabela_comparativa():
                 cell.number_format = '#,##0'
 
         # Linha Variação
-        row_data = ['Variação %'] + [f"{variacao_valores[i]:+.1f}%" if i < len(variacao_valores) else "0.0%" for i in range(len(periodos))] + [f"{variacao_total:+.1f}%"]
+        def format_var(val):
+            if val is None:
+                return "N/A"
+            try:
+                return f"{float(val):+.1f}%"
+            except:
+                return "0.0%"
+        row_data = ['Variação %'] + [format_var(variacao_valores[i]) if i < len(variacao_valores) else "0.0%" for i in range(len(periodos))] + [format_var(variacao_total)]
         for col_idx, value in enumerate(row_data, 1):
             cell = ws_comp.cell(row=4, column=col_idx, value=value)
             cell.border = thin_border
@@ -5849,8 +5856,12 @@ def api_exportar_tabela_comparativa():
                 cell_total.number_format = '#,##0'
 
                 # Var % (merge vertical)
-                var_color = var_positiva_font if variacao_forn >= 0 else var_negativa_font
-                var_text = f"{variacao_forn:+.1f}%"
+                try:
+                    variacao_forn_num = float(variacao_forn) if variacao_forn is not None else 0
+                except:
+                    variacao_forn_num = 0
+                var_color = var_positiva_font if variacao_forn_num >= 0 else var_negativa_font
+                var_text = f"{variacao_forn_num:+.1f}%"
                 cell_var = ws_forn.cell(row=row_num, column=len(periodos) + 4, value=var_text)
                 cell_var.font = var_color
                 cell_var.alignment = center_align
@@ -5942,9 +5953,9 @@ def api_exportar_tabela_comparativa():
             cell_total.number_format = '#,##0'
 
             # Var % Total
-            var_color = var_positiva_font if variacao_total >= 0 else var_negativa_font
+            var_total_color = '10b981' if variacao_total >= 0 else 'ef4444'
             cell_var = ws_forn.cell(row=row_num, column=len(periodos) + 4, value=f"{variacao_total:+.1f}%")
-            cell_var.font = Font(bold=True, color=var_color.color.rgb if var_color.color else '10b981', size=10)
+            cell_var.font = Font(bold=True, color=var_total_color, size=10)
             cell_var.alignment = center_align
             cell_var.fill = consolidado_fill
             cell_var.border = thin_border
