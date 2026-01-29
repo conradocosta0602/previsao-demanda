@@ -5625,6 +5625,7 @@ def api_exportar_tabela_comparativa():
         from openpyxl.utils import get_column_letter
 
         dados = request.get_json()
+        print(f"[EXPORT EXCEL] Recebendo dados para exportação...", flush=True)
 
         if not dados:
             return jsonify({'erro': 'Dados não fornecidos'}), 400
@@ -5635,11 +5636,13 @@ def api_exportar_tabela_comparativa():
         real_valores = dados.get('real', [])
         variacao_valores = dados.get('variacao', [])
         granularidade = dados.get('granularidade', 'mensal')
-        total_previsao = dados.get('total_previsao', 0)
-        total_real = dados.get('total_real', 0)
-        variacao_total = dados.get('variacao_total', 0)
-        filtros = dados.get('filtros', {})
-        fornecedores_data = dados.get('fornecedores', [])  # Dados por fornecedor
+        total_previsao = dados.get('total_previsao', 0) or 0
+        total_real = dados.get('total_real', 0) or 0
+        variacao_total = dados.get('variacao_total', 0) or 0
+        filtros = dados.get('filtros', {}) or {}
+        fornecedores_data = dados.get('fornecedores', []) or []
+
+        print(f"[EXPORT EXCEL] Periodos: {len(periodos)}, Fornecedores: {len(fornecedores_data)}", flush=True)
 
         # =====================================================
         # DEFINIR ESTILOS (cores da tabela HTML)
@@ -5738,8 +5741,8 @@ def api_exportar_tabela_comparativa():
             else:
                 cell.fill = header_fill
 
-        # Linha Previsão
-        row_data = ['Previsão'] + [previsao_valores[i] if i < len(previsao_valores) else 0 for i in range(len(periodos))] + [total_previsao]
+        # Linha Previsão - garantir que valores são numéricos
+        row_data = ['Previsão'] + [(previsao_valores[i] or 0) if i < len(previsao_valores) else 0 for i in range(len(periodos))] + [total_previsao or 0]
         for col_idx, value in enumerate(row_data, 1):
             cell = ws_comp.cell(row=2, column=col_idx, value=value)
             cell.border = thin_border
@@ -5751,8 +5754,8 @@ def api_exportar_tabela_comparativa():
             if isinstance(value, (int, float)) and col_idx > 1:
                 cell.number_format = '#,##0'
 
-        # Linha Ano Anterior
-        row_data = ['Real (Ano Ant.)'] + [real_valores[i] if i < len(real_valores) else 0 for i in range(len(periodos))] + [total_real]
+        # Linha Ano Anterior - garantir que valores são numéricos
+        row_data = ['Real (Ano Ant.)'] + [(real_valores[i] or 0) if i < len(real_valores) else 0 for i in range(len(periodos))] + [total_real or 0]
         for col_idx, value in enumerate(row_data, 1):
             cell = ws_comp.cell(row=3, column=col_idx, value=value)
             cell.border = thin_border
@@ -5936,8 +5939,8 @@ def api_exportar_tabela_comparativa():
 
             # Valores por período
             for p_idx, periodo in enumerate(periodos):
-                valor = previsao_valores[p_idx] if p_idx < len(previsao_valores) else 0
-                cell = ws_forn.cell(row=row_num, column=p_idx + 3, value=round(valor, 0))
+                valor = (previsao_valores[p_idx] or 0) if p_idx < len(previsao_valores) else 0
+                cell = ws_forn.cell(row=row_num, column=p_idx + 3, value=round(float(valor), 0))
                 cell.font = Font(bold=True, size=10)
                 cell.alignment = center_align
                 cell.fill = consolidado_fill
@@ -5945,18 +5948,15 @@ def api_exportar_tabela_comparativa():
                 cell.number_format = '#,##0'
 
             # TOTAL
-            cell_total = ws_forn.cell(row=row_num, column=len(periodos) + 3, value=round(total_previsao, 0))
+            cell_total = ws_forn.cell(row=row_num, column=len(periodos) + 3, value=round(float(total_previsao or 0), 0))
             cell_total.font = Font(bold=True, size=11)
             cell_total.alignment = center_align
             cell_total.fill = consolidado_total_fill
             cell_total.border = thin_border
             cell_total.number_format = '#,##0'
 
-            # Var % Total
-            var_total_color = '10b981' if variacao_total >= 0 else 'ef4444'
-            cell_var = ws_forn.cell(row=row_num, column=len(periodos) + 4, value=f"{variacao_total:+.1f}%")
-            cell_var.font = Font(bold=True, color=var_total_color, size=10)
-            cell_var.alignment = center_align
+            # Var % Total - deixar em branco conforme solicitado
+            cell_var = ws_forn.cell(row=row_num, column=len(periodos) + 4, value='')
             cell_var.fill = consolidado_fill
             cell_var.border = thin_border
 
