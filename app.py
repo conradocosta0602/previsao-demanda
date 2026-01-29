@@ -5615,11 +5615,13 @@ def api_exportar_tabela_comparativa():
     Exporta a tabela comparativa (Previsão vs Ano Anterior) para Excel.
     Inclui tabela consolidada e detalhamento por fornecedor quando houver múltiplos.
     Recebe os dados já processados do frontend para garantir consistência visual.
+    FORMATAÇÃO: Replica cores e estilos da tabela HTML.
     """
     try:
         import io
         from datetime import datetime
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, NamedStyle
         from openpyxl.utils import get_column_letter
 
         dados = request.get_json()
@@ -5639,131 +5641,326 @@ def api_exportar_tabela_comparativa():
         filtros = dados.get('filtros', {})
         fornecedores_data = dados.get('fornecedores', [])  # Dados por fornecedor
 
-        # Criar Excel
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            # =====================================================
-            # ABA 1: Informações
-            # =====================================================
-            info_data = {
-                'Informação': ['Data de Exportação', 'Granularidade', 'Loja', 'Fornecedor', 'Linha', 'Sublinha', 'Produto'],
-                'Valor': [
-                    datetime.now().strftime('%d/%m/%Y %H:%M'),
-                    granularidade.capitalize(),
-                    filtros.get('loja', 'Todos'),
-                    filtros.get('fornecedor', 'Todos'),
-                    filtros.get('linha', 'Todos'),
-                    filtros.get('sublinha', 'Todos'),
-                    filtros.get('produto', 'Todos')
-                ]
-            }
-            df_info = pd.DataFrame(info_data)
-            df_info.to_excel(writer, sheet_name='Informações', index=False)
+        # =====================================================
+        # DEFINIR ESTILOS (cores da tabela HTML)
+        # =====================================================
+        # Cores do gradiente do cabeçalho: #667eea -> #764ba2
+        header_fill = PatternFill(start_color='667eea', end_color='667eea', fill_type='solid')
+        header_font = Font(bold=True, color='FFFFFF', size=11)
 
-            # Ajustar largura das colunas na aba de informações
-            worksheet_info = writer.sheets['Informações']
-            worksheet_info.column_dimensions['A'].width = 20
-            worksheet_info.column_dimensions['B'].width = 40
+        # Cores para TOTAL (fundo roxo mais escuro)
+        total_header_fill = PatternFill(start_color='5a67d8', end_color='5a67d8', fill_type='solid')
 
-            # =====================================================
-            # ABA 2: Tabela Comparativa Consolidada
-            # =====================================================
-            df_data = {
-                'Tipo': ['Previsão', 'Real (Ano Ant.)', 'Variação %']
-            }
-            # Adicionar cada período como coluna
-            for i, periodo in enumerate(periodos):
-                df_data[periodo] = [
-                    previsao_valores[i] if i < len(previsao_valores) else 0,
-                    real_valores[i] if i < len(real_valores) else 0,
-                    f"{variacao_valores[i]:+.1f}%" if i < len(variacao_valores) else "0.0%"
-                ]
-            # Coluna TOTAL
-            df_data['TOTAL'] = [
-                total_previsao,
-                total_real,
-                f"{variacao_total:+.1f}%"
-            ]
+        # Cores alternadas para linhas de fornecedores
+        row_fill_1 = PatternFill(start_color='f8fafc', end_color='f8fafc', fill_type='solid')
+        row_fill_2 = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
 
-            df_consolidado = pd.DataFrame(df_data)
-            df_consolidado.to_excel(writer, sheet_name='Tabela Comparativa', index=False)
+        # Cores para valores
+        previsao_font = Font(color='059669', size=10)  # Verde para Previsão
+        ano_ant_font = Font(color='6b7280', size=10)   # Cinza para Ano Anterior
+        var_positiva_font = Font(color='10b981', bold=True, size=10)  # Verde para variação positiva
+        var_negativa_font = Font(color='ef4444', bold=True, size=10)  # Vermelho para variação negativa
+
+        # Cor do TOTAL por linha
+        total_previsao_fill = PatternFill(start_color='e0e7ff', end_color='e0e7ff', fill_type='solid')
+        total_ano_ant_fill = PatternFill(start_color='f3f4f6', end_color='f3f4f6', fill_type='solid')
+
+        # Cor do TOTAL CONSOLIDADO (amarelo/dourado)
+        consolidado_fill = PatternFill(start_color='fef3c7', end_color='fef3c7', fill_type='solid')
+        consolidado_total_fill = PatternFill(start_color='fcd34d', end_color='fcd34d', fill_type='solid')
+
+        # Borda fina
+        thin_border = Border(
+            left=Side(style='thin', color='dddddd'),
+            right=Side(style='thin', color='dddddd'),
+            top=Side(style='thin', color='dddddd'),
+            bottom=Side(style='thin', color='dddddd')
+        )
+
+        # Borda mais grossa para separar fornecedores
+        bottom_thick_border = Border(
+            left=Side(style='thin', color='dddddd'),
+            right=Side(style='thin', color='dddddd'),
+            top=Side(style='thin', color='dddddd'),
+            bottom=Side(style='medium', color='cccccc')
+        )
+
+        center_align = Alignment(horizontal='center', vertical='center')
+        left_align = Alignment(horizontal='left', vertical='center')
+
+        # Criar Workbook diretamente (para mais controle de formatação)
+        wb = Workbook()
+
+        # =====================================================
+        # ABA 1: Informações
+        # =====================================================
+        ws_info = wb.active
+        ws_info.title = 'Informações'
+
+        info_rows = [
+            ['Informação', 'Valor'],
+            ['Data de Exportação', datetime.now().strftime('%d/%m/%Y %H:%M')],
+            ['Granularidade', granularidade.capitalize()],
+            ['Loja', filtros.get('loja', 'Todos')],
+            ['Fornecedor', filtros.get('fornecedor', 'Todos')],
+            ['Linha', filtros.get('linha', 'Todos')],
+            ['Sublinha', filtros.get('sublinha', 'Todos')],
+            ['Produto', filtros.get('produto', 'Todos')]
+        ]
+
+        for row_idx, row_data in enumerate(info_rows, 1):
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws_info.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = thin_border
+                if row_idx == 1:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                else:
+                    cell.font = Font(size=10)
+
+        ws_info.column_dimensions['A'].width = 22
+        ws_info.column_dimensions['B'].width = 45
+
+        # =====================================================
+        # ABA 2: Tabela Comparativa Consolidada
+        # =====================================================
+        ws_comp = wb.create_sheet('Tabela Comparativa')
+
+        # Cabeçalho
+        headers = ['Tipo'] + periodos + ['TOTAL']
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws_comp.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.alignment = center_align
+            cell.border = thin_border
+            if header == 'TOTAL':
+                cell.fill = total_header_fill
+            else:
+                cell.fill = header_fill
+
+        # Linha Previsão
+        row_data = ['Previsão'] + [previsao_valores[i] if i < len(previsao_valores) else 0 for i in range(len(periodos))] + [total_previsao]
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws_comp.cell(row=2, column=col_idx, value=value)
+            cell.border = thin_border
+            cell.alignment = center_align if col_idx > 1 else left_align
+            cell.font = previsao_font
+            if col_idx == len(row_data):
+                cell.fill = total_previsao_fill
+                cell.font = Font(color='059669', bold=True, size=10)
+            if isinstance(value, (int, float)) and col_idx > 1:
+                cell.number_format = '#,##0'
+
+        # Linha Ano Anterior
+        row_data = ['Real (Ano Ant.)'] + [real_valores[i] if i < len(real_valores) else 0 for i in range(len(periodos))] + [total_real]
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws_comp.cell(row=3, column=col_idx, value=value)
+            cell.border = thin_border
+            cell.alignment = center_align if col_idx > 1 else left_align
+            cell.font = ano_ant_font
+            if col_idx == len(row_data):
+                cell.fill = total_ano_ant_fill
+                cell.font = Font(color='6b7280', bold=True, size=10)
+            if isinstance(value, (int, float)) and col_idx > 1:
+                cell.number_format = '#,##0'
+
+        # Linha Variação
+        row_data = ['Variação %'] + [f"{variacao_valores[i]:+.1f}%" if i < len(variacao_valores) else "0.0%" for i in range(len(periodos))] + [f"{variacao_total:+.1f}%"]
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws_comp.cell(row=4, column=col_idx, value=value)
+            cell.border = thin_border
+            cell.alignment = center_align if col_idx > 1 else left_align
+            if col_idx > 1:
+                # Determinar cor baseada no valor
+                try:
+                    val_num = float(value.replace('%', '').replace('+', ''))
+                    cell.font = var_positiva_font if val_num >= 0 else var_negativa_font
+                except:
+                    cell.font = Font(size=10)
+
+        # Ajustar larguras
+        ws_comp.column_dimensions['A'].width = 18
+        for idx in range(len(periodos) + 1):
+            col_letter = get_column_letter(idx + 2)
+            ws_comp.column_dimensions[col_letter].width = 12
+
+        # =====================================================
+        # ABA 3: Comparativo por Fornecedor (com formatação completa)
+        # =====================================================
+        if fornecedores_data and len(fornecedores_data) > 0:
+            ws_forn = wb.create_sheet('Por Fornecedor')
+
+            # Cabeçalho
+            headers_forn = ['Fornecedor', 'Tipo'] + periodos + ['TOTAL', 'Var %']
+            for col_idx, header in enumerate(headers_forn, 1):
+                cell = ws_forn.cell(row=1, column=col_idx, value=header)
+                cell.font = header_font
+                cell.alignment = center_align
+                cell.border = thin_border
+                if header in ['TOTAL', 'Var %']:
+                    cell.fill = total_header_fill
+                else:
+                    cell.fill = header_fill
+
+            # Dados por fornecedor
+            row_num = 2
+            for forn_idx, forn in enumerate(fornecedores_data):
+                nome_forn = forn.get('nome_fornecedor', 'SEM NOME')
+                previsao_por_periodo = forn.get('previsao_por_periodo', {})
+                previsao_total_forn = forn.get('previsao_total', 0)
+                ano_anterior_total_forn = forn.get('ano_anterior_total', 0)
+                variacao_forn = forn.get('variacao_percentual', 0) or 0
+
+                # Cor alternada para o grupo do fornecedor
+                bg_fill = row_fill_1 if forn_idx % 2 == 0 else row_fill_2
+
+                # ---- Linha Previsão ----
+                # Coluna Fornecedor (com merge vertical)
+                cell_forn = ws_forn.cell(row=row_num, column=1, value=nome_forn)
+                cell_forn.font = Font(bold=True, size=10)
+                cell_forn.alignment = Alignment(horizontal='left', vertical='center')
+                cell_forn.fill = bg_fill
+                cell_forn.border = thin_border
+                ws_forn.merge_cells(start_row=row_num, start_column=1, end_row=row_num + 2, end_column=1)
+
+                # Coluna Tipo
+                cell_tipo = ws_forn.cell(row=row_num, column=2, value='Previsao')
+                cell_tipo.font = previsao_font
+                cell_tipo.alignment = left_align
+                cell_tipo.fill = bg_fill
+                cell_tipo.border = thin_border
+
+                # Valores por período
+                for p_idx, periodo in enumerate(periodos):
+                    valor = previsao_por_periodo.get(periodo, {}).get('previsao', 0)
+                    cell = ws_forn.cell(row=row_num, column=p_idx + 3, value=round(valor, 0))
+                    cell.font = Font(size=10)
+                    cell.alignment = center_align
+                    cell.fill = bg_fill
+                    cell.border = thin_border
+                    cell.number_format = '#,##0'
+
+                # TOTAL
+                cell_total = ws_forn.cell(row=row_num, column=len(periodos) + 3, value=round(previsao_total_forn, 0))
+                cell_total.font = Font(bold=True, size=10)
+                cell_total.alignment = center_align
+                cell_total.fill = total_previsao_fill
+                cell_total.border = thin_border
+                cell_total.number_format = '#,##0'
+
+                # Var % (merge vertical)
+                var_color = var_positiva_font if variacao_forn >= 0 else var_negativa_font
+                var_text = f"{variacao_forn:+.1f}%"
+                cell_var = ws_forn.cell(row=row_num, column=len(periodos) + 4, value=var_text)
+                cell_var.font = var_color
+                cell_var.alignment = center_align
+                cell_var.fill = bg_fill
+                cell_var.border = thin_border
+                ws_forn.merge_cells(start_row=row_num, start_column=len(periodos) + 4, end_row=row_num + 2, end_column=len(periodos) + 4)
+
+                row_num += 1
+
+                # ---- Linha Ano Anterior ----
+                cell_tipo = ws_forn.cell(row=row_num, column=2, value='Ano Ant.')
+                cell_tipo.font = ano_ant_font
+                cell_tipo.alignment = left_align
+                cell_tipo.fill = bg_fill
+                cell_tipo.border = thin_border
+
+                for p_idx, periodo in enumerate(periodos):
+                    valor = previsao_por_periodo.get(periodo, {}).get('ano_anterior', 0)
+                    cell = ws_forn.cell(row=row_num, column=p_idx + 3, value=round(valor, 0))
+                    cell.font = ano_ant_font
+                    cell.alignment = center_align
+                    cell.fill = bg_fill
+                    cell.border = thin_border
+                    cell.number_format = '#,##0'
+
+                # TOTAL Ano Anterior
+                cell_total = ws_forn.cell(row=row_num, column=len(periodos) + 3, value=round(ano_anterior_total_forn, 0))
+                cell_total.font = Font(bold=True, color='6b7280', size=10)
+                cell_total.alignment = center_align
+                cell_total.fill = total_ano_ant_fill
+                cell_total.border = thin_border
+                cell_total.number_format = '#,##0'
+
+                row_num += 1
+
+                # ---- Linha Variação por Período ----
+                cell_tipo = ws_forn.cell(row=row_num, column=2, value='Var %')
+                cell_tipo.font = Font(color='f59e0b', size=10)
+                cell_tipo.alignment = left_align
+                cell_tipo.fill = bg_fill
+                cell_tipo.border = bottom_thick_border
+
+                for p_idx, periodo in enumerate(periodos):
+                    var_periodo = previsao_por_periodo.get(periodo, {}).get('variacao_percentual', 0)
+                    if var_periodo is not None:
+                        var_text = f"{var_periodo:+.1f}%"
+                        var_font = var_positiva_font if var_periodo >= 0 else var_negativa_font
+                    else:
+                        var_text = '-'
+                        var_font = Font(color='9ca3af', size=10)
+                    cell = ws_forn.cell(row=row_num, column=p_idx + 3, value=var_text)
+                    cell.font = var_font
+                    cell.alignment = center_align
+                    cell.fill = bg_fill
+                    cell.border = bottom_thick_border
+
+                # TOTAL vazio na linha de variação
+                cell_total = ws_forn.cell(row=row_num, column=len(periodos) + 3, value='')
+                cell_total.fill = bg_fill
+                cell_total.border = bottom_thick_border
+
+                row_num += 1
+
+            # ---- Linha TOTAL CONSOLIDADO ----
+            # Fornecedor
+            cell_forn = ws_forn.cell(row=row_num, column=1, value='TOTAL CONSOLIDADO')
+            cell_forn.font = Font(bold=True, size=11)
+            cell_forn.alignment = left_align
+            cell_forn.fill = consolidado_fill
+            cell_forn.border = thin_border
+            ws_forn.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=2)
+
+            # Valores por período
+            for p_idx, periodo in enumerate(periodos):
+                valor = previsao_valores[p_idx] if p_idx < len(previsao_valores) else 0
+                cell = ws_forn.cell(row=row_num, column=p_idx + 3, value=round(valor, 0))
+                cell.font = Font(bold=True, size=10)
+                cell.alignment = center_align
+                cell.fill = consolidado_fill
+                cell.border = thin_border
+                cell.number_format = '#,##0'
+
+            # TOTAL
+            cell_total = ws_forn.cell(row=row_num, column=len(periodos) + 3, value=round(total_previsao, 0))
+            cell_total.font = Font(bold=True, size=11)
+            cell_total.alignment = center_align
+            cell_total.fill = consolidado_total_fill
+            cell_total.border = thin_border
+            cell_total.number_format = '#,##0'
+
+            # Var % Total
+            var_color = var_positiva_font if variacao_total >= 0 else var_negativa_font
+            cell_var = ws_forn.cell(row=row_num, column=len(periodos) + 4, value=f"{variacao_total:+.1f}%")
+            cell_var.font = Font(bold=True, color=var_color.color.rgb if var_color.color else '10b981', size=10)
+            cell_var.alignment = center_align
+            cell_var.fill = consolidado_fill
+            cell_var.border = thin_border
 
             # Ajustar largura das colunas
-            worksheet = writer.sheets['Tabela Comparativa']
-            worksheet.column_dimensions['A'].width = 18
-            for idx in range(len(periodos) + 1):  # +1 para TOTAL
-                col_letter = get_column_letter(idx + 2)
-                worksheet.column_dimensions[col_letter].width = 12
+            ws_forn.column_dimensions['A'].width = 25
+            ws_forn.column_dimensions['B'].width = 12
+            for idx in range(len(periodos)):
+                col_letter = get_column_letter(idx + 3)
+                ws_forn.column_dimensions[col_letter].width = 11
+            ws_forn.column_dimensions[get_column_letter(len(periodos) + 3)].width = 12
+            ws_forn.column_dimensions[get_column_letter(len(periodos) + 4)].width = 10
 
-            # =====================================================
-            # ABA 3: Comparativo por Fornecedor (se houver múltiplos)
-            # =====================================================
-            if fornecedores_data and len(fornecedores_data) > 0:
-                # Criar lista de linhas para o DataFrame
-                linhas_fornecedores = []
-
-                for forn in fornecedores_data:
-                    nome_forn = forn.get('nome_fornecedor', 'SEM NOME')
-                    previsao_por_periodo = forn.get('previsao_por_periodo', {})
-                    previsao_total_forn = forn.get('previsao_total', 0)
-                    ano_anterior_total_forn = forn.get('ano_anterior_total', 0)
-                    variacao_forn = forn.get('variacao_percentual', 0) or 0
-
-                    # Linha de Previsão
-                    linha_prev = {'Fornecedor': nome_forn, 'Tipo': 'Previsão'}
-                    for periodo in periodos:
-                        valor = previsao_por_periodo.get(periodo, {}).get('previsao', 0)
-                        linha_prev[periodo] = round(valor, 0)
-                    linha_prev['TOTAL'] = round(previsao_total_forn, 0)
-                    linha_prev['Var %'] = ''
-                    linhas_fornecedores.append(linha_prev)
-
-                    # Linha de Ano Anterior
-                    linha_aa = {'Fornecedor': '', 'Tipo': 'Ano Ant.'}
-                    for periodo in periodos:
-                        valor = previsao_por_periodo.get(periodo, {}).get('ano_anterior', 0)
-                        linha_aa[periodo] = round(valor, 0)
-                    linha_aa['TOTAL'] = round(ano_anterior_total_forn, 0)
-                    linha_aa['Var %'] = ''
-                    linhas_fornecedores.append(linha_aa)
-
-                    # Linha de Variação
-                    linha_var = {'Fornecedor': '', 'Tipo': 'Var %'}
-                    for periodo in periodos:
-                        var_periodo = previsao_por_periodo.get(periodo, {}).get('variacao_percentual', 0)
-                        if var_periodo is not None:
-                            linha_var[periodo] = f"{var_periodo:+.1f}%"
-                        else:
-                            linha_var[periodo] = '-'
-                    linha_var['TOTAL'] = ''
-                    linha_var['Var %'] = f"{variacao_forn:+.1f}%"
-                    linhas_fornecedores.append(linha_var)
-
-                # Adicionar linha de TOTAL CONSOLIDADO
-                linha_total_prev = {'Fornecedor': 'TOTAL CONSOLIDADO', 'Tipo': ''}
-                for i, periodo in enumerate(periodos):
-                    linha_total_prev[periodo] = previsao_valores[i] if i < len(previsao_valores) else 0
-                linha_total_prev['TOTAL'] = total_previsao
-                linha_total_prev['Var %'] = f"{variacao_total:+.1f}%"
-                linhas_fornecedores.append(linha_total_prev)
-
-                # Criar DataFrame e exportar
-                df_fornecedores = pd.DataFrame(linhas_fornecedores)
-                # Reordenar colunas
-                colunas_ordem = ['Fornecedor', 'Tipo'] + periodos + ['TOTAL', 'Var %']
-                df_fornecedores = df_fornecedores[colunas_ordem]
-                df_fornecedores.to_excel(writer, sheet_name='Por Fornecedor', index=False)
-
-                # Ajustar largura das colunas
-                worksheet_forn = writer.sheets['Por Fornecedor']
-                worksheet_forn.column_dimensions['A'].width = 25  # Fornecedor
-                worksheet_forn.column_dimensions['B'].width = 12  # Tipo
-                for idx in range(len(periodos)):
-                    col_letter = get_column_letter(idx + 3)
-                    worksheet_forn.column_dimensions[col_letter].width = 11
-                worksheet_forn.column_dimensions[get_column_letter(len(periodos) + 3)].width = 12  # TOTAL
-                worksheet_forn.column_dimensions[get_column_letter(len(periodos) + 4)].width = 10  # Var %
-
+        # Salvar
+        output = io.BytesIO()
+        wb.save(output)
         output.seek(0)
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
