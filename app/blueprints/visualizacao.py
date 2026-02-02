@@ -16,7 +16,7 @@ visualizacao_bp = Blueprint('visualizacao', __name__)
 @visualizacao_bp.route('/visualizacao')
 def visualizacao():
     """Pagina de visualizacao de demanda"""
-    return render_template('visualizacao.html')
+    return render_template('visualizacao_demanda.html')
 
 
 @visualizacao_bp.route('/api/lojas', methods=['GET'])

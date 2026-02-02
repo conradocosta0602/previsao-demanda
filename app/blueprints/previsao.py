@@ -129,25 +129,50 @@ def api_gerar_previsao_banco_v2():
     """
     Versao 2 da API de previsao: Bottom-Up (Loja -> Produto).
     Gera previsao por loja/produto e agrega para fornecedor.
+
+    Parametros JSON:
+        - loja / cod_empresa: Codigo da loja ou 'TODAS'
+        - fornecedor: Nome do fornecedor ou 'TODOS'
+        - linha / linha1: Categoria (Linha 1)
+        - sublinha / linha3: Sublinha (Linha 3)
+        - granularidade: 'mensal', 'semanal' ou 'diario'
+        - periodos: Numero de periodos de previsao
+        - mes_inicio, ano_inicio, mes_fim, ano_fim: Para granularidade mensal
+        - semana_inicio, semana_fim, ano_semana_inicio, ano_semana_fim: Para semanal
+        - data_inicio, data_fim: Para granularidade diaria
     """
     try:
         from core.previsao_v2 import PrevisaoV2Engine
 
         dados = request.get_json()
 
-        cod_empresa = dados.get('cod_empresa')  # Pode ser lista ou 'TODAS'
-        fornecedor = dados.get('fornecedor')
-        linha1 = dados.get('linha1')
-        linha3 = dados.get('linha3')
-        horizonte_dias = dados.get('horizonte_dias', 90)
-        metodo = dados.get('metodo', 'auto')
+        # Parametros de filtro (aceita ambos os nomes para compatibilidade)
+        cod_empresa = dados.get('cod_empresa') or dados.get('loja', 'TODAS')
+        fornecedor = dados.get('fornecedor', 'TODOS')
+        linha1 = dados.get('linha1') or dados.get('linha', 'TODAS')
+        linha3 = dados.get('linha3') or dados.get('sublinha', 'TODAS')
 
-        if not fornecedor:
-            return jsonify({
-                'success': False,
-                'erro': 'Fornecedor e obrigatorio para previsao Bottom-Up'
-            }), 400
+        # Parametros de previsao
+        granularidade = dados.get('granularidade', 'mensal')
+        periodos = dados.get('periodos', 6)
 
+        # Parametros de periodo - mensal
+        mes_inicio = dados.get('mes_inicio')
+        ano_inicio = dados.get('ano_inicio')
+        mes_fim = dados.get('mes_fim')
+        ano_fim = dados.get('ano_fim')
+
+        # Parametros de periodo - semanal
+        semana_inicio = dados.get('semana_inicio')
+        semana_fim = dados.get('semana_fim')
+        ano_semana_inicio = dados.get('ano_semana_inicio')
+        ano_semana_fim = dados.get('ano_semana_fim')
+
+        # Parametros de periodo - diario
+        data_inicio = dados.get('data_inicio')
+        data_fim = dados.get('data_fim')
+
+        # Criar engine e gerar previsao
         engine = PrevisaoV2Engine()
 
         resultado = engine.gerar_previsao_bottom_up(
@@ -155,14 +180,28 @@ def api_gerar_previsao_banco_v2():
             cod_empresa=cod_empresa,
             linha1=linha1,
             linha3=linha3,
-            horizonte_dias=horizonte_dias,
-            metodo=metodo
+            granularidade=granularidade,
+            periodos=periodos,
+            mes_inicio=mes_inicio,
+            ano_inicio=ano_inicio,
+            mes_fim=mes_fim,
+            ano_fim=ano_fim,
+            semana_inicio=semana_inicio,
+            semana_fim=semana_fim,
+            ano_semana_inicio=ano_semana_inicio,
+            ano_semana_fim=ano_semana_fim,
+            data_inicio=data_inicio,
+            data_fim=data_fim
         )
 
-        return jsonify({
-            'success': True,
-            'resultado': resultado
-        })
+        # Verificar se houve erro
+        if 'erro' in resultado:
+            return jsonify({
+                'success': False,
+                'erro': resultado['erro']
+            }), 400
+
+        return jsonify(resultado)
 
     except Exception as e:
         import traceback

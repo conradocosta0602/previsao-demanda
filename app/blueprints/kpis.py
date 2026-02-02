@@ -33,20 +33,31 @@ def api_kpis_resumo():
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # KPIs de Estoque
+        # KPIs de Estoque (usando estoque_posicao_atual com demanda calculada)
+        # Primeiro calcular demanda media dos ultimos 30 dias
         query_estoque = """
+            WITH demanda_30d AS (
+                SELECT
+                    codigo,
+                    cod_empresa,
+                    SUM(qtd_venda) / 30.0 as demanda_diaria
+                FROM historico_vendas_diario
+                WHERE data >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY codigo, cod_empresa
+            )
             SELECT
-                COUNT(DISTINCT codigo) as total_skus,
-                SUM(estoque_disponivel) as estoque_total,
-                SUM(estoque_disponivel * preco_custo) as valor_estoque,
-                AVG(CASE WHEN demanda_diaria > 0 THEN estoque_disponivel / demanda_diaria END) as cobertura_media
-            FROM estoque_atual ea
+                COUNT(DISTINCT e.codigo) as total_skus,
+                SUM(e.estoque) as estoque_total,
+                SUM(e.estoque * COALESCE(e.cue, 0)) as valor_estoque,
+                AVG(CASE WHEN COALESCE(d.demanda_diaria, 0) > 0 THEN e.estoque / d.demanda_diaria END) as cobertura_media
+            FROM estoque_posicao_atual e
+            LEFT JOIN demanda_30d d ON e.codigo = d.codigo AND e.cod_empresa = d.cod_empresa
             WHERE 1=1
         """
         params_estoque = []
 
         if cod_empresa:
-            query_estoque += " AND ea.cod_empresa = %s"
+            query_estoque += " AND e.cod_empresa = %s"
             params_estoque.append(cod_empresa)
 
         cursor.execute(query_estoque, params_estoque if params_estoque else None)
@@ -58,8 +69,8 @@ def api_kpis_resumo():
         query_vendas = """
             SELECT
                 COUNT(DISTINCT codigo) as skus_vendidos,
-                SUM(qtd_venda) as qtd_total_vendida,
-                SUM(vl_venda) as valor_total_vendido,
+                COALESCE(SUM(qtd_venda), 0) as qtd_total_vendida,
+                COALESCE(SUM(valor_venda), 0) as valor_total_vendido,
                 COUNT(DISTINCT data) as dias_com_venda
             FROM historico_vendas_diario
             WHERE data >= %s
@@ -73,18 +84,29 @@ def api_kpis_resumo():
         cursor.execute(query_vendas, params_vendas)
         kpis_vendas = cursor.fetchone() or {}
 
-        # Taxa de Ruptura (itens com estoque <= 0)
+        # Taxa de Ruptura (itens com estoque <= 0 e que tiveram vendas recentes)
         query_ruptura = """
+            WITH demanda_30d AS (
+                SELECT
+                    codigo,
+                    cod_empresa,
+                    SUM(qtd_venda) / 30.0 as demanda_diaria
+                FROM historico_vendas_diario
+                WHERE data >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY codigo, cod_empresa
+                HAVING SUM(qtd_venda) > 0
+            )
             SELECT
                 COUNT(*) as total_itens,
-                SUM(CASE WHEN estoque_disponivel <= 0 THEN 1 ELSE 0 END) as itens_ruptura
-            FROM estoque_atual
-            WHERE demanda_diaria > 0.01
+                SUM(CASE WHEN e.estoque <= 0 THEN 1 ELSE 0 END) as itens_ruptura
+            FROM estoque_posicao_atual e
+            INNER JOIN demanda_30d d ON e.codigo = d.codigo AND e.cod_empresa = d.cod_empresa
+            WHERE d.demanda_diaria > 0.01
         """
         params_ruptura = []
 
         if cod_empresa:
-            query_ruptura += " AND cod_empresa = %s"
+            query_ruptura += " AND e.cod_empresa = %s"
             params_ruptura.append(cod_empresa)
 
         cursor.execute(query_ruptura, params_ruptura if params_ruptura else None)
@@ -109,7 +131,7 @@ def api_kpis_resumo():
                 'vendas': {
                     'skus_vendidos': kpis_vendas.get('skus_vendidos') or 0,
                     'qtd_total_vendida': float(kpis_vendas.get('qtd_total_vendida') or 0),
-                    'valor_total_vendido': float(kpis_vendas.get('valor_total_vendido') or 0),
+                    'valor_total_vendido': float(kpis_vendas.get('valor_total_vendido') or 0) if kpis_vendas.get('valor_total_vendido') is not None and not pd.isna(kpis_vendas.get('valor_total_vendido')) else 0.0,
                     'media_diaria': round(float(kpis_vendas.get('qtd_total_vendida') or 0) / max(dias, 1), 2)
                 },
                 'ruptura': {
@@ -163,7 +185,7 @@ def api_kpis_tendencias():
             SELECT
                 {group_by} as periodo,
                 SUM(qtd_venda) as qtd_vendida,
-                SUM(vl_venda) as valor_vendido,
+                SUM(valor_venda) as valor_vendido,
                 COUNT(DISTINCT codigo) as skus_vendidos
             FROM historico_vendas_diario
             WHERE data >= %s
@@ -232,7 +254,7 @@ def api_kpis_ranking():
                     h.codigo,
                     p.descricao,
                     SUM(h.qtd_venda) as total_vendido,
-                    SUM(h.vl_venda) as valor_vendido,
+                    SUM(h.valor_venda) as valor_vendido,
                     COUNT(DISTINCT h.data) as dias_com_venda
                 FROM historico_vendas_diario h
                 LEFT JOIN cadastro_produtos p ON h.codigo = p.codigo
@@ -247,15 +269,22 @@ def api_kpis_ranking():
 
         elif criterio == 'cobertura_baixa':
             query = """
+                WITH demanda_30d AS (
+                    SELECT codigo, cod_empresa, SUM(qtd_venda) / 30.0 as demanda_diaria
+                    FROM historico_vendas_diario
+                    WHERE data >= CURRENT_DATE - INTERVAL '30 days'
+                    GROUP BY codigo, cod_empresa
+                )
                 SELECT
                     e.codigo,
                     p.descricao,
-                    e.estoque_disponivel,
-                    e.demanda_diaria,
-                    CASE WHEN e.demanda_diaria > 0 THEN e.estoque_disponivel / e.demanda_diaria ELSE 999 END as cobertura_dias
-                FROM estoque_atual e
+                    e.estoque as estoque_disponivel,
+                    COALESCE(d.demanda_diaria, 0) as demanda_diaria,
+                    CASE WHEN COALESCE(d.demanda_diaria, 0) > 0 THEN e.estoque / d.demanda_diaria ELSE 999 END as cobertura_dias
+                FROM estoque_posicao_atual e
                 LEFT JOIN cadastro_produtos p ON e.codigo = p.codigo
-                WHERE e.demanda_diaria > 0.01
+                LEFT JOIN demanda_30d d ON e.codigo = d.codigo AND e.cod_empresa = d.cod_empresa
+                WHERE COALESCE(d.demanda_diaria, 0) > 0.01
             """
             params = []
             if cod_empresa:
@@ -266,21 +295,28 @@ def api_kpis_ranking():
 
         elif criterio == 'ruptura':
             query = """
+                WITH demanda_30d AS (
+                    SELECT codigo, cod_empresa, SUM(qtd_venda) / 30.0 as demanda_diaria
+                    FROM historico_vendas_diario
+                    WHERE data >= CURRENT_DATE - INTERVAL '30 days'
+                    GROUP BY codigo, cod_empresa
+                )
                 SELECT
                     e.codigo,
                     p.descricao,
-                    e.estoque_disponivel,
-                    e.demanda_diaria,
-                    e.demanda_diaria * 7 as venda_perdida_semana
-                FROM estoque_atual e
+                    e.estoque as estoque_disponivel,
+                    COALESCE(d.demanda_diaria, 0) as demanda_diaria,
+                    COALESCE(d.demanda_diaria, 0) * 7 as venda_perdida_semana
+                FROM estoque_posicao_atual e
                 LEFT JOIN cadastro_produtos p ON e.codigo = p.codigo
-                WHERE e.estoque_disponivel <= 0 AND e.demanda_diaria > 0.01
+                LEFT JOIN demanda_30d d ON e.codigo = d.codigo AND e.cod_empresa = d.cod_empresa
+                WHERE e.estoque <= 0 AND COALESCE(d.demanda_diaria, 0) > 0.01
             """
             params = []
             if cod_empresa:
                 query += " AND e.cod_empresa = %s"
                 params.append(cod_empresa)
-            query += " ORDER BY e.demanda_diaria DESC LIMIT %s"
+            query += " ORDER BY demanda_diaria DESC LIMIT %s"
             params.append(limit)
 
         else:
