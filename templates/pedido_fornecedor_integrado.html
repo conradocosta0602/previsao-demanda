@@ -965,10 +965,16 @@
                     fetch('/api/sublinhas')
                 ]);
 
-                const todasEmpresas = await lojasResp.json();
-                const fornecedores = await fornResp.json();
-                const linhas1 = await linha1Resp.json();
-                const linhas3 = await linha3Resp.json();
+                const lojasData = await lojasResp.json();
+                const fornecedoresData = await fornResp.json();
+                const linhas1Data = await linha1Resp.json();
+                const linhas3Data = await linha3Resp.json();
+
+                // Extrair arrays das respostas das APIs
+                const todasEmpresas = lojasData.lojas || [];
+                const fornecedores = fornecedoresData.fornecedores || [];
+                const linhas1 = linhas1Data.linhas || [];
+                const linhas3 = linhas3Data.sublinhas || [];
 
                 // Criar MultiSelect para Loja/CD (filtro único)
                 // Excluir a opção "TODAS" que vem da API
@@ -976,7 +982,7 @@
                     .filter(l => l.cod_empresa !== 'TODAS' && l.cod_empresa !== null && l.cod_empresa !== undefined)
                     .map(l => ({
                         value: l.cod_empresa.toString(),
-                        label: l.nome_loja
+                        label: l.nome_loja || `Loja ${l.cod_empresa}`
                     }));
 
                 MultiSelect.create('cod_empresa', empresasOptions, {
@@ -999,13 +1005,16 @@
                 });
 
                 // Criar MultiSelect para Linha 1 (categoria)
+                // API /api/linhas retorna array de strings ['LINHA1', 'LINHA2', ...]
                 const linha1Options = [];
                 if (Array.isArray(linhas1)) {
                     linhas1.forEach(l => {
-                        if (l.linha && l.linha !== 'TODAS') {
+                        // linhas1 é um array de strings, não de objetos
+                        const linha = typeof l === 'string' ? l : l.linha;
+                        if (linha && linha !== 'TODAS') {
                             linha1Options.push({
-                                value: l.linha,
-                                label: l.linha
+                                value: linha,
+                                label: linha
                             });
                         }
                     });
@@ -1019,13 +1028,16 @@
                 });
 
                 // Criar MultiSelect para Linha 3 (sublinha)
+                // API /api/sublinhas retorna array de {codigo, descricao}
                 const linha3Options = [];
                 if (Array.isArray(linhas3)) {
                     linhas3.forEach(l => {
-                        if (l.codigo_linha && l.codigo_linha !== 'TODAS') {
+                        const codigo = l.codigo || l.codigo_linha;
+                        const descricao = l.descricao || l.descricao_linha || '';
+                        if (codigo && codigo !== 'TODAS') {
                             linha3Options.push({
-                                value: l.codigo_linha,
-                                label: `${l.codigo_linha} - ${l.descricao_linha}`
+                                value: codigo,
+                                label: descricao ? `${codigo} - ${descricao}` : codigo
                             });
                         }
                     });
@@ -1048,19 +1060,25 @@
                 const linhasSelecionadas = MultiSelect.getSelected('linha1');
                 let url = '/api/sublinhas';
                 if (linhasSelecionadas.length > 0) {
-                    url += '?linha=' + encodeURIComponent(JSON.stringify(linhasSelecionadas));
+                    // API usa parametro 'categoria' nao 'linha'
+                    url += '?categoria=' + encodeURIComponent(linhasSelecionadas[0]);
                 }
 
                 const response = await fetch(url);
-                const linhas3 = await response.json();
+                const data = await response.json();
+
+                // Extrair array de sublinhas da resposta
+                const linhas3 = data.sublinhas || [];
 
                 const linha3Options = [];
                 if (Array.isArray(linhas3)) {
                     linhas3.forEach(l => {
-                        if (l.codigo_linha && l.codigo_linha !== 'TODAS') {
+                        const codigo = l.codigo || l.codigo_linha;
+                        const descricao = l.descricao || l.descricao_linha || '';
+                        if (codigo && codigo !== 'TODAS') {
                             linha3Options.push({
-                                value: l.codigo_linha,
-                                label: `${l.codigo_linha} - ${l.descricao_linha}`
+                                value: codigo,
+                                label: descricao ? `${codigo} - ${descricao}` : codigo
                             });
                         }
                     });
@@ -1627,6 +1645,9 @@
                             }
                         });
 
+                        // Ordenar itens por valor de pedido (decrescente)
+                        itensLoja.sort((a, b) => (b.valor_pedido || 0) - (a.valor_pedido || 0));
+
                         let tbodyLoja = '';
                         itensLoja.forEach(item => {
                             tbodyLoja += gerarLinhaTabela(item, setProdutosTransf, detalhesTransf, true);
@@ -1703,6 +1724,9 @@
                     // =====================================================================
                     // MODO NORMAL: Layout padrao sem sub-lojas
                     // =====================================================================
+                    // Ordenar itens por valor de pedido (decrescente)
+                    itensForn.sort((a, b) => (b.valor_pedido || 0) - (a.valor_pedido || 0));
+
                     let tbodyForn = '';
                     itensForn.forEach(item => {
                         tbodyForn += gerarLinhaTabela(item, setProdutosTransf, detalhesTransf);
@@ -2014,6 +2038,9 @@
                     const itensForn = itensPorFornecedor[nomeForn];
                     const valorForn = itensForn.reduce((s, i) => s + (i.valor_pedido || 0), 0);
                     const qtdUnidadesForn = itensForn.reduce((s, i) => s + (i.quantidade_pedido || 0), 0);
+
+                    // Ordenar itens por valor de pedido (decrescente)
+                    itensForn.sort((a, b) => (b.valor_pedido || 0) - (a.valor_pedido || 0));
 
                     let tbodyForn = '';
                     itensForn.forEach(item => {
