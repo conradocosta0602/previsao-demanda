@@ -400,6 +400,28 @@ def _api_gerar_previsao_banco_v2_interno():
             # Calcular previsao de cada periodo usando demanda diaria especifica
             previsao_item_periodos = []
             total_previsao_item = 0
+            total_ano_anterior_item = 0
+
+            # Criar dicionario de vendas por data para lookup rapido (para ano anterior)
+            vendas_item_por_data = {}
+            for venda in vendas_hist_sorted:
+                data_venda = venda['periodo']
+                if granularidade == 'mensal':
+                    # Agregar por mes: YYYY-MM-01
+                    chave_data = data_venda[:7] + '-01'
+                elif granularidade == 'semanal':
+                    try:
+                        data_obj = dt.strptime(data_venda, '%Y-%m-%d')
+                        ano_iso, semana_iso, _ = data_obj.isocalendar()
+                        chave_data = f"{ano_iso}-S{semana_iso:02d}"
+                    except:
+                        continue
+                else:
+                    chave_data = data_venda
+
+                if chave_data not in vendas_item_por_data:
+                    vendas_item_por_data[chave_data] = 0
+                vendas_item_por_data[chave_data] += venda['qtd_venda']
 
             for i, data_prev in enumerate(datas_previsao):
                 if granularidade == 'mensal':
@@ -407,17 +429,23 @@ def _api_gerar_previsao_banco_v2_interno():
                     mes = int(data_prev[5:7])
                     dias_periodo = monthrange(ano, mes)[1]
                     chave_periodo = mes
+                    # Chave do ano anterior para este periodo
+                    chave_ano_anterior = f"{ano - 1:04d}-{mes:02d}-01"
                 elif granularidade == 'semanal':
                     dias_periodo = 7
                     if '-S' in data_prev:
-                        chave_periodo = int(data_prev.split('-S')[1])
+                        ano_str, sem_str = data_prev.split('-S')
+                        chave_periodo = int(sem_str)
+                        chave_ano_anterior = f"{int(ano_str) - 1}-S{sem_str}"
                     else:
                         data_obj = dt.strptime(data_prev, '%Y-%m-%d')
                         chave_periodo = data_obj.isocalendar()[1]
+                        chave_ano_anterior = f"{data_obj.year - 1}-S{chave_periodo:02d}"
                 else:
                     dias_periodo = 1
                     data_obj = dt.strptime(data_prev, '%Y-%m-%d')
                     chave_periodo = data_obj.weekday()
+                    chave_ano_anterior = f"{data_obj.year - 1}-{data_obj.month:02d}-{data_obj.day:02d}"
 
                 # Usar demanda diaria ESPECIFICA do periodo (se disponivel)
                 demanda_diaria_periodo = media_diaria_por_periodo.get(chave_periodo, demanda_diaria_geral)
@@ -425,9 +453,14 @@ def _api_gerar_previsao_banco_v2_interno():
                 # Previsao do periodo = demanda_diaria_do_periodo x dias
                 previsao_periodo = demanda_diaria_periodo * dias_periodo
 
+                # Buscar valor do ano anterior para este item neste periodo
+                valor_aa_periodo = vendas_item_por_data.get(chave_ano_anterior, 0)
+                total_ano_anterior_item += valor_aa_periodo
+
                 previsao_item_periodos.append({
                     'periodo': data_prev,
-                    'previsao': round(previsao_periodo, 2)
+                    'previsao': round(previsao_periodo, 2),
+                    'ano_anterior': round(valor_aa_periodo, 2)
                 })
                 previsoes_agregadas_por_periodo[data_prev] += previsao_periodo
                 total_previsao_item += previsao_periodo
@@ -449,12 +482,19 @@ def _api_gerar_previsao_banco_v2_interno():
             }
             metodo_exibicao = mapeamento_metodos.get(metodo_usado, metodo_usado)
 
+            # Calcular variacao percentual
+            variacao_pct = 0
+            if total_ano_anterior_item > 0:
+                variacao_pct = ((total_previsao_item - total_ano_anterior_item) / total_ano_anterior_item) * 100
+
             relatorio_itens.append({
                 'cod_produto': cod_produto,
                 'descricao': item['descricao'],
                 'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
                 'categoria': item['categoria'],
                 'demanda_prevista_total': round(total_previsao_item, 2),
+                'demanda_ano_anterior': round(total_ano_anterior_item, 2),
+                'variacao_percentual': round(variacao_pct, 1),
                 'metodo_estatistico': metodo_exibicao,
                 'previsao_por_periodo': previsao_item_periodos
             })
