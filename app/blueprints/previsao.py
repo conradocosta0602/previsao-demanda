@@ -781,6 +781,86 @@ def _api_gerar_previsao_banco_v2_interno():
             except:
                 periodos_formatados.append(data_str)
 
+        # =====================================================
+        # AGREGAR POR FORNECEDOR - Comparacao YoY por Fornecedor
+        # =====================================================
+        # Funcao auxiliar para formatar periodo igual ao frontend
+        meses_nomes = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+
+        def formatar_periodo_display(periodo_str, gran):
+            """Formata periodo para exibicao (igual ao frontend)"""
+            try:
+                if gran == 'semanal':
+                    if '-S' in periodo_str:
+                        ano, sem = periodo_str.split('-S')
+                        return f"S{int(sem)}/{ano}"
+                    else:
+                        data_obj = dt.strptime(periodo_str, '%Y-%m-%d')
+                        semana = data_obj.isocalendar()[1]
+                        return f"S{semana}/{data_obj.year}"
+                elif gran == 'diario' or gran == 'diaria':
+                    data_obj = dt.strptime(periodo_str, '%Y-%m-%d')
+                    return f"{data_obj.day:02d}/{data_obj.month:02d}/{data_obj.year}"
+                else:  # mensal
+                    data_obj = dt.strptime(periodo_str, '%Y-%m-%d')
+                    return f"{meses_nomes[data_obj.month - 1]}/{data_obj.year}"
+            except:
+                return periodo_str
+
+        comparacao_por_fornecedor = {}
+        for item in relatorio_itens:
+            nome_forn = item.get('nome_fornecedor') or 'SEM FORNECEDOR'
+
+            if nome_forn not in comparacao_por_fornecedor:
+                comparacao_por_fornecedor[nome_forn] = {
+                    'nome_fornecedor': nome_forn,
+                    'previsao_total': 0,
+                    'ano_anterior_total': 0,
+                    'previsao_por_periodo': {},
+                    'ano_anterior_por_periodo': {}
+                }
+
+            comparacao_por_fornecedor[nome_forn]['previsao_total'] += item.get('demanda_prevista_total', 0)
+            comparacao_por_fornecedor[nome_forn]['ano_anterior_total'] += item.get('demanda_ano_anterior', 0)
+
+            # Agregar por periodo (usando formato de exibicao para matching com frontend)
+            if item.get('previsao_por_periodo'):
+                for p in item['previsao_por_periodo']:
+                    periodo_raw = p.get('periodo')
+                    if periodo_raw:
+                        # Formatar periodo igual ao frontend para matching correto
+                        periodo = formatar_periodo_display(periodo_raw, granularidade)
+                        if periodo not in comparacao_por_fornecedor[nome_forn]['previsao_por_periodo']:
+                            comparacao_por_fornecedor[nome_forn]['previsao_por_periodo'][periodo] = 0
+                            comparacao_por_fornecedor[nome_forn]['ano_anterior_por_periodo'][periodo] = 0
+                        comparacao_por_fornecedor[nome_forn]['previsao_por_periodo'][periodo] += p.get('previsao', 0)
+                        comparacao_por_fornecedor[nome_forn]['ano_anterior_por_periodo'][periodo] += p.get('ano_anterior', 0)
+
+        # Calcular variacao percentual e ordenar
+        comparacao_yoy_por_fornecedor = []
+        for nome_forn, dados in comparacao_por_fornecedor.items():
+            prev = dados['previsao_total']
+            ant = dados['ano_anterior_total']
+            variacao = ((prev - ant) / ant * 100) if ant > 0 else 0
+
+            comparacao_yoy_por_fornecedor.append({
+                'nome_fornecedor': nome_forn,
+                'previsao_total': round(prev, 2),
+                'ano_anterior_total': round(ant, 2),
+                'variacao_percentual': round(variacao, 1),
+                'previsao_por_periodo': dados['previsao_por_periodo'],
+                'ano_anterior_por_periodo': dados['ano_anterior_por_periodo']
+            })
+
+        # Ordenar por previsao total (descendente)
+        comparacao_yoy_por_fornecedor = sorted(
+            comparacao_yoy_por_fornecedor,
+            key=lambda x: x['previsao_total'],
+            reverse=True
+        )
+
+        print(f"  Comparacao YoY montada para {len(comparacao_yoy_por_fornecedor)} fornecedores", flush=True)
+
         # Montar resposta
         resposta = {
             'sucesso': True,
@@ -834,7 +914,9 @@ def _api_gerar_previsao_banco_v2_interno():
                 'granularidade': granularidade
             },
             'estatisticas_modelos': contagem_modelos,
-            'periodos_previsao_formatados': datas_previsao
+            'periodos_previsao_formatados': datas_previsao,
+            'periodos_previsao_display': [formatar_periodo_display(d, granularidade) for d in datas_previsao],
+            'comparacao_yoy_por_fornecedor': comparacao_yoy_por_fornecedor
         }
 
         cursor.close()
@@ -939,56 +1021,250 @@ def api_exportar_tabela_comparativa():
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
 
         dados = request.get_json()
 
-        if not dados or 'dados' not in dados:
+        if not dados:
             return jsonify({'success': False, 'erro': 'Dados nao fornecidos'}), 400
 
-        dados_tabela = dados['dados']
+        # Suportar dois formatos: novo (periodos, previsao, real) e antigo (dados)
+        if 'periodos' in dados:
+            # Novo formato V2 do frontend
+            periodos = dados.get('periodos', [])
+            previsao = dados.get('previsao', [])
+            real = dados.get('real', [])
+            variacao = dados.get('variacao', [])
+            granularidade = dados.get('granularidade', 'mensal')
+            total_previsao = dados.get('total_previsao', 0)
+            total_real = dados.get('total_real', 0)
+            variacao_total = dados.get('variacao_total', 0)
+            filtros = dados.get('filtros', {})
+            fornecedores = dados.get('fornecedores', [])
 
-        if not dados_tabela:
-            return jsonify({'success': False, 'erro': 'Tabela vazia'}), 400
+            if not periodos or not previsao:
+                return jsonify({'success': False, 'erro': 'Periodos ou previsao vazios'}), 400
 
-        wb = Workbook()
-        ws = wb.active
-        ws.title = 'Comparativo YoY'
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'Comparativo YoY'
 
-        header_font = Font(bold=True, color='FFFFFF')
-        header_fill = PatternFill(start_color='667EEA', end_color='764BA2', fill_type='solid')
-        border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
+            # Estilos
+            header_font = Font(bold=True, color='FFFFFF')
+            header_fill = PatternFill(start_color='667EEA', end_color='764BA2', fill_type='solid')
+            total_fill = PatternFill(start_color='E8E8E8', end_color='E8E8E8', fill_type='solid')
+            border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
 
-        # Cabecalho
-        headers = ['Mes', 'Ano Anterior', 'Previsao Atual', 'Variacao (%)']
-        for col, header in enumerate(headers, start=1):
-            cell = ws.cell(row=1, column=col, value=header)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.border = border
-            cell.alignment = Alignment(horizontal='center')
+            row_num = 1
 
-        # Dados
-        for row_idx, item in enumerate(dados_tabela, start=2):
-            ws.cell(row=row_idx, column=1, value=item.get('mes_nome', '')).border = border
-            ws.cell(row=row_idx, column=2, value=item.get('demanda_ano_anterior', 0)).border = border
-            ws.cell(row=row_idx, column=2).number_format = '#,##0.0'
-            ws.cell(row=row_idx, column=3, value=item.get('previsao_atual', 0)).border = border
-            ws.cell(row=row_idx, column=3).number_format = '#,##0.0'
-            variacao = item.get('variacao_percentual')
-            ws.cell(row=row_idx, column=4, value=variacao if variacao is not None else '-').border = border
-            if variacao is not None:
-                ws.cell(row=row_idx, column=4).number_format = '+0.0%;-0.0%;0%'
+            # Informacoes de filtros (se houver)
+            if filtros:
+                ws.cell(row=row_num, column=1, value='Filtros Aplicados:').font = Font(bold=True)
+                row_num += 1
+                for chave, valor in filtros.items():
+                    ws.cell(row=row_num, column=1, value=f'  {chave.title()}: {valor}')
+                    row_num += 1
+                row_num += 1
 
-        col_widths = [15, 18, 18, 15]
-        for i, width in enumerate(col_widths, start=1):
-            ws.column_dimensions[chr(64 + i)].width = width
+            # ===== TABELA CONSOLIDADA =====
+            ws.cell(row=row_num, column=1, value='TABELA COMPARATIVA - CONSOLIDADO').font = Font(bold=True, size=12)
+            row_num += 1
 
-        ws.freeze_panes = 'A2'
+            # Cabecalho: Tipo | Periodo1 | Periodo2 | ... | TOTAL | Var %
+            header_row = row_num
+            ws.cell(row=header_row, column=1, value='Tipo').font = header_font
+            ws.cell(row=header_row, column=1).fill = header_fill
+            ws.cell(row=header_row, column=1).border = border
+
+            for col_idx, periodo in enumerate(periodos, start=2):
+                cell = ws.cell(row=header_row, column=col_idx, value=periodo)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.border = border
+                cell.alignment = Alignment(horizontal='center')
+
+            col_total = len(periodos) + 2
+            col_var = len(periodos) + 3
+
+            ws.cell(row=header_row, column=col_total, value='TOTAL').font = header_font
+            ws.cell(row=header_row, column=col_total).fill = header_fill
+            ws.cell(row=header_row, column=col_total).border = border
+
+            ws.cell(row=header_row, column=col_var, value='Var %').font = header_font
+            ws.cell(row=header_row, column=col_var).fill = header_fill
+            ws.cell(row=header_row, column=col_var).border = border
+
+            # Linha de Previsao
+            row_num += 1
+            ws.cell(row=row_num, column=1, value='Previsao').border = border
+            for col_idx, valor in enumerate(previsao, start=2):
+                cell = ws.cell(row=row_num, column=col_idx, value=valor)
+                cell.border = border
+                cell.number_format = '#,##0'
+            ws.cell(row=row_num, column=col_total, value=total_previsao).border = border
+            ws.cell(row=row_num, column=col_total).number_format = '#,##0'
+
+            # Linha de Ano Anterior
+            row_num += 1
+            ws.cell(row=row_num, column=1, value='Ano Ant.').border = border
+            for col_idx, valor in enumerate(real, start=2):
+                cell = ws.cell(row=row_num, column=col_idx, value=valor)
+                cell.border = border
+                cell.number_format = '#,##0'
+            ws.cell(row=row_num, column=col_total, value=total_real).border = border
+            ws.cell(row=row_num, column=col_total).number_format = '#,##0'
+
+            # Linha de Variacao
+            row_num += 1
+            ws.cell(row=row_num, column=1, value='Var %').border = border
+            for col_idx, valor in enumerate(variacao, start=2):
+                cell = ws.cell(row=row_num, column=col_idx, value=f'{valor:.1f}%' if valor else '-')
+                cell.border = border
+            ws.cell(row=row_num, column=col_var, value=f'{variacao_total:.1f}%').border = border
+
+            row_num += 2
+
+            # ===== DETALHAMENTO POR FORNECEDOR (se houver) =====
+            # Debug: log quantidade de fornecedores
+            print(f"[Exportar] Fornecedores recebidos: {len(fornecedores) if fornecedores else 0}")
+            if fornecedores:
+                for f in fornecedores:
+                    print(f"[Exportar]   - {f.get('nome_fornecedor', 'SEM NOME')}: {f.get('previsao_total', 0)}")
+
+            if fornecedores and len(fornecedores) >= 1:
+                ws.cell(row=row_num, column=1, value='DETALHAMENTO POR FORNECEDOR').font = Font(bold=True, size=12)
+                row_num += 2
+
+                for forn in fornecedores:
+                    nome_forn = forn.get('nome_fornecedor', 'SEM NOME')
+                    previsao_total_forn = forn.get('previsao_total', 0)
+                    ano_ant_total_forn = forn.get('ano_anterior_total', 0)
+                    variacao_forn = forn.get('variacao_percentual', 0)
+                    previsao_por_periodo = forn.get('previsao_por_periodo', {})
+                    ano_ant_por_periodo = forn.get('ano_anterior_por_periodo', {})
+
+                    # Nome do fornecedor como titulo
+                    ws.cell(row=row_num, column=1, value=nome_forn).font = Font(bold=True, size=11)
+                    ws.cell(row=row_num, column=1).fill = total_fill
+                    # Mesclar celula do nome ou deixar mais largo
+                    row_num += 1
+
+                    # Cabecalho do fornecedor
+                    ws.cell(row=row_num, column=1, value='Tipo').font = header_font
+                    ws.cell(row=row_num, column=1).fill = header_fill
+                    ws.cell(row=row_num, column=1).border = border
+
+                    for col_idx, periodo in enumerate(periodos, start=2):
+                        cell = ws.cell(row=row_num, column=col_idx, value=periodo)
+                        cell.font = header_font
+                        cell.fill = header_fill
+                        cell.border = border
+                        cell.alignment = Alignment(horizontal='center')
+
+                    ws.cell(row=row_num, column=col_total, value='TOTAL').font = header_font
+                    ws.cell(row=row_num, column=col_total).fill = header_fill
+                    ws.cell(row=row_num, column=col_total).border = border
+
+                    ws.cell(row=row_num, column=col_var, value='Var %').font = header_font
+                    ws.cell(row=row_num, column=col_var).fill = header_fill
+                    ws.cell(row=row_num, column=col_var).border = border
+
+                    # Linha de Previsao do fornecedor
+                    row_num += 1
+                    ws.cell(row=row_num, column=1, value='Previsao').border = border
+                    for col_idx, periodo in enumerate(periodos, start=2):
+                        valor = previsao_por_periodo.get(periodo, 0)
+                        cell = ws.cell(row=row_num, column=col_idx, value=round(valor) if valor else 0)
+                        cell.border = border
+                        cell.number_format = '#,##0'
+                    ws.cell(row=row_num, column=col_total, value=round(previsao_total_forn)).border = border
+                    ws.cell(row=row_num, column=col_total).number_format = '#,##0'
+
+                    # Linha de Ano Anterior do fornecedor
+                    row_num += 1
+                    ws.cell(row=row_num, column=1, value='Ano Ant.').border = border
+                    for col_idx, periodo in enumerate(periodos, start=2):
+                        valor = ano_ant_por_periodo.get(periodo, 0)
+                        cell = ws.cell(row=row_num, column=col_idx, value=round(valor) if valor else 0)
+                        cell.border = border
+                        cell.number_format = '#,##0'
+                    ws.cell(row=row_num, column=col_total, value=round(ano_ant_total_forn)).border = border
+                    ws.cell(row=row_num, column=col_total).number_format = '#,##0'
+
+                    # Linha de Variacao do fornecedor
+                    row_num += 1
+                    ws.cell(row=row_num, column=1, value='Var %').border = border
+                    for col_idx, periodo in enumerate(periodos, start=2):
+                        prev = previsao_por_periodo.get(periodo, 0)
+                        ant = ano_ant_por_periodo.get(periodo, 0)
+                        var_periodo = ((prev - ant) / ant * 100) if ant > 0 else 0
+                        cell = ws.cell(row=row_num, column=col_idx, value=f'{var_periodo:.1f}%' if ant > 0 else '-')
+                        cell.border = border
+                    ws.cell(row=row_num, column=col_var, value=f'{variacao_forn:.1f}%').border = border
+
+                    row_num += 2
+
+            # Ajustar largura das colunas
+            ws.column_dimensions['A'].width = 15
+            for col_idx in range(2, col_var + 1):
+                ws.column_dimensions[get_column_letter(col_idx)].width = 12
+
+            ws.freeze_panes = 'B1'
+
+        else:
+            # Formato antigo (compatibilidade)
+            if 'dados' not in dados:
+                return jsonify({'success': False, 'erro': 'Dados nao fornecidos no formato esperado'}), 400
+
+            dados_tabela = dados['dados']
+
+            if not dados_tabela:
+                return jsonify({'success': False, 'erro': 'Tabela vazia'}), 400
+
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'Comparativo YoY'
+
+            header_font = Font(bold=True, color='FFFFFF')
+            header_fill = PatternFill(start_color='667EEA', end_color='764BA2', fill_type='solid')
+            border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+
+            # Cabecalho
+            headers = ['Mes', 'Ano Anterior', 'Previsao Atual', 'Variacao (%)']
+            for col, header in enumerate(headers, start=1):
+                cell = ws.cell(row=1, column=col, value=header)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.border = border
+                cell.alignment = Alignment(horizontal='center')
+
+            # Dados
+            for row_idx, item in enumerate(dados_tabela, start=2):
+                ws.cell(row=row_idx, column=1, value=item.get('mes_nome', '')).border = border
+                ws.cell(row=row_idx, column=2, value=item.get('demanda_ano_anterior', 0)).border = border
+                ws.cell(row=row_idx, column=2).number_format = '#,##0.0'
+                ws.cell(row=row_idx, column=3, value=item.get('previsao_atual', 0)).border = border
+                ws.cell(row=row_idx, column=3).number_format = '#,##0.0'
+                variacao = item.get('variacao_percentual')
+                ws.cell(row=row_idx, column=4, value=variacao if variacao is not None else '-').border = border
+                if variacao is not None:
+                    ws.cell(row=row_idx, column=4).number_format = '+0.0%;-0.0%;0%'
+
+            col_widths = [15, 18, 18, 15]
+            for i, width in enumerate(col_widths, start=1):
+                ws.column_dimensions[chr(64 + i)].width = width
+
+            ws.freeze_panes = 'A2'
 
         output = io.BytesIO()
         wb.save(output)

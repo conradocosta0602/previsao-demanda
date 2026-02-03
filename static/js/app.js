@@ -1746,10 +1746,53 @@ function exportarTabelaComparativa() {
     const melhorModelo = resultado.melhor_modelo || 'Bottom-Up (Individual por Item)';
     const granularidade = resultado.granularidade || 'mensal';
 
-    // Extrair dados da previsão
-    const previsoes = resultado.modelos[melhorModelo]?.futuro?.valores || [];
-    const datasPrevisao = resultado.modelos[melhorModelo]?.futuro?.datas || [];
-    const valoresReal = resultado.ano_anterior?.valores || [];
+    // Detectar formato V2 (Bottom-Up) vs V1 (modelos agregados)
+    const isV2 = !resultado.modelos || !resultado.modelos[melhorModelo]?.futuro?.valores;
+
+    let previsoes = [];
+    let datasPrevisao = [];
+    let valoresReal = [];
+
+    if (isV2) {
+        // Formato V2 (Bottom-Up): extrair dados de itens/relatorio_detalhado
+        const itensDetalhados = resultado.relatorio_detalhado?.itens || resultado.itens || dadosRelatorioDetalhado?.itens || [];
+
+        if (itensDetalhados.length === 0) {
+            alert('Não há dados de previsão para exportar.');
+            return;
+        }
+
+        // Agrupar dados por período
+        const dadosPorPeriodo = {};
+
+        itensDetalhados.forEach(item => {
+            if (item.previsao_por_periodo) {
+                item.previsao_por_periodo.forEach(p => {
+                    if (!dadosPorPeriodo[p.periodo]) {
+                        dadosPorPeriodo[p.periodo] = { previsao: 0, anoAnterior: 0 };
+                    }
+                    dadosPorPeriodo[p.periodo].previsao += (p.previsao || 0);
+                    dadosPorPeriodo[p.periodo].anoAnterior += (p.ano_anterior || 0);
+                });
+            }
+        });
+
+        // Ordenar períodos e extrair arrays
+        const periodosOrdenados = Object.keys(dadosPorPeriodo).sort();
+        datasPrevisao = periodosOrdenados;
+        previsoes = periodosOrdenados.map(p => dadosPorPeriodo[p].previsao);
+        valoresReal = periodosOrdenados.map(p => dadosPorPeriodo[p].anoAnterior);
+
+        console.log('[exportarTabelaComparativa] Formato V2 detectado');
+        console.log('[exportarTabelaComparativa] Períodos:', periodosOrdenados.length);
+        console.log('[exportarTabelaComparativa] Previsões:', previsoes.length);
+    } else {
+        // Formato V1: usar estrutura de modelos
+        previsoes = resultado.modelos[melhorModelo]?.futuro?.valores || [];
+        datasPrevisao = resultado.modelos[melhorModelo]?.futuro?.datas || [];
+        valoresReal = resultado.ano_anterior?.valores || [];
+        console.log('[exportarTabelaComparativa] Formato V1 detectado');
+    }
 
     if (previsoes.length === 0) {
         alert('Não há dados de previsão para exportar.');
@@ -1807,28 +1850,100 @@ function exportarTabelaComparativa() {
 
     // Extrair dados por fornecedor (se houver múltiplos fornecedores)
     let fornecedoresData = [];
-    if (resultado.comparacao_yoy_por_fornecedor && resultado.comparacao_yoy_por_fornecedor.length > 0) {
-        fornecedoresData = resultado.comparacao_yoy_por_fornecedor.map(forn => {
-            // Converter previsao_por_periodo para usar os períodos formatados
-            const previsaoPorPeriodoFormatado = {};
-            const periodosPorPeriodo = forn.previsao_por_periodo || {};
+    if (isV2) {
+        // Formato V2: agrupar itens por fornecedor
+        const itensDetalhados = resultado.relatorio_detalhado?.itens || resultado.itens || dadosRelatorioDetalhado?.itens || [];
+        const dadosPorFornecedor = {};
 
-            // Mapear as datas originais para períodos formatados
-            datasPrevisao.forEach((dataOriginal, idx) => {
-                const periodoFormatado = periodos[idx];
-                // Buscar o período correspondente nos dados do fornecedor
-                // O backend usa a data original como chave
-                if (periodosPorPeriodo[dataOriginal]) {
-                    previsaoPorPeriodoFormatado[periodoFormatado] = periodosPorPeriodo[dataOriginal];
+        itensDetalhados.forEach(item => {
+            const fornecedor = item.nome_fornecedor || 'SEM FORNECEDOR';
+
+            if (!dadosPorFornecedor[fornecedor]) {
+                dadosPorFornecedor[fornecedor] = {
+                    previsaoPorPeriodo: {},
+                    totalPrevisao: 0,
+                    totalAnoAnterior: 0
+                };
+            }
+
+            if (item.previsao_por_periodo) {
+                item.previsao_por_periodo.forEach(p => {
+                    const periodoFormatado = formatarPeriodo(p.periodo);
+                    if (!dadosPorFornecedor[fornecedor].previsaoPorPeriodo[periodoFormatado]) {
+                        dadosPorFornecedor[fornecedor].previsaoPorPeriodo[periodoFormatado] = { previsao: 0, anoAnterior: 0 };
+                    }
+                    dadosPorFornecedor[fornecedor].previsaoPorPeriodo[periodoFormatado].previsao += (p.previsao || 0);
+                    dadosPorFornecedor[fornecedor].previsaoPorPeriodo[periodoFormatado].anoAnterior += (p.ano_anterior || 0);
+                });
+            }
+
+            dadosPorFornecedor[fornecedor].totalPrevisao += (item.demanda_prevista_total || 0);
+            dadosPorFornecedor[fornecedor].totalAnoAnterior += (item.demanda_ano_anterior || 0);
+        });
+
+        // Converter para formato de exportação
+        fornecedoresData = Object.entries(dadosPorFornecedor).map(([nome, dados]) => {
+            const variacaoPercentual = dados.totalAnoAnterior > 0
+                ? ((dados.totalPrevisao - dados.totalAnoAnterior) / dados.totalAnoAnterior * 100)
+                : 0;
+
+            // Converter previsaoPorPeriodo para formato esperado pelo backend
+            const previsaoPorPeriodoFormatado = {};
+            const anoAnteriorPorPeriodoFormatado = {};
+            Object.entries(dados.previsaoPorPeriodo).forEach(([periodo, valores]) => {
+                previsaoPorPeriodoFormatado[periodo] = valores.previsao;
+                anoAnteriorPorPeriodoFormatado[periodo] = valores.anoAnterior;
+            });
+
+            return {
+                nome_fornecedor: nome,
+                previsao_total: dados.totalPrevisao,
+                ano_anterior_total: dados.totalAnoAnterior,
+                variacao_percentual: variacaoPercentual,
+                previsao_por_periodo: previsaoPorPeriodoFormatado,
+                ano_anterior_por_periodo: anoAnteriorPorPeriodoFormatado
+            };
+        });
+
+        console.log('[exportarTabelaComparativa] Fornecedores V2:', fornecedoresData.length);
+    } else if (resultado.comparacao_yoy_por_fornecedor && resultado.comparacao_yoy_por_fornecedor.length > 0) {
+        // Formato com comparacao_yoy_por_fornecedor (backend já calculou agregação)
+        fornecedoresData = resultado.comparacao_yoy_por_fornecedor.map(forn => {
+            // Os períodos já vêm formatados do backend (Fev/2026, Mar/2026, etc.)
+            // Apenas garantir que as chaves correspondem aos períodos do Excel
+            const previsaoPorPeriodoFormatado = {};
+            const anoAnteriorPorPeriodoFormatado = {};
+            const previsaoPorPeriodoOriginal = forn.previsao_por_periodo || {};
+            const anoAnteriorPorPeriodoOriginal = forn.ano_anterior_por_periodo || {};
+
+            // Mapear períodos - tentar match direto primeiro, depois por formatação
+            periodos.forEach((periodoFormatado, idx) => {
+                // Tentar match direto (backend já formata igual ao frontend)
+                if (previsaoPorPeriodoOriginal[periodoFormatado] !== undefined) {
+                    previsaoPorPeriodoFormatado[periodoFormatado] = previsaoPorPeriodoOriginal[periodoFormatado];
+                    anoAnteriorPorPeriodoFormatado[periodoFormatado] = anoAnteriorPorPeriodoOriginal[periodoFormatado] || 0;
                 } else {
-                    // Tentar buscar pelo período formatado (caso já venha formatado)
-                    const periodoExistente = Object.keys(periodosPorPeriodo).find(p =>
-                        formatarPeriodo(p) === periodoFormatado || p === periodoFormatado
-                    );
-                    if (periodoExistente) {
-                        previsaoPorPeriodoFormatado[periodoFormatado] = periodosPorPeriodo[periodoExistente];
+                    // Fallback: buscar pela data original
+                    const dataOriginal = datasPrevisao[idx];
+                    if (previsaoPorPeriodoOriginal[dataOriginal] !== undefined) {
+                        previsaoPorPeriodoFormatado[periodoFormatado] = previsaoPorPeriodoOriginal[dataOriginal];
+                        anoAnteriorPorPeriodoFormatado[periodoFormatado] = anoAnteriorPorPeriodoOriginal[dataOriginal] || 0;
+                    } else {
+                        // Último recurso: buscar por período que corresponda após formatação
+                        const periodoExistente = Object.keys(previsaoPorPeriodoOriginal).find(p =>
+                            formatarPeriodo(p) === periodoFormatado || p === periodoFormatado
+                        );
+                        if (periodoExistente) {
+                            previsaoPorPeriodoFormatado[periodoFormatado] = previsaoPorPeriodoOriginal[periodoExistente];
+                            anoAnteriorPorPeriodoFormatado[periodoFormatado] = anoAnteriorPorPeriodoOriginal[periodoExistente] || 0;
+                        }
                     }
                 }
+            });
+
+            console.log(`[exportarTabelaComparativa] Fornecedor ${forn.nome_fornecedor}:`, {
+                previsao_por_periodo: previsaoPorPeriodoFormatado,
+                ano_anterior_por_periodo: anoAnteriorPorPeriodoFormatado
             });
 
             return {
@@ -1836,9 +1951,11 @@ function exportarTabelaComparativa() {
                 previsao_total: forn.previsao_total || 0,
                 ano_anterior_total: forn.ano_anterior_total || 0,
                 variacao_percentual: forn.variacao_percentual || 0,
-                previsao_por_periodo: previsaoPorPeriodoFormatado
+                previsao_por_periodo: previsaoPorPeriodoFormatado,
+                ano_anterior_por_periodo: anoAnteriorPorPeriodoFormatado
             };
         });
+        console.log('[exportarTabelaComparativa] Usando comparacao_yoy_por_fornecedor, fornecedores:', fornecedoresData.length);
     }
 
     // Montar dados para enviar ao servidor
