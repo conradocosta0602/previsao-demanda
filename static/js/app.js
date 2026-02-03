@@ -3128,6 +3128,8 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
         let totalPrevFornecedor = 0;
         let totalAnoAntFornecedor = 0;
         let totaisPorPeriodo = new Array(numColunasPeriodos).fill(0);
+        // Array para armazenar os labels de período (string) dos itens
+        let periodosStringPorIdx = new Array(numColunasPeriodos).fill(null);
 
         itensFornecedor.forEach(item => {
             totalPrevFornecedor += item.demanda_prevista_total || 0;
@@ -3138,6 +3140,10 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
                 item.previsao_por_periodo.forEach((p, idx) => {
                     if (idx < numColunasPeriodos) {
                         totaisPorPeriodo[idx] += p.previsao || 0;
+                        // Capturar o período string do item (mesmo formato usado nas células dos itens)
+                        if (!periodosStringPorIdx[idx] && p.periodo) {
+                            periodosStringPorIdx[idx] = p.periodo;
+                        }
                     }
                 });
             }
@@ -3160,8 +3166,9 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
         bodyHtml += `</td>`;
 
         // Totais por período do fornecedor
+        // Usar o período string capturado dos itens para manter consistência com as células dos itens
         totaisPorPeriodo.forEach((total, idx) => {
-            const periodoLabel = periodos && periodos[idx] ? periodos[idx].periodo : `periodo_${idx}`;
+            const periodoLabel = periodosStringPorIdx[idx] || (periodos && periodos[idx] ? periodos[idx].periodo : `periodo_${idx}`);
             bodyHtml += `<td data-fornecedor-total="${fornecedorId}" data-periodo="${periodoLabel}" style="padding: 6px; text-align: center; border: 1px solid #ddd; background: #e0f2f1; font-weight: bold;">${formatNumber(total)}</td>`;
         });
 
