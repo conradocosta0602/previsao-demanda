@@ -3433,6 +3433,41 @@ function armazenarDadosPrevisao(resultado) {
     console.log('[armazenarDadosPrevisao] resultado.resultado?.grafico_data:', resultado?.resultado?.grafico_data);
     console.log('[armazenarDadosPrevisao] Tem relatorio_detalhado:', !!(resultado && resultado.relatorio_detalhado));
 
+    // Para formato V1 (legado com modelos), armazenar dados do gráfico para restauração
+    if (resultado && resultado.modelos && resultado.melhor_modelo) {
+        const melhorModelo = resultado.melhor_modelo;
+        const modeloData = resultado.modelos[melhorModelo] || {};
+
+        // Obter dados do histórico (base e teste)
+        let historicoBase = resultado.historico_base;
+        let historicoTeste = resultado.historico_teste;
+
+        if (!historicoBase && resultado.serie_temporal) {
+            const datas = resultado.serie_temporal.datas || [];
+            const valores = resultado.serie_temporal.valores || [];
+            const splitIndex = Math.floor(datas.length * 0.8);
+
+            historicoBase = {
+                datas: datas.slice(0, splitIndex),
+                valores: valores.slice(0, splitIndex)
+            };
+            historicoTeste = {
+                datas: datas.slice(splitIndex),
+                valores: valores.slice(splitIndex)
+            };
+        }
+
+        // Armazenar em formato que restaurarGraficoAgregado espera
+        dadosPrevisaoAtual.grafico = {
+            historico_base: historicoBase,
+            historico_teste: historicoTeste,
+            modelos: resultado.modelos,
+            melhor_modelo: melhorModelo,
+            ano_anterior: resultado.ano_anterior
+        };
+        console.log('[armazenarDadosPrevisao] Dados do gráfico V1 armazenados para restauração');
+    }
+
     // Habilitar botão de validação APENAS se:
     // 1. Houver dados do relatório detalhado
     // 2. Houver um único fornecedor selecionado
@@ -4420,11 +4455,11 @@ function mostrarPainelEdicaoItem() {
                         </table>
                     </div>
                     <div style="margin-top: 15px; display: flex; justify-content: flex-end; gap: 10px;">
-                        <button onclick="desselecionarItemDrillDown()" style="padding: 10px 20px; background: #f3f4f6; color: #374151; border: none; border-radius: 6px; cursor: pointer;">
-                            Cancelar
-                        </button>
                         <button onclick="salvarAjustesItem()" style="padding: 10px 20px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;">
                             💾 Salvar Ajustes
+                        </button>
+                        <button onclick="desselecionarItemDrillDown()" style="padding: 10px 20px; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;">
+                            🚪 Sair
                         </button>
                     </div>
                 </div>
