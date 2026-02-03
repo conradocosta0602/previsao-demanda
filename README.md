@@ -1,11 +1,11 @@
-# Sistema de Demanda e Reabastecimento v5.1
+# Sistema de Demanda e Reabastecimento v5.2
 
 Sistema completo para gestão de estoque multi-loja com Centro de Distribuição (CD), combinando previsão de demanda Bottom-Up com política de estoque baseada em curva ABC.
 
-**Novidades v5.1:**
-- **Padrao de Compra**: Centralizacao de pedidos agregando demanda de multiplas lojas em um unico destino
-- Ajuste automatico de cobertura (+10 dias) para transferencia entre filiais
-- Visualizacao integrada na tela de Pedido ao Fornecedor
+**Novidades v5.2:**
+- **Ajuste Manual de Demanda Persistente**: Ajustes salvos no banco sao aplicados automaticamente ao recarregar previsao
+- **Tabela Comparativa por Fornecedor**: Detalhamento com variacao % mes a mes por fornecedor
+- **Atualizacao em Tempo Real**: Ajustes refletem instantaneamente em todas as tabelas e graficos
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/flask-3.0.0-green.svg)](https://flask.palletsprojects.com/)
@@ -588,7 +588,31 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v5.1 (Janeiro 2026) - ATUAL
+### v5.2 (Fevereiro 2026) - ATUAL
+
+**Melhorias na Tabela Comparativa:**
+- **Detalhamento por Fornecedor**: Tabela comparativa agora mostra linhas separadas para cada fornecedor quando multiplos sao selecionados
+- **Variacao % Mes a Mes**: Nova linha de variacao percentual por periodo para cada fornecedor (Prev vs Ano Ant)
+- **Total Consolidado**: Linha de totalizacao com variacao % por periodo para todos os fornecedores
+
+**Sistema de Ajuste Manual de Demanda:**
+- **Persistencia de Ajustes**: Ajustes manuais salvos no banco de dados sao aplicados automaticamente ao recarregar previsao
+- **Atualizacao em Tempo Real**: Ao salvar ajuste, valores sao atualizados na:
+  - Tabela de itens detalhados (celula amarela)
+  - Linha do fornecedor na tabela comparativa
+  - Linha do Total Consolidado na tabela comparativa
+  - Grafico principal de previsao
+- **Rastreabilidade**: Historico completo de ajustes por item/periodo
+
+**Tabelas Utilizadas:**
+- `ajuste_previsao` - Armazena ajustes ativos por item/periodo/granularidade
+- `ajuste_previsao_historico` - Historico de todas as alteracoes
+
+**Arquivos Modificados:**
+- `static/js/app.js` - Funcoes `preencherTabelaComparativaV2` e `salvarAjustesItem` com data-attributes para atualizacao em tempo real
+- `app/blueprints/previsao.py` - Carregamento de ajustes do banco ao gerar previsao
+
+### v5.1 (Janeiro 2026)
 
 **Novas Funcionalidades:**
 - **Padrao de Compra**: Centralizacao de pedidos por loja destino, integrando demanda de multiplas lojas vendedoras em um unico pedido

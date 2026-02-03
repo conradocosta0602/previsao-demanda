@@ -336,6 +336,26 @@ def _api_gerar_previsao_banco_v2_interno():
         previsoes_agregadas_por_periodo = {d: 0 for d in datas_previsao}
         contagem_modelos = {}
 
+        # =====================================================
+        # CARREGAR AJUSTES MANUAIS DO BANCO DE DADOS
+        # Se existir ajuste para item/periodo, usar valor_ajustado
+        # =====================================================
+        ajustes_por_item_periodo = {}
+        try:
+            cursor.execute("""
+                SELECT cod_produto, periodo, valor_ajustado
+                FROM ajuste_previsao
+                WHERE ativo = TRUE
+                  AND granularidade = %s
+            """, (granularidade,))
+            ajustes_rows = cursor.fetchall()
+            for ajuste in ajustes_rows:
+                chave = (str(ajuste['cod_produto']), ajuste['periodo'])
+                ajustes_por_item_periodo[chave] = float(ajuste['valor_ajustado'])
+            print(f"[Ajustes] Carregados {len(ajustes_por_item_periodo)} ajustes manuais do banco")
+        except Exception as e:
+            print(f"[Ajustes] Erro ao carregar ajustes: {e}")
+
         for item in lista_itens:
             cod_produto = item['cod_produto']
             vendas_hist = vendas_item_dict.get(cod_produto, [])
@@ -457,13 +477,26 @@ def _api_gerar_previsao_banco_v2_interno():
                 valor_aa_periodo = vendas_item_por_data.get(chave_ano_anterior, 0)
                 total_ano_anterior_item += valor_aa_periodo
 
+                # Arredondar previsao do periodo para inteiro (como exibido no frontend)
+                previsao_periodo_int = round(previsao_periodo)
+
+                # =====================================================
+                # VERIFICAR SE EXISTE AJUSTE MANUAL PARA ESTE ITEM/PERIODO
+                # Se existir, usar o valor ajustado em vez do calculado
+                # =====================================================
+                chave_ajuste = (str(cod_produto), data_prev)
+                tem_ajuste = chave_ajuste in ajustes_por_item_periodo
+                if tem_ajuste:
+                    previsao_periodo_int = int(ajustes_por_item_periodo[chave_ajuste])
+
                 previsao_item_periodos.append({
                     'periodo': data_prev,
-                    'previsao': round(previsao_periodo, 2),
-                    'ano_anterior': round(valor_aa_periodo, 2)
+                    'previsao': previsao_periodo_int,
+                    'ano_anterior': round(valor_aa_periodo),
+                    'ajuste_manual': tem_ajuste  # Flag para indicar que foi ajustado
                 })
-                previsoes_agregadas_por_periodo[data_prev] += previsao_periodo
-                total_previsao_item += previsao_periodo
+                previsoes_agregadas_por_periodo[data_prev] += previsao_periodo_int
+                total_previsao_item += previsao_periodo_int
 
             # Mapeamento de metodos para nomes simplificados
             mapeamento_metodos = {
@@ -487,14 +520,32 @@ def _api_gerar_previsao_banco_v2_interno():
             if total_ano_anterior_item > 0:
                 variacao_pct = ((total_previsao_item - total_ano_anterior_item) / total_ano_anterior_item) * 100
 
+            # Determinar sinal de alerta baseado na variacao
+            # 🔴 Critico: variacao > 50% ou < -50%
+            # 🟡 Alerta: variacao > 30% ou < -30%
+            # 🔵 Atencao: variacao > 20% ou < -20%
+            # 🟢 Normal: variacao entre -20% e +20%
+            # ⚪ Sem dados: sem ano anterior para comparar
+            if total_ano_anterior_item == 0:
+                sinal_emoji = '⚪'
+            elif abs(variacao_pct) > 50:
+                sinal_emoji = '🔴'
+            elif abs(variacao_pct) > 30:
+                sinal_emoji = '🟡'
+            elif abs(variacao_pct) > 20:
+                sinal_emoji = '🔵'
+            else:
+                sinal_emoji = '🟢'
+
             relatorio_itens.append({
                 'cod_produto': cod_produto,
                 'descricao': item['descricao'],
                 'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
                 'categoria': item['categoria'],
-                'demanda_prevista_total': round(total_previsao_item, 2),
+                'demanda_prevista_total': total_previsao_item,
                 'demanda_ano_anterior': round(total_ano_anterior_item, 2),
                 'variacao_percentual': round(variacao_pct, 1),
+                'sinal_emoji': sinal_emoji,
                 'metodo_estatistico': metodo_exibicao,
                 'previsao_por_periodo': previsao_item_periodos
             })
@@ -952,6 +1003,364 @@ def api_exportar_tabela_comparativa():
             as_attachment=True,
             download_name=filename
         )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+# =====================================================
+# API DE AJUSTES MANUAIS DE PREVISAO
+# =====================================================
+
+@previsao_bp.route('/api/ajuste_previsao/salvar', methods=['POST'])
+def api_salvar_ajuste_previsao():
+    """
+    Salva ajustes manuais de previsao.
+    Recebe uma lista de ajustes por item/periodo.
+    """
+    try:
+        dados = request.get_json()
+
+        if not dados or 'ajustes' not in dados:
+            return jsonify({'success': False, 'erro': 'Dados de ajuste nao fornecidos'}), 400
+
+        ajustes = dados.get('ajustes', [])
+        motivo = dados.get('motivo', None)
+        usuario = dados.get('usuario', 'sistema')
+
+        if not ajustes:
+            return jsonify({'success': False, 'erro': 'Nenhum ajuste fornecido'}), 400
+
+        # Conectar ao banco
+        from app.utils.db_connection import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        ajustes_salvos = 0
+
+        for ajuste in ajustes:
+            cod_produto = ajuste.get('cod_produto')
+            periodo = ajuste.get('periodo')
+            granularidade = ajuste.get('granularidade', 'mensal')
+            valor_original = ajuste.get('valor_original', 0)
+            valor_ajustado = ajuste.get('valor_ajustado', 0)
+            cod_fornecedor = ajuste.get('cod_fornecedor')
+            nome_fornecedor = ajuste.get('nome_fornecedor')
+            metodo_estatistico = ajuste.get('metodo_estatistico')
+
+            if not cod_produto or not periodo:
+                continue
+
+            # Calcular diferenca e percentual
+            diferenca = valor_ajustado - valor_original
+            percentual_ajuste = 0
+            if valor_original > 0:
+                percentual_ajuste = ((valor_ajustado - valor_original) / valor_original) * 100
+
+            # Inserir ajuste (trigger desativa ajustes antigos automaticamente)
+            cursor.execute("""
+                INSERT INTO ajuste_previsao (
+                    cod_produto, cod_fornecedor, nome_fornecedor,
+                    periodo, granularidade,
+                    valor_original, valor_ajustado, diferenca, percentual_ajuste,
+                    motivo, usuario_ajuste, metodo_estatistico
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                cod_produto, cod_fornecedor, nome_fornecedor,
+                periodo, granularidade,
+                valor_original, valor_ajustado, diferenca, percentual_ajuste,
+                motivo, usuario, metodo_estatistico
+            ))
+
+            ajustes_salvos += 1
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'mensagem': f'{ajustes_salvos} ajuste(s) salvo(s) com sucesso',
+            'ajustes_salvos': ajustes_salvos
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@previsao_bp.route('/api/ajuste_previsao/carregar', methods=['GET'])
+def api_carregar_ajustes_previsao():
+    """
+    Carrega ajustes ativos para um produto ou lista de produtos.
+    Parametros: cod_produto, cod_fornecedor, granularidade
+    """
+    try:
+        cod_produto = request.args.get('cod_produto')
+        cod_fornecedor = request.args.get('cod_fornecedor')
+        granularidade = request.args.get('granularidade')
+
+        # Conectar ao banco
+        from app.utils.db_connection import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Construir query dinamicamente
+        query = """
+            SELECT
+                id, cod_produto, cod_fornecedor, nome_fornecedor,
+                periodo, granularidade,
+                valor_original, valor_ajustado, diferenca, percentual_ajuste,
+                motivo, usuario_ajuste, data_ajuste, metodo_estatistico
+            FROM ajuste_previsao
+            WHERE ativo = TRUE
+        """
+        params = []
+
+        if cod_produto:
+            query += " AND cod_produto = %s"
+            params.append(cod_produto)
+
+        if cod_fornecedor:
+            query += " AND cod_fornecedor = %s"
+            params.append(cod_fornecedor)
+
+        if granularidade:
+            query += " AND granularidade = %s"
+            params.append(granularidade)
+
+        query += " ORDER BY cod_produto, periodo"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        # Formatar resultados
+        ajustes = []
+        for row in rows:
+            ajustes.append({
+                'id': row[0],
+                'cod_produto': row[1],
+                'cod_fornecedor': row[2],
+                'nome_fornecedor': row[3],
+                'periodo': row[4],
+                'granularidade': row[5],
+                'valor_original': float(row[6]) if row[6] else 0,
+                'valor_ajustado': float(row[7]) if row[7] else 0,
+                'diferenca': float(row[8]) if row[8] else 0,
+                'percentual_ajuste': float(row[9]) if row[9] else 0,
+                'motivo': row[10],
+                'usuario_ajuste': row[11],
+                'data_ajuste': row[12].isoformat() if row[12] else None,
+                'metodo_estatistico': row[13]
+            })
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'ajustes': ajustes,
+            'total': len(ajustes)
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@previsao_bp.route('/api/ajuste_previsao/historico', methods=['GET'])
+def api_historico_ajustes():
+    """
+    Retorna historico de ajustes para um produto.
+    """
+    try:
+        cod_produto = request.args.get('cod_produto')
+
+        if not cod_produto:
+            return jsonify({'success': False, 'erro': 'cod_produto e obrigatorio'}), 400
+
+        # Conectar ao banco
+        from app.utils.db_connection import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                h.id, h.cod_produto, h.periodo, h.granularidade,
+                h.valor_original, h.valor_ajustado, h.motivo,
+                h.usuario_acao, h.tipo_acao, h.data_acao
+            FROM ajuste_previsao_historico h
+            WHERE h.cod_produto = %s
+            ORDER BY h.data_acao DESC
+            LIMIT 100
+        """, (cod_produto,))
+
+        rows = cursor.fetchall()
+
+        historico = []
+        for row in rows:
+            historico.append({
+                'id': row[0],
+                'cod_produto': row[1],
+                'periodo': row[2],
+                'granularidade': row[3],
+                'valor_original': float(row[4]) if row[4] else 0,
+                'valor_ajustado': float(row[5]) if row[5] else 0,
+                'motivo': row[6],
+                'usuario_acao': row[7],
+                'tipo_acao': row[8],
+                'data_acao': row[9].isoformat() if row[9] else None
+            })
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'historico': historico,
+            'total': len(historico)
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@previsao_bp.route('/api/ajuste_previsao/excluir', methods=['POST'])
+def api_excluir_ajuste():
+    """
+    Exclui (desativa) um ajuste especifico.
+    """
+    try:
+        dados = request.get_json()
+        ajuste_id = dados.get('id')
+        cod_produto = dados.get('cod_produto')
+        periodo = dados.get('periodo')
+
+        if not ajuste_id and not (cod_produto and periodo):
+            return jsonify({'success': False, 'erro': 'Informe id ou (cod_produto + periodo)'}), 400
+
+        # Conectar ao banco
+        from app.utils.db_connection import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        if ajuste_id:
+            cursor.execute("""
+                UPDATE ajuste_previsao
+                SET ativo = FALSE, updated_at = NOW()
+                WHERE id = %s
+            """, (ajuste_id,))
+        else:
+            cursor.execute("""
+                UPDATE ajuste_previsao
+                SET ativo = FALSE, updated_at = NOW()
+                WHERE cod_produto = %s AND periodo = %s AND ativo = TRUE
+            """, (cod_produto, periodo))
+
+        conn.commit()
+        registros_afetados = cursor.rowcount
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'mensagem': f'{registros_afetados} ajuste(s) excluido(s)',
+            'registros_afetados': registros_afetados
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@previsao_bp.route('/api/historico_item', methods=['GET'])
+def api_historico_item():
+    """
+    Retorna historico de vendas de um item especifico para exibicao no grafico drill-down.
+    Retorna dados agregados por mes/semana/dia dos ultimos 2 anos.
+    """
+    try:
+        cod_produto = request.args.get('cod_produto')
+        cod_loja = request.args.get('cod_loja')
+        granularidade = request.args.get('granularidade', 'mensal')
+
+        if not cod_produto:
+            return jsonify({'success': False, 'erro': 'cod_produto e obrigatorio'}), 400
+
+        from app.utils.db_connection import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Buscar vendas dos ultimos 2 anos da tabela historico_vendas_diario
+        # Nota: a tabela usa 'codigo' (INTEGER) e 'data' (DATE)
+        query = """
+            SELECT
+                h.data as data_venda,
+                SUM(h.qtd_venda) as qtd_venda
+            FROM historico_vendas_diario h
+            WHERE h.codigo::text = %s
+              AND h.data >= CURRENT_DATE - INTERVAL '2 years'
+        """
+        params = [str(cod_produto)]
+
+        if cod_loja:
+            query += " AND h.cod_loja = %s"
+            params.append(cod_loja)
+
+        query += " GROUP BY h.data ORDER BY h.data"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        # Agregar por granularidade
+        dados_agregados = {}
+
+        for row in rows:
+            data_venda = row[0]
+            qtd = float(row[1]) if row[1] else 0
+
+            if granularidade == 'mensal':
+                # Formato: YYYY-MM
+                chave = data_venda.strftime('%Y-%m')
+            elif granularidade == 'semanal':
+                # Formato: YYYY-SWW
+                ano_iso, semana_iso, _ = data_venda.isocalendar()
+                chave = f"{ano_iso}-S{semana_iso:02d}"
+            else:
+                # Diario: YYYY-MM-DD
+                chave = data_venda.strftime('%Y-%m-%d')
+
+            if chave not in dados_agregados:
+                dados_agregados[chave] = 0
+            dados_agregados[chave] += qtd
+
+        # Converter para lista ordenada
+        historico = []
+        for periodo in sorted(dados_agregados.keys()):
+            historico.append({
+                'periodo': periodo,
+                'valor': round(dados_agregados[periodo], 2)
+            })
+
+        return jsonify({
+            'success': True,
+            'cod_produto': cod_produto,
+            'granularidade': granularidade,
+            'historico': historico,
+            'total_periodos': len(historico)
+        })
 
     except Exception as e:
         import traceback

@@ -1524,13 +1524,14 @@ function preencherTabelaComparativa(resultado, melhorModelo, granularidade = 'me
     let totalReal = 0;
 
     // Linha Previsão
-    let rowPrevisao = `<tr style="background: #f0f4ff; font-size: ${fontSize};">`;
+    let rowPrevisao = `<tr id="linhaPrevisaoComparativa" style="background: #f0f4ff; font-size: ${fontSize};">`;
     rowPrevisao += `<td style="padding: ${padding}; font-weight: bold; border: 1px solid #ddd; position: sticky; left: 0; background: #f0f4ff; z-index: 5; width: ${labelWidth};">Previsão</td>`;
-    previsoes.forEach((valor) => {
+    previsoes.forEach((valor, index) => {
         totalPrevisao += valor;
-        rowPrevisao += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: 500;">${formatNumber(valor)}</td>`;
+        const periodoData = datasPrevisao[index] || '';
+        rowPrevisao += `<td data-comparativa-periodo="${periodoData}" style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: 500;">${formatNumber(valor)}</td>`;
     });
-    rowPrevisao += `<td style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #e0e7ff;">${formatNumber(totalPrevisao)}</td>`;
+    rowPrevisao += `<td id="totalPrevisaoComparativa" style="padding: ${padding}; text-align: center; border: 1px solid #ddd; font-weight: bold; background: #e0e7ff;">${formatNumber(totalPrevisao)}</td>`;
     rowPrevisao += '</tr>';
 
     // Linha Real (Ano Anterior - para comparação com previsão)
@@ -1913,16 +1914,22 @@ function criarGraficoPrevisaoV2(graficoData, granularidade = 'mensal') {
 
     const ctx = canvas.getContext('2d');
 
-    // Destruir gráfico anterior se existir
+    // Destruir gráfico anterior se existir (verificar AMBAS as variáveis)
     if (window.previsaoChartInstance) {
         window.previsaoChartInstance.destroy();
+        window.previsaoChartInstance = null;
+    }
+    if (previsaoChart) {
+        previsaoChart.destroy();
+        previsaoChart = null;
     }
 
     // Preparar dados
     const labels = graficoData.map(d => formatarLabelPeriodo(d.periodo, granularidade));
     const valores = graficoData.map(d => d.previsao);
 
-    window.previsaoChartInstance = new Chart(ctx, {
+    // Criar gráfico e armazenar em AMBAS as variáveis para consistência
+    const novoGrafico = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: labels,
@@ -1971,10 +1978,20 @@ function criarGraficoPrevisaoV2(graficoData, granularidade = 'mensal') {
             }
         }
     });
+
+    // Armazenar em AMBAS as variáveis para consistência
+    window.previsaoChartInstance = novoGrafico;
+    previsaoChart = novoGrafico;
 }
 
 // Preencher tabela comparativa para formato V2
-function preencherTabelaComparativaV2(graficoData, granularidade = 'mensal') {
+// Agora mostra detalhes por fornecedor quando há mais de um
+function preencherTabelaComparativaV2(graficoData, granularidade = 'mensal', itensDetalhados = null) {
+    console.log('[preencherTabelaComparativaV2] Iniciando...');
+    console.log('[preencherTabelaComparativaV2] graficoData:', graficoData?.length, 'pontos');
+    console.log('[preencherTabelaComparativaV2] granularidade:', granularidade);
+    console.log('[preencherTabelaComparativaV2] itensDetalhados recebidos:', itensDetalhados?.length || 0);
+
     const headerContainer = document.getElementById('tabelaComparativaHeader');
     const bodyContainer = document.getElementById('tabelaComparativaBody');
 
@@ -1983,29 +2000,273 @@ function preencherTabelaComparativaV2(graficoData, granularidade = 'mensal') {
         return;
     }
 
-    // Cabeçalho
-    let headerHtml = '<tr><th style="padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">Período</th>';
-    headerHtml += '<th style="padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">Previsão</th></tr>';
+    // Obter itens detalhados do dadosPrevisaoAtual se não fornecido
+    if (!itensDetalhados || itensDetalhados.length === 0) {
+        console.log('[preencherTabelaComparativaV2] Tentando obter itens de outras fontes...');
+        if (dadosPrevisaoAtual) {
+            itensDetalhados = dadosPrevisaoAtual.relatorio_detalhado?.itens ||
+                              dadosPrevisaoAtual.itens ||
+                              dadosRelatorioDetalhado?.itens || [];
+            console.log('[preencherTabelaComparativaV2] Itens obtidos de backup:', itensDetalhados?.length || 0);
+        }
+    }
+
+    // Agrupar dados por fornecedor
+    const dadosPorFornecedor = {};
+    const periodosSet = new Set();
+
+    if (itensDetalhados && itensDetalhados.length > 0) {
+        itensDetalhados.forEach(item => {
+            const fornecedor = item.nome_fornecedor || 'SEM FORNECEDOR';
+
+            if (!dadosPorFornecedor[fornecedor]) {
+                dadosPorFornecedor[fornecedor] = {
+                    previsaoPorPeriodo: {},
+                    anoAnteriorPorPeriodo: {},
+                    totalPrevisao: 0,
+                    totalAnoAnterior: 0
+                };
+            }
+
+            // Somar previsões por período
+            if (item.previsao_por_periodo) {
+                item.previsao_por_periodo.forEach(p => {
+                    periodosSet.add(p.periodo);
+                    if (!dadosPorFornecedor[fornecedor].previsaoPorPeriodo[p.periodo]) {
+                        dadosPorFornecedor[fornecedor].previsaoPorPeriodo[p.periodo] = 0;
+                        dadosPorFornecedor[fornecedor].anoAnteriorPorPeriodo[p.periodo] = 0;
+                    }
+                    dadosPorFornecedor[fornecedor].previsaoPorPeriodo[p.periodo] += (p.previsao || 0);
+                    dadosPorFornecedor[fornecedor].anoAnteriorPorPeriodo[p.periodo] += (p.ano_anterior || 0);
+                });
+            }
+
+            dadosPorFornecedor[fornecedor].totalPrevisao += (item.demanda_prevista_total || 0);
+            dadosPorFornecedor[fornecedor].totalAnoAnterior += (item.demanda_ano_anterior || 0);
+        });
+    }
+
+    // Ordenar períodos
+    const periodos = Array.from(periodosSet).sort();
+    const fornecedores = Object.keys(dadosPorFornecedor).sort();
+    const temMultiplosFornecedores = fornecedores.length > 1;
+
+    console.log('[preencherTabelaComparativaV2] Períodos encontrados:', periodos.length);
+    console.log('[preencherTabelaComparativaV2] Fornecedores encontrados:', fornecedores);
+    console.log('[preencherTabelaComparativaV2] temMultiplosFornecedores:', temMultiplosFornecedores);
+
+    // Cabeçalho - estilo igual ao Excel
+    const thStyle = 'padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-align: center; font-size: 0.85em; border: 1px solid #5a67d8;';
+    const thStyleFirst = 'padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-align: left; font-size: 0.85em; border: 1px solid #5a67d8; min-width: 120px;';
+    const thStyleTipo = 'padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-align: center; font-size: 0.85em; border: 1px solid #5a67d8; min-width: 80px;';
+
+    let headerHtml = '<tr>';
+    if (temMultiplosFornecedores) {
+        headerHtml += `<th style="${thStyleFirst}">Fornecedor</th>`;
+    }
+    headerHtml += `<th style="${thStyleTipo}">Tipo</th>`;
+
+    periodos.forEach(periodo => {
+        const label = formatarLabelPeriodo(periodo, granularidade);
+        headerHtml += `<th style="${thStyle}">${label}</th>`;
+    });
+    headerHtml += `<th style="${thStyle}">TOTAL</th>`;
+    headerHtml += `<th style="${thStyle}">Var %</th>`;
+    headerHtml += '</tr>';
     headerContainer.innerHTML = headerHtml;
 
-    // Corpo
-    let bodyHtml = '';
-    let totalPrevisao = 0;
+    // Corpo - estilo igual ao Excel
+    const tdStyle = 'padding: 8px; border: 1px solid #e2e8f0; text-align: right; font-size: 0.85em;';
+    const tdStyleLeft = 'padding: 8px; border: 1px solid #e2e8f0; text-align: left; font-size: 0.85em; font-weight: 500;';
+    const tdStyleTipo = 'padding: 8px; border: 1px solid #e2e8f0; text-align: center; font-size: 0.85em;';
 
-    graficoData.forEach(d => {
-        const label = formatarLabelPeriodo(d.periodo, granularidade);
-        totalPrevisao += d.previsao;
-        bodyHtml += `<tr>
-            <td style="padding: 8px; border-bottom: 1px solid #eee;">${label}</td>
-            <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${formatarNumero(d.previsao)}</td>
-        </tr>`;
+    let bodyHtml = '';
+
+    // Totais consolidados
+    const totaisConsolidados = {
+        previsaoPorPeriodo: {},
+        anoAnteriorPorPeriodo: {},
+        totalPrevisao: 0,
+        totalAnoAnterior: 0
+    };
+
+    periodos.forEach(p => {
+        totaisConsolidados.previsaoPorPeriodo[p] = 0;
+        totaisConsolidados.anoAnteriorPorPeriodo[p] = 0;
     });
 
-    // Linha de total
-    bodyHtml += `<tr style="font-weight: bold; background: #f8f9fa;">
-        <td style="padding: 10px; border-top: 2px solid #667eea;">TOTAL</td>
-        <td style="padding: 10px; border-top: 2px solid #667eea; text-align: right;">${formatarNumero(totalPrevisao)}</td>
-    </tr>`;
+    if (temMultiplosFornecedores) {
+        // Mostrar cada fornecedor com três linhas (Previsão, Ano Ant., Var %)
+        fornecedores.forEach((fornecedor, idx) => {
+            const dados = dadosPorFornecedor[fornecedor];
+            const bgColor = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+
+            // Calcular variação do fornecedor (total)
+            const variacaoFornecedor = dados.totalAnoAnterior > 0
+                ? ((dados.totalPrevisao - dados.totalAnoAnterior) / dados.totalAnoAnterior * 100)
+                : 0;
+            const corVariacao = variacaoFornecedor > 0 ? '#059669' : (variacaoFornecedor < 0 ? '#dc2626' : '#666');
+            const sinalVariacao = variacaoFornecedor > 0 ? '+' : '';
+
+            // Calcular variações por período
+            const variacoesPorPeriodo = {};
+            periodos.forEach(periodo => {
+                const prev = dados.previsaoPorPeriodo[periodo] || 0;
+                const aa = dados.anoAnteriorPorPeriodo[periodo] || 0;
+                variacoesPorPeriodo[periodo] = aa > 0 ? ((prev - aa) / aa * 100) : 0;
+            });
+
+            // Linha de Previsão
+            bodyHtml += `<tr style="background: ${bgColor};">`;
+            bodyHtml += `<td style="${tdStyleLeft}" rowspan="3">${fornecedor}</td>`;
+            bodyHtml += `<td style="${tdStyleTipo}; background: #f0fdf4;">Previsão</td>`;
+
+            // Criar ID sanitizado do fornecedor para data-attributes
+            const fornecedorId = fornecedor.replace(/[^a-zA-Z0-9]/g, '_');
+
+            periodos.forEach(periodo => {
+                const valor = dados.previsaoPorPeriodo[periodo] || 0;
+                totaisConsolidados.previsaoPorPeriodo[periodo] += valor;
+                bodyHtml += `<td data-comparativa-fornecedor="${fornecedorId}" data-comparativa-periodo="${periodo}" style="${tdStyle}">${formatNumber(valor)}</td>`;
+            });
+
+            totaisConsolidados.totalPrevisao += dados.totalPrevisao;
+            bodyHtml += `<td data-comparativa-fornecedor-total="${fornecedorId}" style="${tdStyle} font-weight: 600; background: #f0fdf4;">${formatNumber(dados.totalPrevisao)}</td>`;
+            bodyHtml += `<td style="${tdStyle} color: ${corVariacao}; font-weight: 600;" rowspan="3">${sinalVariacao}${variacaoFornecedor.toFixed(1)}%</td>`;
+            bodyHtml += '</tr>';
+
+            // Linha de Ano Anterior
+            bodyHtml += `<tr style="background: ${bgColor};">`;
+            bodyHtml += `<td style="${tdStyleTipo}; background: #fefce8;">Ano Ant.</td>`;
+
+            periodos.forEach(periodo => {
+                const valor = dados.anoAnteriorPorPeriodo[periodo] || 0;
+                totaisConsolidados.anoAnteriorPorPeriodo[periodo] += valor;
+                bodyHtml += `<td style="${tdStyle}">${formatNumber(valor)}</td>`;
+            });
+
+            totaisConsolidados.totalAnoAnterior += dados.totalAnoAnterior;
+            bodyHtml += `<td style="${tdStyle} font-weight: 500;">${formatNumber(dados.totalAnoAnterior)}</td>`;
+            bodyHtml += '</tr>';
+
+            // Linha de Variação % por período
+            bodyHtml += `<tr style="background: ${bgColor};">`;
+            bodyHtml += `<td style="${tdStyleTipo}; background: #ede9fe; font-size: 0.8em;">Var %</td>`;
+
+            periodos.forEach(periodo => {
+                const varPct = variacoesPorPeriodo[periodo];
+                const corVar = varPct > 0 ? '#059669' : (varPct < 0 ? '#dc2626' : '#666');
+                const sinalVar = varPct > 0 ? '+' : '';
+                bodyHtml += `<td style="${tdStyle} color: ${corVar}; font-size: 0.8em; font-weight: 500;">${sinalVar}${varPct.toFixed(1)}%</td>`;
+            });
+
+            // Célula vazia para o total (já temos a variação total no rowspan)
+            bodyHtml += `<td style="${tdStyle} background: #ede9fe;"></td>`;
+            bodyHtml += '</tr>';
+        });
+
+        // Linha de TOTAL CONSOLIDADO
+        const variacaoTotal = totaisConsolidados.totalAnoAnterior > 0
+            ? ((totaisConsolidados.totalPrevisao - totaisConsolidados.totalAnoAnterior) / totaisConsolidados.totalAnoAnterior * 100)
+            : 0;
+        const corVarTotal = variacaoTotal > 0 ? '#059669' : (variacaoTotal < 0 ? '#dc2626' : '#666');
+        const sinalVarTotal = variacaoTotal > 0 ? '+' : '';
+
+        // Calcular variações por período para o total consolidado
+        const variacoesTotalPorPeriodo = {};
+        periodos.forEach(periodo => {
+            const prev = totaisConsolidados.previsaoPorPeriodo[periodo] || 0;
+            const aa = totaisConsolidados.anoAnteriorPorPeriodo[periodo] || 0;
+            variacoesTotalPorPeriodo[periodo] = aa > 0 ? ((prev - aa) / aa * 100) : 0;
+        });
+
+        // Previsão Total
+        bodyHtml += `<tr style="background: linear-gradient(135deg, #1e3a5f 0%, #2d4a6f 100%); color: white; font-weight: bold;">`;
+        bodyHtml += `<td style="padding: 10px; border: 1px solid #1e3a5f; text-align: left;" rowspan="3">TOTAL CONSOLIDADO</td>`;
+        bodyHtml += `<td style="padding: 8px; border: 1px solid #1e3a5f; text-align: center; background: rgba(16, 185, 129, 0.2);">Previsão</td>`;
+
+        periodos.forEach(periodo => {
+            bodyHtml += `<td data-comparativa-consolidado="true" data-comparativa-periodo="${periodo}" style="padding: 8px; border: 1px solid #1e3a5f; text-align: right;">${formatNumber(totaisConsolidados.previsaoPorPeriodo[periodo])}</td>`;
+        });
+
+        bodyHtml += `<td id="totalPrevisaoComparativaConsolidado" style="padding: 8px; border: 1px solid #1e3a5f; text-align: right; background: rgba(16, 185, 129, 0.2);">${formatNumber(totaisConsolidados.totalPrevisao)}</td>`;
+        bodyHtml += `<td style="padding: 8px; border: 1px solid #1e3a5f; text-align: right; color: ${variacaoTotal >= 0 ? '#86efac' : '#fca5a5'};" rowspan="3">${sinalVarTotal}${variacaoTotal.toFixed(1)}%</td>`;
+        bodyHtml += '</tr>';
+
+        // Ano Anterior Total
+        bodyHtml += `<tr style="background: linear-gradient(135deg, #1e3a5f 0%, #2d4a6f 100%); color: white; font-weight: bold;">`;
+        bodyHtml += `<td style="padding: 8px; border: 1px solid #1e3a5f; text-align: center; background: rgba(251, 191, 36, 0.2);">Ano Ant.</td>`;
+
+        periodos.forEach(periodo => {
+            bodyHtml += `<td style="padding: 8px; border: 1px solid #1e3a5f; text-align: right;">${formatNumber(totaisConsolidados.anoAnteriorPorPeriodo[periodo])}</td>`;
+        });
+
+        bodyHtml += `<td style="padding: 8px; border: 1px solid #1e3a5f; text-align: right;">${formatNumber(totaisConsolidados.totalAnoAnterior)}</td>`;
+        bodyHtml += '</tr>';
+
+        // Variação % por período - Total Consolidado
+        bodyHtml += `<tr style="background: linear-gradient(135deg, #1e3a5f 0%, #2d4a6f 100%); color: white; font-weight: bold;">`;
+        bodyHtml += `<td style="padding: 8px; border: 1px solid #1e3a5f; text-align: center; background: rgba(139, 92, 246, 0.3); font-size: 0.85em;">Var %</td>`;
+
+        periodos.forEach(periodo => {
+            const varPct = variacoesTotalPorPeriodo[periodo];
+            const corVarPeriodo = varPct >= 0 ? '#86efac' : '#fca5a5';
+            const sinalVarPeriodo = varPct > 0 ? '+' : '';
+            bodyHtml += `<td style="padding: 8px; border: 1px solid #1e3a5f; text-align: right; color: ${corVarPeriodo}; font-size: 0.85em;">${sinalVarPeriodo}${varPct.toFixed(1)}%</td>`;
+        });
+
+        bodyHtml += `<td style="padding: 8px; border: 1px solid #1e3a5f; text-align: right; background: rgba(139, 92, 246, 0.3);"></td>`;
+        bodyHtml += '</tr>';
+
+    } else {
+        // Formato original para um único fornecedor (ou sem itens detalhados)
+        // Linha de Previsão
+        bodyHtml += '<tr>';
+        bodyHtml += `<td style="${tdStyleTipo}; background: #f0fdf4; font-weight: 500;">Previsão</td>`;
+
+        let totalPrevisao = 0;
+        let totalAnoAnterior = 0;
+
+        if (periodos.length > 0 && fornecedores.length > 0) {
+            const dados = dadosPorFornecedor[fornecedores[0]];
+            periodos.forEach(periodo => {
+                const valor = dados.previsaoPorPeriodo[periodo] || 0;
+                totalPrevisao += valor;
+                bodyHtml += `<td data-comparativa-periodo="${periodo}" style="${tdStyle}">${formatNumber(valor)}</td>`;
+            });
+            totalPrevisao = dados.totalPrevisao;
+            totalAnoAnterior = dados.totalAnoAnterior;
+
+            bodyHtml += `<td id="totalPrevisaoComparativa" style="${tdStyle} font-weight: 600; background: #f0fdf4;">${formatNumber(totalPrevisao)}</td>`;
+
+            const variacao = totalAnoAnterior > 0 ? ((totalPrevisao - totalAnoAnterior) / totalAnoAnterior * 100) : 0;
+            const corVar = variacao > 0 ? '#059669' : (variacao < 0 ? '#dc2626' : '#666');
+            const sinalVar = variacao > 0 ? '+' : '';
+            bodyHtml += `<td style="${tdStyle} color: ${corVar}; font-weight: 600;" rowspan="2">${sinalVar}${variacao.toFixed(1)}%</td>`;
+            bodyHtml += '</tr>';
+
+            // Linha de Ano Anterior
+            bodyHtml += '<tr>';
+            bodyHtml += `<td style="${tdStyleTipo}; background: #fefce8; font-weight: 500;">Ano Ant.</td>`;
+
+            periodos.forEach(periodo => {
+                const valor = dados.anoAnteriorPorPeriodo[periodo] || 0;
+                bodyHtml += `<td style="${tdStyle}">${formatNumber(valor)}</td>`;
+            });
+
+            bodyHtml += `<td style="${tdStyle} font-weight: 500;">${formatNumber(totalAnoAnterior)}</td>`;
+            bodyHtml += '</tr>';
+        } else {
+            // Fallback usando graficoData
+            graficoData.forEach(d => {
+                totalPrevisao += d.previsao || 0;
+                bodyHtml += `<td style="${tdStyle}">${formatNumber(d.previsao || 0)}</td>`;
+            });
+            bodyHtml += `<td style="${tdStyle} font-weight: 600;">${formatNumber(totalPrevisao)}</td>`;
+            bodyHtml += `<td style="${tdStyle}">-</td>`;
+            bodyHtml += '</tr>';
+        }
+    }
 
     bodyContainer.innerHTML = bodyHtml;
 }
@@ -2084,9 +2345,14 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
 
     const ctx = canvas.getContext('2d');
 
-    // Destruir gráfico anterior se existir
+    // Destruir gráfico anterior se existir (verificar AMBAS as variáveis)
+    if (window.previsaoChartInstance) {
+        window.previsaoChartInstance.destroy();
+        window.previsaoChartInstance = null;
+    }
     if (previsaoChart) {
         previsaoChart.destroy();
+        previsaoChart = null;
     }
 
     // Preparar dados da base histórica (50%) - tratar caso seja null/undefined
@@ -2340,6 +2606,9 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
             }
         }
     });
+
+    // Armazenar também em window.previsaoChartInstance para consistência
+    window.previsaoChartInstance = previsaoChart;
 }
 
 // =====================================================
@@ -2544,51 +2813,53 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
             document.getElementById('results').style.display = 'block';
 
             // Detectar formato da resposta (V2 Bottom-Up ou V1 legado)
+            // V2 usa grafico_data direto (formato simplificado com barras)
+            // V1 usa modelos com historico_base, historico_teste, futuro (gráfico de linhas com WMAPE/BIAS)
             const isV2Format = resultado.grafico_data || resultado.resultado?.grafico_data;
 
-            console.log('=== DEBUG V2 ===');
+            console.log('=== DEBUG FORMATO ===');
             console.log('isV2Format:', isV2Format);
             console.log('resultado.grafico_data:', resultado.grafico_data);
-            console.log('resultado.resultado:', resultado.resultado);
+            console.log('resultado.modelos:', resultado.modelos ? 'presente' : 'ausente');
 
             if (isV2Format) {
-                // ========== FORMATO V2 (Bottom-Up) ==========
+                // ========== FORMATO V2 (Bottom-Up com grafico_data) ==========
                 const dados = resultado.resultado || resultado;
                 const graficoData = dados.grafico_data || [];
                 const totalItens = dados.total_itens || 0;
                 const demandaTotal = dados.demanda_total || 0;
                 const granularidade = dados.granularidade || 'mensal';
 
-                console.log('V2 - dados:', dados);
                 console.log('V2 - graficoData:', graficoData);
-                console.log('V2 - totalItens:', totalItens);
-                console.log('V2 - demandaTotal:', demandaTotal);
 
-                // KPIs para V2 (sem WMAPE/BIAS, usar totais)
+                // KPIs para V2
                 document.getElementById('kpi_wmape').textContent = `${totalItens} itens`;
                 document.getElementById('kpi_bias').textContent = '-';
                 document.getElementById('kpi_variacao').textContent = formatarNumero(demandaTotal);
 
                 // Criar gráfico simples para V2
-                console.log('Chamando criarGraficoPrevisaoV2...');
                 criarGraficoPrevisaoV2(graficoData, granularidade);
-                console.log('criarGraficoPrevisaoV2 concluído');
+
+                // Obter itens detalhados para tabela comparativa
+                const itensDetalhados = dados.relatorio_detalhado?.itens || dados.itens || [];
 
                 // Preencher tabela comparativa V2
-                preencherTabelaComparativaV2(graficoData, granularidade);
+                preencherTabelaComparativaV2(graficoData, granularidade, itensDetalhados);
 
                 // Exibir itens detalhados se disponível
-                if (dados.itens && dados.itens.length > 0) {
-                    exibirItensPrevisaoV2(dados.itens);
+                if (itensDetalhados.length > 0) {
+                    exibirItensPrevisaoV2(itensDetalhados);
                 }
 
-                // Desabilitar download (não temos arquivo no V2 ainda)
+                // Desabilitar download
                 const downloadBtn = document.getElementById('downloadBtn');
                 if (downloadBtn) {
                     downloadBtn.href = '#';
                     downloadBtn.style.opacity = '0.5';
                     downloadBtn.style.pointerEvents = 'none';
                 }
+
+                armazenarDadosPrevisao(dados);
 
             } else {
                 // ========== FORMATO V1 (Legado) ==========
@@ -2651,8 +2922,22 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
                     resultado.ano_anterior  // Passar dados do ano anterior para comparação visual
                 );
 
-                // Preencher tabela comparativa
-                preencherTabelaComparativa(resultado, melhorModelo, resultado.granularidade || 'mensal');
+                // Preencher tabela comparativa (usar V2 com detalhes por fornecedor se disponível)
+                const itensDetalhados = resultado.relatorio_detalhado?.itens || [];
+                const granularidade = resultado.granularidade || 'mensal';
+
+                // Construir grafico_data para a tabela comparativa V2
+                const datasPrevisao = modeloData?.futuro?.datas || [];
+                const valoresPrevisao = modeloData?.futuro?.valores || [];
+                const valoresAnoAnt = resultado.ano_anterior?.valores || [];
+                const graficoDataParaTabela = datasPrevisao.map((d, i) => ({
+                    periodo: d,
+                    previsao: valoresPrevisao[i] || 0,
+                    ano_anterior: valoresAnoAnt[i] || 0
+                }));
+
+                // Usar a função V2 que suporta detalhes por fornecedor
+                preencherTabelaComparativaV2(graficoDataParaTabela, granularidade, itensDetalhados);
 
                 // Exibir relatório detalhado por fornecedor/item (se houver dados)
                 if (resultado.relatorio_detalhado) {
@@ -2875,11 +3160,12 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
         bodyHtml += `</td>`;
 
         // Totais por período do fornecedor
-        totaisPorPeriodo.forEach(total => {
-            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; background: #e0f2f1; font-weight: bold;">${formatNumber(total)}</td>`;
+        totaisPorPeriodo.forEach((total, idx) => {
+            const periodoLabel = periodos && periodos[idx] ? periodos[idx].periodo : `periodo_${idx}`;
+            bodyHtml += `<td data-fornecedor-total="${fornecedorId}" data-periodo="${periodoLabel}" style="padding: 6px; text-align: center; border: 1px solid #ddd; background: #e0f2f1; font-weight: bold;">${formatNumber(total)}</td>`;
         });
 
-        bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #b2dfdb; font-weight: bold;">${formatNumber(totalPrevFornecedor)}</td>`;
+        bodyHtml += `<td data-fornecedor-total-geral="${fornecedorId}" style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #b2dfdb; font-weight: bold;">${formatNumber(totalPrevFornecedor)}</td>`;
         bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: #e0f2f1;">${formatNumber(totalAnoAntFornecedor)}</td>`;
 
         const corVariacao = variacaoFornecedor > 0 ? '#059669' : (variacaoFornecedor < 0 ? '#dc2626' : '#666');
@@ -2930,9 +3216,13 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
             return Math.abs(b.variacao_percentual || 0) - Math.abs(a.variacao_percentual || 0);
         });
 
-        // Linhas dos itens (inicialmente visíveis)
+        // Linhas dos itens (inicialmente visíveis) - com onclick para drill-down
         itensOrdenados.forEach(item => {
-            bodyHtml += `<tr class="linha-item" data-fornecedor="${fornecedorId}" style="background: white;">`;
+            // Escapar aspas na descrição para evitar problemas no onclick
+            const descricaoEscapada = (item.descricao || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const fornecedorEscapado = (item.nome_fornecedor || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+            bodyHtml += `<tr class="linha-item" data-fornecedor="${fornecedorId}" data-cod-produto="${item.cod_produto}" onclick="selecionarItemDrillDown('${item.cod_produto}', '${descricaoEscapada}', '${fornecedorEscapado}')" style="background: white;" title="Clique para analisar e ajustar este item">`;
             bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; font-size: 0.85em; min-width: 70px; width: 70px;">${item.cod_produto}</td>`;
             bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 70px; background: white; z-index: 5; font-size: 0.85em; min-width: 220px; width: 220px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${item.descricao}">${item.descricao}</td>`;
 
@@ -2940,7 +3230,7 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
             if (item.previsao_por_periodo && item.previsao_por_periodo.length > 0) {
                 item.previsao_por_periodo.forEach((p, idx) => {
                     if (idx < numColunasPeriodos) {
-                        bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.85em;">${formatNumber(p.previsao || 0)}</td>`;
+                        bodyHtml += `<td data-cod-produto="${item.cod_produto}" data-periodo="${p.periodo}" style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.85em;">${formatNumber(p.previsao || 0)}</td>`;
                     }
                 });
                 // Preencher colunas faltantes
@@ -2955,7 +3245,7 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
             }
 
             // Total previsto
-            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-weight: 500; background: #f0fdf4;">${formatNumber(item.demanda_prevista_total || 0)}</td>`;
+            bodyHtml += `<td data-item-total="${item.cod_produto}" style="padding: 6px; text-align: center; border: 1px solid #ddd; font-weight: 500; background: #f0fdf4;">${formatNumber(item.demanda_prevista_total || 0)}</td>`;
 
             // Ano anterior
             bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd;">${formatNumber(item.demanda_ano_anterior || 0)}</td>`;
@@ -3136,7 +3426,12 @@ function verificarGranularidadeValida() {
 // Função para armazenar dados da previsão quando gerada
 function armazenarDadosPrevisao(resultado) {
     dadosPrevisaoAtual = resultado;
-    console.log('[Validacao] Dados armazenados. Tem relatorio_detalhado:', !!(resultado && resultado.relatorio_detalhado));
+    console.log('[armazenarDadosPrevisao] ====== DADOS ARMAZENADOS ======');
+    console.log('[armazenarDadosPrevisao] resultado:', resultado);
+    console.log('[armazenarDadosPrevisao] resultado.grafico_data:', resultado?.grafico_data);
+    console.log('[armazenarDadosPrevisao] resultado.resultado:', resultado?.resultado);
+    console.log('[armazenarDadosPrevisao] resultado.resultado?.grafico_data:', resultado?.resultado?.grafico_data);
+    console.log('[armazenarDadosPrevisao] Tem relatorio_detalhado:', !!(resultado && resultado.relatorio_detalhado));
 
     // Habilitar botão de validação APENAS se:
     // 1. Houver dados do relatório detalhado
@@ -3715,3 +4010,1019 @@ function mostrarMensagemValidacao(tipo, titulo, mensagem) {
         }, 3000);
     }
 }
+
+// =====================================================
+// SISTEMA DE DRILL-DOWN: ANÁLISE INDIVIDUAL DE ITEM
+// =====================================================
+
+// Variável global para armazenar item selecionado para drill-down
+let itemSelecionadoDrillDown = null;
+let ajustesPendentes = {}; // {cod_produto: {periodo: valor_ajustado, ...}}
+
+// Função para selecionar um item e mostrar detalhes
+function selecionarItemDrillDown(codProduto, descricao, fornecedor) {
+    // Se clicar no mesmo item, desselecionar (toggle)
+    if (itemSelecionadoDrillDown && itemSelecionadoDrillDown.cod_produto === codProduto) {
+        desselecionarItemDrillDown();
+        return;
+    }
+
+    // Armazenar item selecionado
+    itemSelecionadoDrillDown = {
+        cod_produto: codProduto,
+        descricao: descricao,
+        nome_fornecedor: fornecedor
+    };
+
+    // Buscar dados do item no relatório detalhado
+    if (dadosRelatorioDetalhado && dadosRelatorioDetalhado.itens) {
+        // Tentar encontrar por cod_produto (string)
+        let itemDados = dadosRelatorioDetalhado.itens.find(i => i.cod_produto === codProduto);
+
+        // Se não encontrou, tentar comparação menos estrita (trim e string)
+        if (!itemDados) {
+            itemDados = dadosRelatorioDetalhado.itens.find(i => String(i.cod_produto).trim() === String(codProduto).trim());
+        }
+
+        if (itemDados) {
+            itemSelecionadoDrillDown.dados = itemDados;
+        }
+    }
+
+    // Atualizar interface visual
+    atualizarVisuaisDrillDown();
+
+    // Atualizar gráfico para mostrar item individual
+    atualizarGraficoDrillDown();
+
+    // Mostrar painel de edição
+    mostrarPainelEdicaoItem();
+}
+
+// Função para desselecionar item
+function desselecionarItemDrillDown() {
+    itemSelecionadoDrillDown = null;
+
+    // Remover destaque visual de todas as linhas
+    document.querySelectorAll('.linha-item-selecionada').forEach(el => {
+        el.classList.remove('linha-item-selecionada');
+    });
+
+    // Esconder painel de edição
+    esconderPainelEdicaoItem();
+
+    // Restaurar gráfico agregado
+    restaurarGraficoAgregado();
+}
+
+// Atualizar visuais de seleção na tabela
+function atualizarVisuaisDrillDown() {
+    // Remover destaque de todas as linhas
+    document.querySelectorAll('.linha-item-selecionada').forEach(el => {
+        el.classList.remove('linha-item-selecionada');
+    });
+
+    // Adicionar destaque na linha do item selecionado usando data-attribute
+    if (itemSelecionadoDrillDown) {
+        const linha = document.querySelector(`.linha-item[data-cod-produto="${itemSelecionadoDrillDown.cod_produto}"]`);
+        if (linha) {
+            linha.classList.add('linha-item-selecionada');
+        }
+    }
+}
+
+// Atualizar gráfico para mostrar item individual com histórico de 2 anos
+async function atualizarGraficoDrillDown() {
+    if (!itemSelecionadoDrillDown || !itemSelecionadoDrillDown.dados) {
+        return;
+    }
+
+    const item = itemSelecionadoDrillDown.dados;
+    const granularidade = dadosRelatorioDetalhado?.granularidade || 'mensal';
+
+    const canvas = document.getElementById('previsaoChart');
+    if (!canvas) {
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
+
+    // Destruir gráfico anterior se existir (verificar AMBAS as variáveis)
+    if (window.previsaoChartInstance) {
+        window.previsaoChartInstance.destroy();
+        window.previsaoChartInstance = null;
+    }
+    if (previsaoChart) {
+        previsaoChart.destroy();
+        previsaoChart = null;
+    }
+
+    // Buscar histórico de 2 anos da API
+    let historicoItem = [];
+    try {
+        const url = `/api/historico_item?cod_produto=${item.cod_produto}&granularidade=${granularidade}`;
+        const response = await fetch(url);
+        const result = await response.json();
+        if (result.success) {
+            historicoItem = result.historico || [];
+        }
+    } catch (error) {
+        // Continuar sem histórico em caso de erro
+    }
+
+    // Preparar dados da previsão
+    const previsaoPorPeriodo = item.previsao_por_periodo || [];
+    const temAjustes = ajustesPendentes[item.cod_produto] !== undefined;
+
+    // Função para formatar label do período
+    const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    function formatarLabel(periodo, gran) {
+        if (gran === 'mensal') {
+            const partes = periodo.split('-');
+            if (partes.length >= 2) {
+                const mes = parseInt(partes[1]) - 1;
+                const ano = partes[0].substring(2);
+                return `${meses[mes]}/${ano}`;
+            }
+        } else if (gran === 'semanal') {
+            return periodo.replace(/(\d{4})-S(\d+)/, 'S$2/$1').replace(/\/20/, '/');
+        }
+        return periodo;
+    }
+
+    // Criar timeline completa: histórico + previsão
+    const labels = [];
+    const valoresHistorico = [];
+    const valoresPrevisao = [];
+    const valoresAjustados = [];
+
+    // Adicionar histórico
+    historicoItem.forEach(h => {
+        labels.push(formatarLabel(h.periodo, granularidade));
+        valoresHistorico.push(h.valor);
+        valoresPrevisao.push(null);
+        valoresAjustados.push(null);
+    });
+
+    // Adicionar previsão (continuando após o histórico)
+    previsaoPorPeriodo.forEach(p => {
+        labels.push(formatarLabel(p.periodo, granularidade));
+        valoresHistorico.push(null);
+        valoresPrevisao.push(p.previsao || 0);
+
+        // Verificar se há ajuste para este período
+        if (temAjustes && ajustesPendentes[item.cod_produto][p.periodo] !== undefined) {
+            valoresAjustados.push(ajustesPendentes[item.cod_produto][p.periodo]);
+        } else {
+            valoresAjustados.push(null);
+        }
+    });
+
+    // Criar datasets
+    const datasets = [
+        {
+            label: 'Histórico Real',
+            data: valoresHistorico,
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.1,
+            pointRadius: 3,
+            spanGaps: false
+        },
+        {
+            label: 'Previsão',
+            data: valoresPrevisao,
+            borderColor: '#8b5cf6',
+            backgroundColor: 'rgba(139, 92, 246, 0.1)',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.1,
+            pointRadius: 4,
+            spanGaps: false
+        }
+    ];
+
+    // Adicionar linha de ajustes se houver
+    if (temAjustes) {
+        datasets.push({
+            label: 'Valor Ajustado',
+            data: valoresAjustados,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.2)',
+            borderWidth: 3,
+            fill: false,
+            tension: 0.1,
+            pointRadius: 6,
+            pointStyle: 'rectRot',
+            spanGaps: false
+        });
+    }
+
+    // Calcular escala Y considerando todos os valores
+    const todosValores = [
+        ...valoresHistorico.filter(v => v !== null),
+        ...valoresPrevisao.filter(v => v !== null),
+        ...valoresAjustados.filter(v => v !== null)
+    ];
+    const valorMinimo = todosValores.length > 0 ? Math.min(...todosValores.filter(v => v > 0)) : 0;
+    const valorMaximo = todosValores.length > 0 ? Math.max(...todosValores) : 100;
+    const amplitude = valorMaximo - valorMinimo;
+    const yMin = Math.max(0, valorMinimo - (amplitude * 0.1));
+    const yMax = valorMaximo + (amplitude * 0.1);
+
+    // Criar gráfico
+    previsaoChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: `${item.cod_produto} - ${item.descricao.substring(0, 50)}${item.descricao.length > 50 ? '...' : ''}`,
+                    font: { size: 14, weight: 'bold' },
+                    color: '#374151'
+                },
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { usePointStyle: true, padding: 15 }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) label += ': ';
+                            if (context.parsed.y !== null) {
+                                label += formatNumber(context.parsed.y) + ' un';
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    min: yMin,
+                    max: yMax,
+                    title: { display: true, text: 'Quantidade' },
+                    ticks: {
+                        callback: function(value) { return formatNumber(value); }
+                    }
+                },
+                x: {
+                    title: { display: true, text: 'Período' },
+                    ticks: { maxRotation: 45, minRotation: 45 }
+                }
+            }
+        }
+    });
+
+    // Armazenar também em window.previsaoChartInstance para consistência
+    window.previsaoChartInstance = previsaoChart;
+
+    // Atualizar título do card do gráfico
+    atualizarTituloGraficoDrillDown();
+}
+
+// Atualizar título do gráfico para indicar drill-down
+function atualizarTituloGraficoDrillDown() {
+    const tituloGrafico = document.querySelector('.card-compact h3');
+    if (tituloGrafico && itemSelecionadoDrillDown) {
+        tituloGrafico.innerHTML = `
+            <span style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                <span>📊 Item: ${itemSelecionadoDrillDown.cod_produto}</span>
+                <button onclick="desselecionarItemDrillDown()" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                    ✕ Voltar Visão Geral
+                </button>
+            </span>
+        `;
+    }
+}
+
+// Restaurar gráfico agregado
+function restaurarGraficoAgregado() {
+    console.log('[restaurarGraficoAgregado] Iniciando restauração do gráfico agregado...');
+    console.log('[restaurarGraficoAgregado] dadosPrevisaoAtual:', dadosPrevisaoAtual);
+
+    // Restaurar título do gráfico
+    const cardGrafico = document.querySelector('.card-compact');
+    if (cardGrafico) {
+        const h3 = cardGrafico.querySelector('h3');
+        if (h3) {
+            h3.innerHTML = '📈 Histórico e Previsão de Demanda';
+        }
+    }
+
+    // Verificar formato V2 (Bottom-Up) - tentar múltiplos caminhos
+    // O grafico_data pode estar em:
+    // - dadosPrevisaoAtual.grafico_data (direto)
+    // - dadosPrevisaoAtual.resultado.grafico_data (aninhado)
+    let graficoData = null;
+    let granularidade = 'mensal';
+
+    if (dadosPrevisaoAtual) {
+        // Tentar caminho direto primeiro
+        if (dadosPrevisaoAtual.grafico_data && dadosPrevisaoAtual.grafico_data.length > 0) {
+            graficoData = dadosPrevisaoAtual.grafico_data;
+            granularidade = dadosPrevisaoAtual.granularidade || 'mensal';
+            console.log('[restaurarGraficoAgregado] grafico_data encontrado em dadosPrevisaoAtual.grafico_data');
+        }
+        // Tentar caminho aninhado
+        else if (dadosPrevisaoAtual.resultado?.grafico_data && dadosPrevisaoAtual.resultado.grafico_data.length > 0) {
+            graficoData = dadosPrevisaoAtual.resultado.grafico_data;
+            granularidade = dadosPrevisaoAtual.resultado.granularidade || 'mensal';
+            console.log('[restaurarGraficoAgregado] grafico_data encontrado em dadosPrevisaoAtual.resultado.grafico_data');
+        }
+    }
+
+    console.log('[restaurarGraficoAgregado] graficoData final:', graficoData ? `${graficoData.length} pontos` : 'NÃO ENCONTRADO');
+
+    if (graficoData && graficoData.length > 0) {
+        // Formato V2 - recriar gráfico com grafico_data
+        console.log('[restaurarGraficoAgregado] Restaurando gráfico V2 com granularidade:', granularidade);
+        criarGraficoPrevisaoV2(graficoData, granularidade);
+        return;
+    }
+
+    // Se temos dados salvos no formato V1, recriar gráfico agregado
+    if (dadosPrevisaoAtual && dadosPrevisaoAtual.grafico) {
+        console.log('[restaurarGraficoAgregado] Restaurando gráfico V1');
+        const g = dadosPrevisaoAtual.grafico;
+        criarGraficoPrevisao(
+            g.historico_base,
+            g.historico_teste,
+            g.modelos,
+            g.melhor_modelo,
+            dadosPrevisaoAtual.granularidade,
+            g.ano_anterior
+        );
+    } else {
+        console.log('[restaurarGraficoAgregado] NENHUM dado de gráfico encontrado para restaurar!');
+    }
+}
+
+// Mostrar painel de edição do item
+function mostrarPainelEdicaoItem() {
+    if (!itemSelecionadoDrillDown || !itemSelecionadoDrillDown.dados) return;
+
+    const item = itemSelecionadoDrillDown.dados;
+
+    // Verificar se o painel já existe
+    let painel = document.getElementById('painelEdicaoItem');
+    if (!painel) {
+        // Criar painel após a tabela comparativa
+        const tabelaComparativa = document.querySelector('#tabelaComparativa')?.closest('.card-compact');
+        if (tabelaComparativa) {
+            const painelHtml = `
+                <div id="painelEdicaoItem" class="card-compact" style="margin-top: 20px; border: 2px solid #8b5cf6; display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 style="color: #8b5cf6; margin: 0;">
+                            ✏️ Ajuste Manual de Previsão
+                        </h3>
+                        <div>
+                            <button onclick="aplicarAjustePercentual()" style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 5px; cursor: pointer; margin-right: 8px; font-size: 0.85em;">
+                                📊 Aplicar %
+                            </button>
+                            <button onclick="copiarAnoAnterior()" style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 5px; cursor: pointer; margin-right: 8px; font-size: 0.85em;">
+                                📋 Copiar Ano Ant.
+                            </button>
+                            <button onclick="resetarAjustesItem()" style="padding: 6px 12px; background: #fee2e2; color: #dc2626; border: none; border-radius: 5px; cursor: pointer; font-size: 0.85em;">
+                                🔄 Resetar
+                            </button>
+                        </div>
+                    </div>
+                    <div id="infoItemSelecionado" style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 15px;">
+                        <!-- Info do item -->
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table id="tabelaAjusteItem" style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+                            <thead>
+                                <tr style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white;">
+                                    <th style="padding: 10px; text-align: left;">Período</th>
+                                    <th style="padding: 10px; text-align: right;">Previsão</th>
+                                    <th style="padding: 10px; text-align: right;">Ano Ant.</th>
+                                    <th style="padding: 10px; text-align: center;">Ajustado</th>
+                                    <th style="padding: 10px; text-align: center;">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaAjusteItemBody">
+                                <!-- Preenchido dinamicamente -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="margin-top: 15px; display: flex; justify-content: flex-end; gap: 10px;">
+                        <button onclick="desselecionarItemDrillDown()" style="padding: 10px 20px; background: #f3f4f6; color: #374151; border: none; border-radius: 6px; cursor: pointer;">
+                            Cancelar
+                        </button>
+                        <button onclick="salvarAjustesItem()" style="padding: 10px 20px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;">
+                            💾 Salvar Ajustes
+                        </button>
+                    </div>
+                </div>
+            `;
+            tabelaComparativa.insertAdjacentHTML('afterend', painelHtml);
+            painel = document.getElementById('painelEdicaoItem');
+        }
+    }
+
+    if (!painel) return;
+
+    // Preencher info do item
+    const infoItem = document.getElementById('infoItemSelecionado');
+    infoItem.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+            <div>
+                <div style="font-size: 0.8em; color: #666;">Código</div>
+                <div style="font-weight: bold;">${item.cod_produto}</div>
+            </div>
+            <div>
+                <div style="font-size: 0.8em; color: #666;">Descrição</div>
+                <div style="font-weight: 500;">${item.descricao}</div>
+            </div>
+            <div>
+                <div style="font-size: 0.8em; color: #666;">Fornecedor</div>
+                <div>${item.nome_fornecedor || '-'}</div>
+            </div>
+            <div>
+                <div style="font-size: 0.8em; color: #666;">Método</div>
+                <div>${item.metodo_estatistico || '-'}</div>
+            </div>
+            <div>
+                <div style="font-size: 0.8em; color: #666;">Previsão Total</div>
+                <div style="font-weight: bold; color: #8b5cf6;">${formatNumber(item.demanda_prevista_total || 0)} un</div>
+            </div>
+            <div>
+                <div style="font-size: 0.8em; color: #666;">Variação</div>
+                <div style="font-weight: bold; color: ${(item.variacao_percentual || 0) >= 0 ? '#059669' : '#dc2626'};">
+                    ${(item.variacao_percentual || 0) > 0 ? '+' : ''}${(item.variacao_percentual || 0).toFixed(1)}%
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Preencher tabela de ajustes
+    const tbody = document.getElementById('tabelaAjusteItemBody');
+    const previsaoPorPeriodo = item.previsao_por_periodo || [];
+
+    let html = '';
+    previsaoPorPeriodo.forEach((p, idx) => {
+        const temAjuste = ajustesPendentes[item.cod_produto] && ajustesPendentes[item.cod_produto][p.periodo] !== undefined;
+        const valorAjustado = temAjuste ? ajustesPendentes[item.cod_produto][p.periodo] : p.previsao;
+
+        // Formatar label do período
+        let labelPeriodo = p.periodo;
+        if (dadosRelatorioDetalhado && dadosRelatorioDetalhado.granularidade === 'mensal') {
+            const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+            const partes = p.periodo.split('-');
+            if (partes.length >= 2) {
+                const mes = parseInt(partes[1]) - 1;
+                labelPeriodo = `${meses[mes]}/${partes[0]}`;
+            }
+        } else if (dadosRelatorioDetalhado && dadosRelatorioDetalhado.granularidade === 'semanal') {
+            labelPeriodo = p.periodo.replace(/(\d{4})-S(\d+)/, 'Sem $2/$1');
+        }
+
+        html += `
+            <tr style="border-bottom: 1px solid #e5e7eb; ${temAjuste ? 'background: #f0fdf4;' : ''}">
+                <td style="padding: 10px;">${labelPeriodo}</td>
+                <td style="padding: 10px; text-align: right; color: #6b7280;">${formatNumber(p.previsao || 0)}</td>
+                <td style="padding: 10px; text-align: right; color: #f97316;">${formatNumber(p.ano_anterior || 0)}</td>
+                <td style="padding: 10px; text-align: center;">
+                    <input type="number" class="input-ajuste-periodo"
+                        data-periodo="${p.periodo}"
+                        data-original="${p.previsao || 0}"
+                        data-ano-anterior="${p.ano_anterior || 0}"
+                        value="${Math.round(valorAjustado)}"
+                        onchange="registrarAjustePeriodo('${item.cod_produto}', '${p.periodo}', this.value)"
+                        style="width: 80px; padding: 6px; border: 1px solid ${temAjuste ? '#10b981' : '#d1d5db'}; border-radius: 4px; text-align: right; ${temAjuste ? 'background: #ecfdf5; font-weight: bold;' : ''}">
+                </td>
+                <td style="padding: 10px; text-align: center;">
+                    <button onclick="resetarPeriodo('${item.cod_produto}', '${p.periodo}', ${p.previsao || 0})"
+                        style="padding: 4px 8px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 0.8em;"
+                        title="Resetar para valor original">
+                        🔄
+                    </button>
+                    <button onclick="copiarAnoAnteriorPeriodo('${item.cod_produto}', '${p.periodo}', ${p.ano_anterior || 0})"
+                        style="padding: 4px 8px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 4px; cursor: pointer; font-size: 0.8em; margin-left: 4px;"
+                        title="Usar valor do ano anterior">
+                        📋
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+
+    // Mostrar painel
+    painel.style.display = 'block';
+
+    // Scroll suave até o painel
+    painel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Esconder painel de edição
+function esconderPainelEdicaoItem() {
+    const painel = document.getElementById('painelEdicaoItem');
+    if (painel) {
+        painel.style.display = 'none';
+    }
+}
+
+// Registrar ajuste em um período específico
+function registrarAjustePeriodo(codProduto, periodo, valor) {
+    const valorNum = parseFloat(valor);
+    if (isNaN(valorNum)) return;
+
+    // Inicializar objeto de ajustes para o produto se não existir
+    if (!ajustesPendentes[codProduto]) {
+        ajustesPendentes[codProduto] = {};
+    }
+
+    // Buscar valor original
+    const item = dadosRelatorioDetalhado?.itens?.find(i => i.cod_produto === codProduto);
+    const periodoData = item?.previsao_por_periodo?.find(p => p.periodo === periodo);
+    const valorOriginal = periodoData?.previsao || 0;
+
+    // Se valor é igual ao original, remover ajuste
+    if (Math.round(valorNum) === Math.round(valorOriginal)) {
+        delete ajustesPendentes[codProduto][periodo];
+        if (Object.keys(ajustesPendentes[codProduto]).length === 0) {
+            delete ajustesPendentes[codProduto];
+        }
+    } else {
+        ajustesPendentes[codProduto][periodo] = valorNum;
+    }
+
+    // Atualizar visual do input
+    const input = document.querySelector(`.input-ajuste-periodo[data-periodo="${periodo}"]`);
+    if (input) {
+        const temAjuste = ajustesPendentes[codProduto] && ajustesPendentes[codProduto][periodo] !== undefined;
+        input.style.borderColor = temAjuste ? '#10b981' : '#d1d5db';
+        input.style.background = temAjuste ? '#ecfdf5' : 'white';
+        input.style.fontWeight = temAjuste ? 'bold' : 'normal';
+
+        // Atualizar linha da tabela
+        const tr = input.closest('tr');
+        if (tr) {
+            tr.style.background = temAjuste ? '#f0fdf4' : '';
+        }
+    }
+
+    // Atualizar gráfico
+    atualizarGraficoDrillDown();
+
+    // Atualizar indicador visual na tabela principal
+    atualizarIndicadorAjusteTabela(codProduto);
+}
+
+// Resetar período para valor original
+function resetarPeriodo(codProduto, periodo, valorOriginal) {
+    const input = document.querySelector(`.input-ajuste-periodo[data-periodo="${periodo}"]`);
+    if (input) {
+        input.value = Math.round(valorOriginal);
+        registrarAjustePeriodo(codProduto, periodo, valorOriginal);
+    }
+}
+
+// Copiar valor do ano anterior para um período
+function copiarAnoAnteriorPeriodo(codProduto, periodo, valorAnoAnterior) {
+    const input = document.querySelector(`.input-ajuste-periodo[data-periodo="${periodo}"]`);
+    if (input) {
+        input.value = Math.round(valorAnoAnterior);
+        registrarAjustePeriodo(codProduto, periodo, valorAnoAnterior);
+    }
+}
+
+// Resetar todos os ajustes do item
+function resetarAjustesItem() {
+    if (!itemSelecionadoDrillDown) return;
+
+    const codProduto = itemSelecionadoDrillDown.cod_produto;
+    delete ajustesPendentes[codProduto];
+
+    // Atualizar painel
+    mostrarPainelEdicaoItem();
+
+    // Atualizar gráfico
+    atualizarGraficoDrillDown();
+
+    // Atualizar indicador na tabela
+    atualizarIndicadorAjusteTabela(codProduto);
+}
+
+// Copiar todos os valores do ano anterior
+function copiarAnoAnterior() {
+    if (!itemSelecionadoDrillDown || !itemSelecionadoDrillDown.dados) return;
+
+    const item = itemSelecionadoDrillDown.dados;
+    const previsaoPorPeriodo = item.previsao_por_periodo || [];
+
+    previsaoPorPeriodo.forEach(p => {
+        if (p.ano_anterior > 0) {
+            copiarAnoAnteriorPeriodo(item.cod_produto, p.periodo, p.ano_anterior);
+        }
+    });
+}
+
+// Aplicar percentual de ajuste
+function aplicarAjustePercentual() {
+    const percentual = prompt('Digite o percentual de ajuste (ex: 10 para +10%, -20 para -20%):', '0');
+    if (percentual === null) return;
+
+    const pct = parseFloat(percentual);
+    if (isNaN(pct)) {
+        alert('Valor inválido. Use números (ex: 10, -20)');
+        return;
+    }
+
+    if (!itemSelecionadoDrillDown || !itemSelecionadoDrillDown.dados) return;
+
+    const item = itemSelecionadoDrillDown.dados;
+    const previsaoPorPeriodo = item.previsao_por_periodo || [];
+
+    previsaoPorPeriodo.forEach(p => {
+        const novoValor = (p.previsao || 0) * (1 + pct / 100);
+        const input = document.querySelector(`.input-ajuste-periodo[data-periodo="${p.periodo}"]`);
+        if (input) {
+            input.value = Math.round(novoValor);
+            registrarAjustePeriodo(item.cod_produto, p.periodo, novoValor);
+        }
+    });
+}
+
+// Atualizar indicador de ajuste na tabela principal
+function atualizarIndicadorAjusteTabela(codProduto) {
+    const temAjustes = ajustesPendentes[codProduto] && Object.keys(ajustesPendentes[codProduto]).length > 0;
+
+    // Encontrar linha do item na tabela
+    const linhas = document.querySelectorAll('.linha-item');
+    linhas.forEach(linha => {
+        const codProdutoCell = linha.querySelector('td:first-child');
+        if (codProdutoCell && codProdutoCell.textContent.trim() === codProduto) {
+            // Verificar se já tem indicador
+            let indicador = linha.querySelector('.indicador-ajuste');
+            if (temAjustes) {
+                if (!indicador) {
+                    indicador = document.createElement('span');
+                    indicador.className = 'indicador-ajuste';
+                    indicador.style.cssText = 'display: inline-block; width: 8px; height: 8px; background: #10b981; border-radius: 50%; margin-left: 6px; vertical-align: middle;';
+                    indicador.title = 'Item com ajustes pendentes';
+                    codProdutoCell.appendChild(indicador);
+                }
+            } else if (indicador) {
+                indicador.remove();
+            }
+        }
+    });
+}
+
+// Salvar ajustes do item no banco de dados
+async function salvarAjustesItem() {
+    if (!itemSelecionadoDrillDown) {
+        alert('Nenhum item selecionado');
+        return;
+    }
+
+    const codProduto = itemSelecionadoDrillDown.cod_produto;
+    const ajustesItem = ajustesPendentes[codProduto];
+
+    if (!ajustesItem || Object.keys(ajustesItem).length === 0) {
+        alert('Nenhum ajuste para salvar');
+        return;
+    }
+
+    // Preparar dados para enviar
+    const item = itemSelecionadoDrillDown.dados;
+    const ajustesParaSalvar = [];
+
+    Object.entries(ajustesItem).forEach(([periodo, valorAjustado]) => {
+        const periodoData = item.previsao_por_periodo?.find(p => p.periodo === periodo);
+        const valorOriginal = periodoData?.previsao || 0;
+
+        ajustesParaSalvar.push({
+            cod_produto: codProduto,
+            cod_fornecedor: item.cod_fornecedor || null,
+            nome_fornecedor: item.nome_fornecedor || null,
+            periodo: periodo,
+            granularidade: dadosRelatorioDetalhado?.granularidade || 'mensal',
+            valor_original: valorOriginal,
+            valor_ajustado: valorAjustado,
+            metodo_estatistico: item.metodo_estatistico || null
+        });
+    });
+
+    // Enviar para API
+    try {
+        const response = await fetch('/api/ajuste_previsao/salvar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ajustes: ajustesParaSalvar,
+                motivo: prompt('Informe o motivo do ajuste (opcional):', '') || null
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // Calcular diferença total dos ajustes
+            let diferencaTotal = 0;
+            const diferencasPorPeriodo = {};
+
+            // Atualizar os valores na tabela principal e calcular diferenças
+            ajustesParaSalvar.forEach(ajuste => {
+                const diferenca = ajuste.valor_ajustado - ajuste.valor_original;
+                diferencaTotal += diferenca;
+
+                // Acumular diferença por período
+                if (!diferencasPorPeriodo[ajuste.periodo]) {
+                    diferencasPorPeriodo[ajuste.periodo] = 0;
+                }
+                diferencasPorPeriodo[ajuste.periodo] += diferenca;
+
+                // Atualizar célula do período do item
+                const celula = document.querySelector(`td[data-cod-produto="${ajuste.cod_produto}"][data-periodo="${ajuste.periodo}"]`);
+                if (celula) {
+                    celula.textContent = formatNumber(ajuste.valor_ajustado);
+                    celula.style.background = '#fef3c7';
+                    celula.title = `Ajustado de ${formatNumber(ajuste.valor_original)} para ${formatNumber(ajuste.valor_ajustado)}`;
+                }
+            });
+
+            // Atualizar total do item na tabela
+            const celulaItemTotal = document.querySelector(`td[data-item-total="${codProduto}"]`);
+            if (celulaItemTotal && itemSelecionadoDrillDown && itemSelecionadoDrillDown.dados) {
+                const novoTotalItem = (itemSelecionadoDrillDown.dados.demanda_prevista_total || 0) + diferencaTotal;
+                celulaItemTotal.textContent = formatNumber(novoTotalItem);
+                celulaItemTotal.style.background = '#fef3c7';
+                itemSelecionadoDrillDown.dados.demanda_prevista_total = novoTotalItem;
+            }
+
+            // Atualizar dados em memória para o item
+            if (itemSelecionadoDrillDown && itemSelecionadoDrillDown.dados && itemSelecionadoDrillDown.dados.previsao_por_periodo) {
+                ajustesParaSalvar.forEach(ajuste => {
+                    const periodoData = itemSelecionadoDrillDown.dados.previsao_por_periodo.find(p => p.periodo === ajuste.periodo);
+                    if (periodoData) {
+                        periodoData.previsao = ajuste.valor_ajustado;
+                    }
+                });
+            }
+
+            // Atualizar totais do fornecedor (por período e geral)
+            const fornecedorNome = itemSelecionadoDrillDown?.dados?.nome_fornecedor || '';
+            const fornecedorId = fornecedorNome.replace(/[^a-zA-Z0-9]/g, '_');
+
+            // Atualizar cada período do fornecedor
+            Object.entries(diferencasPorPeriodo).forEach(([periodo, diferenca]) => {
+                const celulaFornPeriodo = document.querySelector(`td[data-fornecedor-total="${fornecedorId}"][data-periodo="${periodo}"]`);
+                if (celulaFornPeriodo) {
+                    const valorAtual = parseFloat(celulaFornPeriodo.textContent.replace(/\./g, '').replace(',', '.')) || 0;
+                    const novoValor = valorAtual + diferenca;
+                    celulaFornPeriodo.textContent = formatNumber(novoValor);
+                    celulaFornPeriodo.style.background = '#fef3c7';
+                }
+            });
+
+            // Atualizar total geral do fornecedor
+            const celulaFornTotal = document.querySelector(`td[data-fornecedor-total-geral="${fornecedorId}"]`);
+            if (celulaFornTotal) {
+                const valorAtual = parseFloat(celulaFornTotal.textContent.replace(/\./g, '').replace(',', '.')) || 0;
+                const novoValor = valorAtual + diferencaTotal;
+                celulaFornTotal.textContent = formatNumber(novoValor);
+                celulaFornTotal.style.background = '#fef3c7';
+            }
+
+            // Atualizar tabela comparativa (linha Previsão)
+            // Atualiza tanto a linha do fornecedor específico quanto o total consolidado
+            Object.entries(diferencasPorPeriodo).forEach(([periodo, diferenca]) => {
+                // 1. Atualizar célula do fornecedor específico na tabela comparativa
+                const celulaFornecedorComparativa = document.querySelector(`td[data-comparativa-fornecedor="${fornecedorId}"][data-comparativa-periodo="${periodo}"]`);
+                if (celulaFornecedorComparativa) {
+                    const valorAtual = parseFloat(celulaFornecedorComparativa.textContent.replace(/\./g, '').replace(',', '.')) || 0;
+                    const novoValor = valorAtual + diferenca;
+                    celulaFornecedorComparativa.textContent = formatNumber(novoValor);
+                    celulaFornecedorComparativa.style.background = '#fef3c7';
+                }
+
+                // 2. Atualizar célula do TOTAL CONSOLIDADO na tabela comparativa
+                const celulaConsolidadoComparativa = document.querySelector(`td[data-comparativa-consolidado="true"][data-comparativa-periodo="${periodo}"]`);
+                if (celulaConsolidadoComparativa) {
+                    const valorAtual = parseFloat(celulaConsolidadoComparativa.textContent.replace(/\./g, '').replace(',', '.')) || 0;
+                    const novoValor = valorAtual + diferenca;
+                    celulaConsolidadoComparativa.textContent = formatNumber(novoValor);
+                    celulaConsolidadoComparativa.style.background = '#fef3c7';
+                }
+
+                // 3. Fallback: Atualizar célula genérica (para caso de fornecedor único sem data-attributes específicos)
+                const celulaComparativa = document.querySelector(`td[data-comparativa-periodo="${periodo}"]:not([data-comparativa-fornecedor]):not([data-comparativa-consolidado])`);
+                if (celulaComparativa) {
+                    const valorAtual = parseFloat(celulaComparativa.textContent.replace(/\./g, '').replace(',', '.')) || 0;
+                    const novoValor = valorAtual + diferenca;
+                    celulaComparativa.textContent = formatNumber(novoValor);
+                    celulaComparativa.style.background = '#fef3c7';
+                }
+            });
+
+            // Atualizar total geral do fornecedor na tabela comparativa
+            const celulaFornecedorTotalComparativa = document.querySelector(`td[data-comparativa-fornecedor-total="${fornecedorId}"]`);
+            if (celulaFornecedorTotalComparativa) {
+                const valorAtual = parseFloat(celulaFornecedorTotalComparativa.textContent.replace(/\./g, '').replace(',', '.')) || 0;
+                const novoValor = valorAtual + diferencaTotal;
+                celulaFornecedorTotalComparativa.textContent = formatNumber(novoValor);
+                celulaFornecedorTotalComparativa.style.background = '#fef3c7';
+            }
+
+            // Atualizar total geral consolidado da tabela comparativa
+            const celulaTotalConsolidado = document.getElementById('totalPrevisaoComparativaConsolidado');
+            if (celulaTotalConsolidado) {
+                const valorAtual = parseFloat(celulaTotalConsolidado.textContent.replace(/\./g, '').replace(',', '.')) || 0;
+                const novoValor = valorAtual + diferencaTotal;
+                celulaTotalConsolidado.textContent = formatNumber(novoValor);
+                celulaTotalConsolidado.style.background = '#fef3c7';
+            }
+
+            // Atualizar total geral da tabela comparativa (fornecedor único)
+            const celulaTotalComparativa = document.getElementById('totalPrevisaoComparativa');
+            if (celulaTotalComparativa) {
+                const valorAtual = parseFloat(celulaTotalComparativa.textContent.replace(/\./g, '').replace(',', '.')) || 0;
+                const novoValor = valorAtual + diferencaTotal;
+                celulaTotalComparativa.textContent = formatNumber(novoValor);
+                celulaTotalComparativa.style.background = '#fef3c7';
+            }
+
+            // Atualizar dados globais e gráfico
+            if (dadosRelatorioDetalhado) {
+                // Atualizar item nos dados globais
+                const itemGlobal = dadosRelatorioDetalhado.itens?.find(i => i.cod_produto === codProduto);
+                if (itemGlobal) {
+                    itemGlobal.demanda_prevista_total = (itemGlobal.demanda_prevista_total || 0) + diferencaTotal;
+                    ajustesParaSalvar.forEach(ajuste => {
+                        const periodoData = itemGlobal.previsao_por_periodo?.find(p => p.periodo === ajuste.periodo);
+                        if (periodoData) {
+                            periodoData.previsao = ajuste.valor_ajustado;
+                        }
+                    });
+                }
+
+                // Atualizar previsões agregadas
+                if (dadosRelatorioDetalhado.previsoes_agregadas) {
+                    Object.entries(diferencasPorPeriodo).forEach(([periodo, diferenca]) => {
+                        if (dadosRelatorioDetalhado.previsoes_agregadas[periodo] !== undefined) {
+                            dadosRelatorioDetalhado.previsoes_agregadas[periodo] += diferenca;
+                        }
+                    });
+                }
+
+                // Recalcular e atualizar gráfico principal
+                atualizarGraficoAposAjuste();
+            }
+
+            // Limpar ajustes pendentes do item
+            delete ajustesPendentes[codProduto];
+
+            // Atualizar visual
+            atualizarIndicadorAjusteTabela(codProduto);
+
+            // Mostrar mensagem de sucesso
+            mostrarMensagemValidacao('sucesso', 'Ajustes Salvos',
+                `${ajustesParaSalvar.length} ajuste(s) salvos com sucesso para o item ${codProduto}`);
+
+            // Desselecionar item
+            desselecionarItemDrillDown();
+        } else {
+            alert('Erro ao salvar ajustes: ' + (result.erro || 'Erro desconhecido'));
+        }
+    } catch (error) {
+        console.error('Erro ao salvar ajustes:', error);
+        alert('Erro de comunicação com o servidor');
+    }
+}
+
+// Função para atualizar o gráfico principal após ajuste
+function atualizarGraficoAposAjuste() {
+    if (!dadosRelatorioDetalhado || !window.previsaoChartInstance) {
+        return;
+    }
+
+    // Recalcular previsões agregadas a partir dos itens
+    const novasPrevisoes = {};
+    if (dadosRelatorioDetalhado.itens) {
+        dadosRelatorioDetalhado.itens.forEach(item => {
+            if (item.previsao_por_periodo) {
+                item.previsao_por_periodo.forEach(p => {
+                    if (!novasPrevisoes[p.periodo]) {
+                        novasPrevisoes[p.periodo] = 0;
+                    }
+                    novasPrevisoes[p.periodo] += p.previsao || 0;
+                });
+            }
+        });
+    }
+
+    // Atualizar dados do gráfico
+    const chart = window.previsaoChartInstance;
+    if (chart && chart.data && chart.data.datasets) {
+        // Encontrar o dataset de previsão (geralmente é o segundo ou tem label 'Previsão')
+        const datasetPrevisao = chart.data.datasets.find(ds =>
+            ds.label && (ds.label.includes('Previs') || ds.label.includes('previs'))
+        );
+
+        if (datasetPrevisao && chart.data.labels) {
+            // Atualizar valores de previsão
+            chart.data.labels.forEach((label, idx) => {
+                // Encontrar o período correspondente
+                const periodoKey = Object.keys(novasPrevisoes).find(p => {
+                    // Comparar formatado
+                    if (label.includes('/')) {
+                        // Formato Mês/Ano ou DD/MM
+                        const mesesNomes = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+                        if (p.includes('-') && !p.includes('-S')) {
+                            // Formato YYYY-MM-DD ou YYYY-MM-01
+                            const partes = p.split('-');
+                            const mesIdx = parseInt(partes[1]) - 1;
+                            const ano = partes[0].slice(-2);
+                            const labelEsperado = `${mesesNomes[mesIdx]}/${ano}`;
+                            return label === labelEsperado;
+                        }
+                    }
+                    return false;
+                });
+
+                if (periodoKey && novasPrevisoes[periodoKey] !== undefined) {
+                    datasetPrevisao.data[idx] = Math.round(novasPrevisoes[periodoKey]);
+                }
+            });
+
+            // Atualizar gráfico
+            chart.update();
+        }
+    }
+
+    // Atualizar resumo (Total Previsão)
+    const totalPrevisao = Object.values(novasPrevisoes).reduce((sum, v) => sum + v, 0);
+    const elementoTotalPrevisao = document.querySelector('[data-resumo="total-previsao"]');
+    if (elementoTotalPrevisao) {
+        elementoTotalPrevisao.textContent = formatNumber(Math.round(totalPrevisao));
+    }
+
+    // Tentar atualizar no card de resumo se existir
+    const resumoCards = document.querySelectorAll('.card, .resumo-card, [class*="resumo"]');
+    resumoCards.forEach(card => {
+        const texto = card.textContent;
+        if (texto && texto.includes('Previsão Total')) {
+            const valorElement = card.querySelector('.valor, .numero, strong, b');
+            if (valorElement) {
+                valorElement.textContent = formatNumber(Math.round(totalPrevisao));
+            }
+        }
+    });
+}
+
+// Adicionar CSS para linha selecionada
+(function() {
+    if (!document.getElementById('drillDownStyles')) {
+        const style = document.createElement('style');
+        style.id = 'drillDownStyles';
+        style.textContent = `
+            .linha-item-selecionada {
+                background: linear-gradient(90deg, #f5f3ff 0%, #ede9fe 100%) !important;
+                border-left: 4px solid #8b5cf6 !important;
+                box-shadow: inset 0 0 0 1px #8b5cf6;
+            }
+            .linha-item-selecionada td {
+                background: #ede9fe !important;
+            }
+            .linha-item-selecionada td:first-child {
+                border-left: 4px solid #8b5cf6 !important;
+            }
+            .linha-item {
+                cursor: pointer;
+                transition: background 0.2s;
+            }
+            .linha-item:hover:not(.linha-item-selecionada) {
+                background: #f9fafb !important;
+            }
+            .linha-item:hover:not(.linha-item-selecionada) td {
+                background: #f9fafb !important;
+            }
+            .indicador-ajuste {
+                animation: pulse 2s infinite;
+            }
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+})();
