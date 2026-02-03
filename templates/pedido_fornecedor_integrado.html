@@ -1323,6 +1323,20 @@
                     </div>
                 `;
             } else {
+                // Verificar se tem transferencias para mostrar economia
+                const totalTransf = stats.total_transferencias_sugeridas || 0;
+                const economiaTransf = stats.valor_economia_transferencias || 0;
+
+                let metricaTransfHtml = '';
+                if (totalTransf > 0) {
+                    metricaTransfHtml = `
+                        <div class="metrica" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 8px; padding: 8px;" title="Transferencias entre lojas reduzem o pedido ao fornecedor">
+                            <div class="valor" style="color: white;">-R$ ${(economiaTransf/1000).toFixed(1)}k</div>
+                            <div class="label" style="color: rgba(255,255,255,0.9);">${totalTransf} Transf.</div>
+                        </div>
+                    `;
+                }
+
                 document.getElementById('resumoMetricas').innerHTML = `
                     <div class="metrica">
                         <div class="valor">${stats.total_itens_analisados}</div>
@@ -1340,6 +1354,7 @@
                         <div class="valor">${stats.itens_ruptura_iminente}</div>
                         <div class="label">Em Ruptura</div>
                     </div>
+                    ${metricaTransfHtml}
                     <div class="metrica">
                         <div class="valor">R$ ${(stats.valor_total_pedido/1000).toFixed(1)}k</div>
                         <div class="label">Valor Total</div>
@@ -1348,17 +1363,28 @@
             }
 
             // Criar mapa de transferencias por produto (converter para string para comparacao consistente)
+            // Suporte ao novo formato (transferencias_sugeridas) e formato antigo (transferencias)
+            const transfSugeridas = data.transferencias_sugeridas || [];
+            const transfAntigo = data.transferencias?.detalhes || [];
+            const todasTransf = [...transfSugeridas, ...transfAntigo];
+
             const setProdutosTransf = new Set(
-                (data.transferencias?.produtos_com_transferencia || []).map(p => String(p))
+                todasTransf.map(t => String(t.cod_produto))
             );
             const detalhesTransf = {};
-            (data.transferencias?.detalhes || []).forEach(t => {
+            todasTransf.forEach(t => {
                 const codStr = String(t.cod_produto);
                 if (!detalhesTransf[codStr]) {
                     detalhesTransf[codStr] = [];
                 }
                 detalhesTransf[codStr].push(t);
             });
+
+            // Exibir resumo de transferencias se houver
+            const resumoTransf = data.resumo_transferencias;
+            if (resumoTransf && resumoTransf.total > 0) {
+                console.log(`[TRANSFERENCIAS] ${resumoTransf.total} oportunidades encontradas, economia: R$ ${resumoTransf.valor_total.toFixed(2)}`);
+            }
 
             // Combinar itens do pedido + bloqueados para a tabela
             const itensPedido = data.itens_pedido || [];
@@ -1769,8 +1795,20 @@
         async function exibirResultadosPadraoCompra(data, tipoPedido = 'reabastecimento') {
             const isPlanejado = tipoPedido === 'planejado' || data.tipo_pedido === 'planejado';
 
-            // Extrair itens do pedido (apenas itens a pedir, nao bloqueados/ok)
-            const itensPedido = data.itens_pedido || [];
+            // Extrair TODOS os itens (pedido, OK e bloqueados) com status
+            const itensPedidoRaw = data.itens_pedido || [];
+            const itensOkRaw = data.itens_ok || [];
+            const itensBloqueadosRaw = data.itens_bloqueados || [];
+
+            // Combinar todos com marcador de status
+            const itensPedido = [
+                ...itensPedidoRaw.map(i => ({...i, _status: i.ruptura_iminente ? 'ruptura' : 'pedir'})),
+                ...itensOkRaw.map(i => ({...i, _status: 'ok', quantidade_pedido: 0, valor_pedido: 0})),
+                ...itensBloqueadosRaw.map(i => ({...i, _status: 'bloqueado', quantidade_pedido: 0, valor_pedido: 0}))
+            ];
+
+            // IMPORTANTE: Atualizar dadosPedidoAtual com itens combinados para exportacao funcionar
+            dadosPedidoAtual.itens_pedido = itensPedido;
 
             // Buscar padroes de compra dos itens
             const codigos = [...new Set(itensPedido.map(i => i.codigo))];
@@ -1833,6 +1871,9 @@
                         // Flags
                         tem_ruptura: false,
                         sem_padrao_compra: !padraoCompraMap[chave],
+                        // Status do item (pedir, ok, bloqueado, ruptura) - usar o primeiro
+                        _status: item._status || 'pedir',
+                        motivo_bloqueio: item.motivo_bloqueio || item.sit_compra || '',
                         // Lead time do destino + dias transferencia
                         lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
                         // CUE (preco) - usar o primeiro encontrado
@@ -1846,8 +1887,22 @@
                 itensAgregados[chaveAgregacao].estoque_total += (item.estoque_atual || item.estoque_efetivo || 0);
                 itensAgregados[chaveAgregacao].demanda_total += (item.demanda_prevista_diaria || item.demanda_diaria || 0);
 
-                if (item.ruptura_iminente) {
+                if (item.ruptura_iminente || item._status === 'ruptura') {
                     itensAgregados[chaveAgregacao].tem_ruptura = true;
+                    itensAgregados[chaveAgregacao]._status = 'ruptura';
+                }
+                // Atualizar status: prioridade ruptura > pedir > bloqueado > ok
+                const statusAtual = itensAgregados[chaveAgregacao]._status;
+                const statusItem = item._status;
+                if (statusAtual !== 'ruptura') {
+                    if (statusItem === 'ruptura') {
+                        itensAgregados[chaveAgregacao]._status = 'ruptura';
+                    } else if (statusItem === 'pedir' && statusAtual !== 'pedir') {
+                        itensAgregados[chaveAgregacao]._status = 'pedir';
+                    } else if (statusItem === 'bloqueado' && statusAtual === 'ok') {
+                        itensAgregados[chaveAgregacao]._status = 'bloqueado';
+                        itensAgregados[chaveAgregacao].motivo_bloqueio = item.motivo_bloqueio || item.sit_compra || '';
+                    }
                 }
 
                 // Registrar loja de origem
@@ -1919,26 +1974,47 @@
             const itensCentralizados = itensArray.filter(i => i.lojas_origem.length > 1 ||
                 (i.lojas_origem.length === 1 && String(i.lojas_origem[0]) !== String(i.destino))).length;
 
+            // Contar itens por status
+            const itensComPedido = itensArray.filter(i => i._status === 'pedir' || i._status === 'ruptura').length;
+            const itensOkCount = itensArray.filter(i => i._status === 'ok').length;
+            const itensBloqueadosCount = itensArray.filter(i => i._status === 'bloqueado').length;
+
+            // Verificar se tem transferencias para mostrar economia (Padrao de Compra)
+            const statsPC = data.estatisticas || {};
+            const totalTransfPC = statsPC.total_transferencias_sugeridas || 0;
+            const economiaTransfPC = statsPC.valor_economia_transferencias || 0;
+
+            let metricaTransfPCHtml = '';
+            if (totalTransfPC > 0) {
+                metricaTransfPCHtml = `
+                    <div class="metrica" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 8px; padding: 8px;" title="Transferencias entre lojas reduzem o pedido ao fornecedor">
+                        <div class="valor" style="color: white;">-R$ ${(economiaTransfPC/1000).toFixed(1)}k</div>
+                        <div class="label" style="color: rgba(255,255,255,0.9);">${totalTransfPC} Transf.</div>
+                    </div>
+                `;
+            }
+
             // Resumo Header - Visao Padrao de Compra
             document.getElementById('resumoTitulo').textContent = `PADRAO DE COMPRA: ${totalDestinos} Destino(s)`;
 
             document.getElementById('resumoMetricas').innerHTML = `
-                <div class="metrica">
+                <div class="metrica" title="Total de SKUs no sortimento">
                     <div class="valor">${totalSkusAgregados}</div>
-                    <div class="label">SKUs Agregados</div>
+                    <div class="label">SKUs Total</div>
                 </div>
-                <div class="metrica" title="${totalLinhasOriginais} linhas originais agregadas em ${totalSkusAgregados} SKUs" style="cursor: help;">
-                    <div class="valor">${totalLinhasOriginais}</div>
-                    <div class="label">Linhas Originais</div>
+                <div class="metrica" title="${itensComPedido} SKUs precisam de pedido" style="cursor: help;">
+                    <div class="valor" style="color: #3b82f6;">${itensComPedido}</div>
+                    <div class="label">Com Pedido</div>
                 </div>
-                <div class="metrica" title="${itensCentralizados} SKUs vem de lojas diferentes do destino" style="cursor: help;">
-                    <div class="valor">${itensCentralizados}</div>
-                    <div class="label">Centralizados</div>
+                <div class="metrica" title="${itensOkCount} SKUs com estoque suficiente" style="cursor: help;">
+                    <div class="valor" style="color: #10b981;">${itensOkCount}</div>
+                    <div class="label">Estoque OK</div>
                 </div>
-                <div class="metrica">
-                    <div class="valor">${qtdTotalUnidades.toLocaleString('pt-BR')}</div>
-                    <div class="label">Unidades</div>
+                <div class="metrica" title="${itensBloqueadosCount} SKUs bloqueados para compra" style="cursor: help;">
+                    <div class="valor" style="color: #f59e0b;">${itensBloqueadosCount}</div>
+                    <div class="label">Bloqueados</div>
                 </div>
+                ${metricaTransfPCHtml}
                 <div class="metrica">
                     <div class="valor">R$ ${(valorTotal/1000).toFixed(1)}k</div>
                     <div class="label">Valor Total</div>
@@ -2111,9 +2187,16 @@
                 ? `<span style="background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 0.75em;" title="${tooltipDetalhes}">${lojasOrigemStr}</span>`
                 : `<span title="${tooltipDetalhes}">${lojasOrigemStr}</span>`;
 
-            // Status badge
+            // Status badge - baseado no _status do item
             let statusInfo = '';
-            if (item.tem_ruptura) {
+            let rowClass = '';
+            if (item._status === 'bloqueado') {
+                statusInfo = `<span class="badge-status badge-bloqueado" style="font-size: 0.65em; margin-left: 4px;" title="${item.motivo_bloqueio || 'Bloqueado'}">Bloqueado</span>`;
+                rowClass = 'linha-bloqueada';
+            } else if (item._status === 'ok') {
+                statusInfo = `<span class="badge-status badge-ok" style="font-size: 0.65em; margin-left: 4px;" title="Estoque suficiente">OK</span>`;
+                rowClass = 'linha-ok';
+            } else if (item._status === 'ruptura' || item.tem_ruptura) {
                 statusInfo = `<span class="badge-status badge-ruptura" style="font-size: 0.65em; margin-left: 4px;">Ruptura</span>`;
             }
             if (item.sem_padrao_compra) {
@@ -2136,15 +2219,15 @@
             }
 
             return `
-                <tr>
+                <tr class="${rowClass}">
                     <td>${item.codigo}${statusInfo}</td>
                     <td title="${item.descricao}">${item.descricao.substring(0, 35)}</td>
                     <td style="text-align: center;"><span class="badge badge-${item.curva_abc.toLowerCase()}">${item.curva_abc}</span></td>
                     <td style="text-align: center;">${badgeLojas}</td>
                     <td class="col-num">${item.estoque_total.toLocaleString('pt-BR')}</td>
                     <td class="col-num">${item.demanda_total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                    <td class="col-num">${qtdCell}</td>
-                    <td class="col-valor">R$ ${item.valor_pedido.toLocaleString('pt-BR', {minimumFractionDigits: 0})}</td>
+                    <td class="col-num">${item._status === 'ok' || item._status === 'bloqueado' ? '-' : qtdCell}</td>
+                    <td class="col-valor">${item._status === 'ok' || item._status === 'bloqueado' ? '-' : `R$ ${item.valor_pedido.toLocaleString('pt-BR', {minimumFractionDigits: 0})}`}</td>
                 </tr>
             `;
         }

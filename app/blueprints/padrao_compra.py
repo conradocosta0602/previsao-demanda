@@ -3,8 +3,10 @@ Blueprint: Padrao de Compra
 Rotas: /api/padrao-compra/*
 """
 
+import io
+from datetime import datetime
 import pandas as pd
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from psycopg2.extras import RealDictCursor
 
 from app.utils.db_connection import get_db_connection
@@ -287,5 +289,132 @@ def api_padrao_compra_processar_pedidos():
     except Exception as e:
         import traceback
         print(f"[ERRO] api_padrao_compra_processar_pedidos: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+@padrao_compra_bp.route('/api/padrao-compra/exportar', methods=['POST'])
+def api_padrao_compra_exportar():
+    """
+    Exporta pedidos com padrao de compra para Excel.
+
+    O formato do Excel e: uma linha por item x filial destino.
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+        dados = request.get_json()
+        linhas = dados.get('linhas_excel', [])
+        estatisticas = dados.get('estatisticas', {})
+        criticas = dados.get('criticas', [])
+
+        if not linhas:
+            return jsonify({'success': False, 'erro': 'Nenhum dado para exportar'}), 400
+
+        wb = Workbook()
+
+        # Estilos
+        header_font = Font(bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='4A5568', end_color='4A5568', fill_type='solid')
+        critica_fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        # =====================================================================
+        # ABA 1: POR PADRAO DE COMPRA (agregado por filial destino)
+        # =====================================================================
+        ws = wb.active
+        ws.title = 'Por Padrao de Compra'
+
+        headers = [
+            'Codigo', 'Descricao', 'Categoria', 'Curva ABC',
+            'Fornecedor', 'CNPJ Fornecedor',
+            'Filial Destino', 'Quantidade', 'CUE', 'Valor Pedido',
+            'Lead Time Efetivo', 'Lojas Origem', 'Criticas'
+        ]
+
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+
+        for row_idx, linha in enumerate(linhas, 2):
+            ws.cell(row=row_idx, column=1, value=linha.get('codigo')).border = border
+            ws.cell(row=row_idx, column=2, value=linha.get('descricao', '')).border = border
+            ws.cell(row=row_idx, column=3, value=linha.get('categoria', '')).border = border
+            ws.cell(row=row_idx, column=4, value=linha.get('curva_abc', 'B')).border = border
+            ws.cell(row=row_idx, column=5, value=linha.get('nome_fornecedor', '')).border = border
+            ws.cell(row=row_idx, column=6, value=linha.get('codigo_fornecedor', '')).border = border
+            ws.cell(row=row_idx, column=7, value=linha.get('cod_empresa_destino')).border = border
+            ws.cell(row=row_idx, column=8, value=linha.get('quantidade_pedido', 0)).border = border
+            ws.cell(row=row_idx, column=9, value=linha.get('cue', 0)).border = border
+            ws.cell(row=row_idx, column=10, value=linha.get('valor_pedido', 0)).border = border
+            ws.cell(row=row_idx, column=11, value=linha.get('lead_time_efetivo', 0)).border = border
+            ws.cell(row=row_idx, column=12, value=linha.get('lojas_origem', '')).border = border
+
+            critica_texto = linha.get('criticas', '')
+            cell_critica = ws.cell(row=row_idx, column=13, value=critica_texto)
+            cell_critica.border = border
+            if critica_texto:
+                cell_critica.fill = critica_fill
+
+        # Ajustar larguras
+        ws.column_dimensions['A'].width = 12
+        ws.column_dimensions['B'].width = 40
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 10
+        ws.column_dimensions['E'].width = 25
+        ws.column_dimensions['F'].width = 18
+        ws.column_dimensions['G'].width = 15
+        ws.column_dimensions['H'].width = 12
+        ws.column_dimensions['I'].width = 12
+        ws.column_dimensions['J'].width = 15
+        ws.column_dimensions['K'].width = 18
+        ws.column_dimensions['L'].width = 30
+        ws.column_dimensions['M'].width = 40
+
+        # =====================================================================
+        # ABA 2: CRITICAS (se houver)
+        # =====================================================================
+        if criticas:
+            ws_criticas = wb.create_sheet('Criticas')
+
+            headers_criticas = ['Tipo', 'Codigo', 'Loja', 'Mensagem']
+            for col, header in enumerate(headers_criticas, 1):
+                cell = ws_criticas.cell(row=1, column=col, value=header)
+                cell.font = header_font
+                cell.fill = PatternFill(start_color='E53E3E', end_color='E53E3E', fill_type='solid')
+                cell.border = border
+
+            for row_idx, critica in enumerate(criticas, 2):
+                ws_criticas.cell(row=row_idx, column=1, value=critica.get('tipo', '')).border = border
+                ws_criticas.cell(row=row_idx, column=2, value=critica.get('codigo', '')).border = border
+                ws_criticas.cell(row=row_idx, column=3, value=critica.get('cod_empresa', '')).border = border
+                ws_criticas.cell(row=row_idx, column=4, value=critica.get('mensagem', '')).border = border
+
+        # Salvar
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'pedido_padrao_compra_{timestamp}.xlsx'
+
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        import traceback
+        print(f"[ERRO] api_padrao_compra_exportar: {e}")
         traceback.print_exc()
         return jsonify({'success': False, 'erro': str(e)}), 500

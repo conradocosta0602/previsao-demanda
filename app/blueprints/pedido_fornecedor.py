@@ -53,6 +53,7 @@ def api_pedido_fornecedor_integrado():
             calcular_cobertura_abc
         )
         from core.demand_calculator import DemandCalculator
+        from core.transferencia_regional import TransferenciaRegional
 
         dados = request.get_json()
 
@@ -242,11 +243,16 @@ def api_pedido_fornecedor_integrado():
         mapa_nomes_lojas = {}
 
         if is_destino_cd:
-            lojas_demanda = pd.read_sql(
-                "SELECT cod_empresa FROM cadastro_lojas WHERE ativo = TRUE AND cod_empresa < 80",
+            # Destino CD: buscar todas as lojas para calcular demanda e transferencias
+            df_lojas_cd = pd.read_sql(
+                "SELECT cod_empresa, nome_loja FROM cadastro_lojas WHERE ativo = TRUE AND cod_empresa < 80",
                 conn
-            )['cod_empresa'].tolist()
+            )
+            lojas_demanda = df_lojas_cd['cod_empresa'].tolist()
+            mapa_nomes_lojas = dict(zip(df_lojas_cd['cod_empresa'], df_lojas_cd['nome_loja']))
             nome_destino = f"CD {cod_destino}"
+            # IMPORTANTE: Habilitar multiloja para calcular transferencias entre lojas
+            is_pedido_multiloja = len(lojas_demanda) > 1
         else:
             if lojas_selecionadas:
                 lojas_demanda = lojas_selecionadas
@@ -263,11 +269,16 @@ def api_pedido_fornecedor_integrado():
                     )
                     mapa_nomes_lojas = dict(zip(df_nomes_lojas['cod_empresa'], df_nomes_lojas['nome_loja']))
             else:
-                lojas_demanda = pd.read_sql(
-                    "SELECT cod_empresa FROM cadastro_lojas WHERE ativo = TRUE AND cod_empresa < 80",
+                # Todas as lojas selecionadas: buscar todas e habilitar multiloja
+                df_todas_lojas = pd.read_sql(
+                    "SELECT cod_empresa, nome_loja FROM cadastro_lojas WHERE ativo = TRUE AND cod_empresa < 80",
                     conn
-                )['cod_empresa'].tolist()
+                )
+                lojas_demanda = df_todas_lojas['cod_empresa'].tolist()
+                mapa_nomes_lojas = dict(zip(df_todas_lojas['cod_empresa'], df_todas_lojas['nome_loja']))
                 nome_destino = "Todas as Lojas"
+                # IMPORTANTE: Habilitar multiloja para calcular transferencias entre lojas
+                is_pedido_multiloja = len(lojas_demanda) > 1
 
         # Processar produtos
         processador = PedidoFornecedorIntegrado(conn)
@@ -300,7 +311,9 @@ def api_pedido_fornecedor_integrado():
 
                         if historico_loja and len(historico_loja) >= 7:
                             demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_loja, metodo='auto')
-                            demanda_diaria = demanda_media if demanda_media > 0 else 0
+                            # IMPORTANTE: calcular_demanda_inteligente retorna demanda MENSAL
+                            # Converter para diaria dividindo por 30
+                            demanda_diaria = (demanda_media / 30) if demanda_media > 0 else 0
 
                         resultado = processador.processar_item(
                             codigo=codigo,
@@ -343,6 +356,11 @@ def api_pedido_fornecedor_integrado():
                         resultado['ciclo_pedido_usado'] = ciclo_pedido_forn
                         resultado['pedido_minimo_fornecedor'] = pedido_min_forn
                         resultado['sem_demanda_loja'] = demanda_diaria <= 0
+
+                        # DEBUG: Item 468618
+                        if codigo == 468618:
+                            print(f"  [DEBUG 468618] Loja {loja_cod}: estoque={resultado.get('estoque_atual',0)}, transito={resultado.get('estoque_transito',0)}, demanda_dia={demanda_diaria:.2f}, cobertura_atual={resultado.get('cobertura_atual_dias',0):.1f}d, qtd_pedido={resultado.get('quantidade_pedido',0)}, deve_pedir={resultado.get('deve_pedir')}")
+
                         resultados.append(resultado)
                 else:
                     historico_total = []
@@ -360,7 +378,9 @@ def api_pedido_fornecedor_integrado():
                         continue
 
                     demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_total, metodo='auto')
-                    demanda_diaria = demanda_media
+                    # IMPORTANTE: calcular_demanda_inteligente retorna demanda MENSAL
+                    # Converter para diaria dividindo por 30
+                    demanda_diaria = demanda_media / 30 if demanda_media > 0 else 0
 
                     if demanda_diaria <= 0:
                         itens_sem_demanda += 1
@@ -443,6 +463,180 @@ def api_pedido_fornecedor_integrado():
         itens_bloqueados = [r for r in resultados if r.get('bloqueado')]
         itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
 
+        # ==============================================================================
+        # CALCULO DE TRANSFERENCIAS ENTRE LOJAS
+        # ==============================================================================
+        # Antes de finalizar o pedido, verificar se ha lojas com excesso de estoque
+        # que podem transferir para lojas com falta, reduzindo o pedido ao fornecedor
+        transferencias_sugeridas = []
+        valor_economia_transferencias = 0
+
+        print(f"\n  [DEBUG] is_pedido_multiloja={is_pedido_multiloja}, len(lojas_demanda)={len(lojas_demanda)}")
+        print(f"  [DEBUG] lojas_demanda={lojas_demanda}")
+        print(f"  [DEBUG] Total resultados antes transferencias: {len(resultados)}")
+
+        if is_pedido_multiloja and len(lojas_demanda) > 1:
+            print(f"\n  [TRANSFERENCIAS] Analisando oportunidades de transferencia entre {len(lojas_demanda)} lojas...")
+
+            # Reconectar ao banco para calcular transferencias
+            conn_transf = get_db_connection()
+            try:
+                calc_transf = TransferenciaRegional(conn_transf)
+
+                # Agrupar resultados por codigo de produto
+                itens_por_codigo = {}
+                for item in resultados:
+                    codigo = item.get('codigo')
+                    if codigo not in itens_por_codigo:
+                        itens_por_codigo[codigo] = []
+                    itens_por_codigo[codigo].append(item)
+
+                # Parametros de transferencia
+                COBERTURA_MINIMA_DOADOR = 10  # Dias minimos que doador deve manter
+                MARGEM_EXCESSO = 7  # Dias acima da cobertura alvo para considerar excesso
+
+                produtos_analisados = 0
+                for codigo, itens_loja in itens_por_codigo.items():
+                    if len(itens_loja) < 2:
+                        continue  # Precisa de pelo menos 2 lojas
+
+                    produtos_analisados += 1
+
+                    # Identificar lojas com EXCESSO (pode doar) e FALTA (precisa receber)
+                    lojas_com_excesso = []
+                    lojas_com_falta = []
+
+                    cobertura_alvo = cobertura_dias if cobertura_dias else 21
+
+                    for item in itens_loja:
+                        cobertura_atual = item.get('cobertura_atual_dias', 0) or 0
+                        demanda_diaria = item.get('demanda_prevista_diaria', 0) or 0
+                        estoque_atual = item.get('estoque_atual', 0) or 0
+                        cod_loja = item.get('cod_loja', 0)
+                        nome_loja = item.get('nome_loja', f'Loja {cod_loja}')
+                        qtd_pedido = item.get('quantidade_pedido', 0) or 0
+                        cue = item.get('cue', 0) or item.get('preco_custo', 0) or 0
+
+                        # Loja com EXCESSO: cobertura > alvo + margem
+                        if cobertura_atual > cobertura_alvo + MARGEM_EXCESSO and demanda_diaria > 0:
+                            excesso_dias = cobertura_atual - cobertura_alvo
+                            excesso_unidades = int(excesso_dias * demanda_diaria)
+                            # Garantir que doador mantenha cobertura minima
+                            estoque_minimo = COBERTURA_MINIMA_DOADOR * demanda_diaria
+                            disponivel_doar = max(0, int(estoque_atual - estoque_minimo))
+                            if disponivel_doar > 0:
+                                lojas_com_excesso.append({
+                                    'cod_loja': cod_loja,
+                                    'nome_loja': nome_loja,
+                                    'estoque': estoque_atual,
+                                    'cobertura_dias': cobertura_atual,
+                                    'demanda_diaria': demanda_diaria,
+                                    'excesso_unidades': min(excesso_unidades, disponivel_doar),
+                                    'disponivel_doar': disponivel_doar,
+                                    'cue': cue
+                                })
+
+                        # Loja com FALTA: precisa pedir (quantidade_pedido > 0)
+                        elif qtd_pedido > 0:
+                            lojas_com_falta.append({
+                                'cod_loja': cod_loja,
+                                'nome_loja': nome_loja,
+                                'estoque': estoque_atual,
+                                'cobertura_dias': cobertura_atual,
+                                'demanda_diaria': demanda_diaria,
+                                'necessidade': qtd_pedido,
+                                'item_ref': item,
+                                'cue': cue
+                            })
+
+                    # Debug: mostrar produtos com potencial de transferencia
+                    if lojas_com_excesso or lojas_com_falta:
+                        print(f"    Produto {codigo}: {len(lojas_com_excesso)} lojas com excesso, {len(lojas_com_falta)} lojas com falta")
+
+                    # Se ha lojas com excesso E lojas com falta, calcular transferencias
+                    if lojas_com_excesso and lojas_com_falta:
+                        # Ordenar: doadoras por excesso (maior primeiro), receptoras por necessidade (maior primeiro)
+                        lojas_com_excesso.sort(key=lambda x: -x['disponivel_doar'])
+                        lojas_com_falta.sort(key=lambda x: -x['necessidade'])
+
+                        descricao_prod = itens_loja[0].get('descricao', '')
+
+                        for destino in lojas_com_falta:
+                            necessidade_restante = destino['necessidade']
+                            if necessidade_restante <= 0:
+                                continue
+
+                            for origem in lojas_com_excesso:
+                                if origem['disponivel_doar'] <= 0:
+                                    continue
+                                if origem['cod_loja'] == destino['cod_loja']:
+                                    continue  # Mesma loja
+
+                                # Quantidade a transferir
+                                qtd_transferir = min(necessidade_restante, origem['disponivel_doar'])
+
+                                if qtd_transferir > 0:
+                                    cue_usar = origem['cue'] if origem['cue'] > 0 else destino['cue']
+                                    valor_transf = round(qtd_transferir * cue_usar, 2)
+
+                                    transferencias_sugeridas.append({
+                                        'cod_produto': codigo,
+                                        'descricao': descricao_prod,
+                                        'loja_origem': origem['cod_loja'],
+                                        'nome_loja_origem': origem['nome_loja'],
+                                        'estoque_origem': origem['estoque'],
+                                        'cobertura_origem_dias': round(origem['cobertura_dias'], 1),
+                                        'loja_destino': destino['cod_loja'],
+                                        'nome_loja_destino': destino['nome_loja'],
+                                        'estoque_destino': destino['estoque'],
+                                        'cobertura_destino_dias': round(destino['cobertura_dias'], 1),
+                                        'qtd_sugerida': qtd_transferir,
+                                        'valor_estimado': valor_transf,
+                                        'cue': cue_usar,
+                                        'urgencia': 'ALTA' if destino['cobertura_dias'] < 7 else 'MEDIA'
+                                    })
+
+                                    # Atualizar controles
+                                    valor_economia_transferencias += valor_transf
+                                    origem['disponivel_doar'] -= qtd_transferir
+                                    necessidade_restante -= qtd_transferir
+
+                                    # IMPORTANTE: Reduzir quantidade do pedido do item destino
+                                    item_destino = destino['item_ref']
+                                    qtd_pedido_atual = item_destino.get('quantidade_pedido', 0) or 0
+                                    nova_qtd = max(0, qtd_pedido_atual - qtd_transferir)
+                                    item_destino['quantidade_pedido'] = nova_qtd
+                                    item_destino['valor_pedido'] = round(nova_qtd * cue_usar, 2)
+
+                                    # Marcar que tem transferencia
+                                    if 'transferencias_receber' not in item_destino:
+                                        item_destino['transferencias_receber'] = []
+                                    item_destino['transferencias_receber'].append({
+                                        'loja_origem': origem['cod_loja'],
+                                        'nome_loja_origem': origem['nome_loja'],
+                                        'qtd': qtd_transferir
+                                    })
+
+                                    # Se pedido zerou, nao precisa mais pedir
+                                    if nova_qtd == 0:
+                                        item_destino['deve_pedir'] = False
+
+                                if necessidade_restante <= 0:
+                                    break
+
+                print(f"  [TRANSFERENCIAS] Produtos analisados: {produtos_analisados}")
+                print(f"  [TRANSFERENCIAS] Encontradas {len(transferencias_sugeridas)} oportunidades")
+                print(f"  [TRANSFERENCIAS] Economia estimada: R$ {valor_economia_transferencias:,.2f}")
+
+            except Exception as e:
+                print(f"  [TRANSFERENCIAS] Erro ao calcular: {e}")
+            finally:
+                conn_transf.close()
+
+            # Recalcular itens_pedido apos transferencias (alguns podem ter zerado)
+            itens_pedido = [r for r in resultados if r.get('deve_pedir') and not r.get('bloqueado') and (r.get('quantidade_pedido', 0) or 0) > 0]
+            itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
+
         # Validacao de pedido minimo
         validacao_pedido_minimo = {}
         alertas_pedido_minimo = []
@@ -510,7 +704,11 @@ def api_pedido_fornecedor_integrado():
             'valor_total_pedido': round(sum(r.get('valor_pedido', 0) for r in itens_pedido), 2),
             'itens_ruptura_iminente': len([r for r in itens_nao_bloqueados if r.get('ruptura_iminente')]),
             'cobertura_media_atual': cobertura_media_atual,
-            'cobertura_media_pos_pedido': cobertura_media_pos
+            'cobertura_media_pos_pedido': cobertura_media_pos,
+            # Estatisticas de transferencias
+            'total_transferencias_sugeridas': len(transferencias_sugeridas),
+            'valor_economia_transferencias': round(valor_economia_transferencias, 2),
+            'produtos_com_transferencia': len(set(t['cod_produto'] for t in transferencias_sugeridas)) if transferencias_sugeridas else 0
         }
 
         return jsonify(converter_tipos_json({
@@ -532,7 +730,16 @@ def api_pedido_fornecedor_integrado():
                 }
                 for a in alertas_pedido_minimo
             ],
-            'tem_alertas_pedido_minimo': len(alertas_pedido_minimo) > 0
+            'tem_alertas_pedido_minimo': len(alertas_pedido_minimo) > 0,
+            # Transferencias sugeridas entre lojas
+            'transferencias_sugeridas': transferencias_sugeridas,
+            'tem_transferencias': len(transferencias_sugeridas) > 0,
+            'resumo_transferencias': {
+                'total': len(transferencias_sugeridas),
+                'valor_total': round(valor_economia_transferencias, 2),
+                'produtos_unicos': len(set(t['cod_produto'] for t in transferencias_sugeridas)) if transferencias_sugeridas else 0,
+                'urgentes': len([t for t in transferencias_sugeridas if t.get('urgencia') == 'ALTA'])
+            } if transferencias_sugeridas else None
         }))
 
     except Exception as e:

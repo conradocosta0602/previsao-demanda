@@ -15,6 +15,18 @@ configuracao_bp = Blueprint('configuracao', __name__)
 @configuracao_bp.route('/api/parametros-globais', methods=['GET'])
 def api_listar_parametros_globais():
     """Lista todos os parametros globais do sistema."""
+    # Parametros padrao - retorna esses se tabela nao existir
+    parametros_padrao_dict = [
+        {'chave': 'cobertura_alvo_dias', 'valor': '21', 'descricao': 'Cobertura alvo em dias', 'tipo': 'integer', 'categoria': 'pedidos'},
+        {'chave': 'estoque_seguranca_dias', 'valor': '7', 'descricao': 'Dias de estoque de seguranca', 'tipo': 'integer', 'categoria': 'estoque'},
+        {'chave': 'lead_time_padrao', 'valor': '15', 'descricao': 'Lead time padrao', 'tipo': 'integer', 'categoria': 'fornecedor'},
+        {'chave': 'ciclo_pedido_padrao', 'valor': '7', 'descricao': 'Ciclo de pedido padrao', 'tipo': 'integer', 'categoria': 'fornecedor'},
+        {'chave': 'dias_historico_vendas', 'valor': '730', 'descricao': 'Dias de historico de vendas', 'tipo': 'integer', 'categoria': 'previsao'},
+        {'chave': 'dias_transferencia_padrao_compra', 'valor': '10', 'descricao': 'Dias de lead time para transferencia', 'tipo': 'integer', 'categoria': 'transferencia'},
+        {'chave': 'cobertura_minima_doador', 'valor': '10', 'descricao': 'Cobertura minima doador', 'tipo': 'integer', 'categoria': 'transferencia'},
+        {'chave': 'margem_excesso_dias', 'valor': '7', 'descricao': 'Dias acima do alvo para excesso', 'tipo': 'integer', 'categoria': 'transferencia'},
+    ]
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -26,7 +38,9 @@ def api_listar_parametros_globais():
                 WHERE table_name = 'parametros_globais'
             )
         """)
-        if not cursor.fetchone()['exists']:
+        tabela_existe = cursor.fetchone()['exists']
+
+        if not tabela_existe:
             # Criar tabela
             cursor.execute("""
                 CREATE TABLE parametros_globais (
@@ -80,7 +94,7 @@ def api_listar_parametros_globais():
 
         query += " ORDER BY categoria, chave"
 
-        cursor.execute(query, params if params else None)
+        cursor.execute(query, tuple(params) if params else None)
         parametros = cursor.fetchall()
 
         # Converter para lista
@@ -103,7 +117,13 @@ def api_listar_parametros_globais():
         import traceback
         print(f"[ERRO] api_listar_parametros_globais: {e}")
         traceback.print_exc()
-        return jsonify({'success': False, 'erro': str(e)}), 500
+        # Fallback: retornar parametros padrao se houver erro
+        print("[INFO] Retornando parametros padrao devido a erro")
+        return jsonify({
+            'success': True,
+            'parametros': parametros_padrao_dict,
+            'aviso': 'Usando valores padrao (tabela nao disponivel)'
+        })
 
 
 @configuracao_bp.route('/api/parametros-globais/<chave>', methods=['GET'])
