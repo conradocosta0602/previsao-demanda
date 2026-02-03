@@ -4660,27 +4660,25 @@ def _api_gerar_previsao_banco_legado():
 
                 # Calcular métricas no período de teste
                 if len(previsoes_teste) == len(serie_teste):
-                    erros_absolutos = []
-                    erros_percentuais = []
-                    erros_reais = []
+                    soma_erros_abs = 0
+                    soma_erros_signed = 0
+                    soma_reais = 0
 
                     for i in range(len(serie_teste)):
                         real = serie_teste[i]
                         previsto = previsoes_teste[i]
 
                         if real > 0:
-                            erro_abs = abs(previsto - real)
-                            erro_perc = (erro_abs / real) * 100
-                            erro_real = previsto - real
+                            soma_erros_abs += abs(previsto - real)
+                            soma_erros_signed += (previsto - real)
+                            soma_reais += real
 
-                            erros_absolutos.append(erro_abs)
-                            erros_percentuais.append(erro_perc)
-                            erros_reais.append(erro_real)
-
-                    if len(erros_percentuais) > 0:
-                        wmape = sum(erros_percentuais) / len(erros_percentuais)
-                        bias = (sum(erros_reais) / sum(serie_teste)) * 100 if sum(serie_teste) > 0 else 0
-                        mae = sum(erros_absolutos) / len(erros_absolutos)
+                    if soma_reais > 0:
+                        # WMAPE (Weighted MAPE) = soma(|erro|) / soma(|real|) * 100
+                        wmape = (soma_erros_abs / soma_reais) * 100
+                        # BIAS = soma(erro com sinal) / soma(real) * 100
+                        bias = (soma_erros_signed / soma_reais) * 100
+                        mae = soma_erros_abs / len([r for r in serie_teste if r > 0])
 
                         metricas[nome_modelo] = {
                             'wmape': wmape,
@@ -4852,9 +4850,10 @@ def _api_gerar_previsao_banco_legado():
             mae_fallback = 0
 
             if len(previsoes_teste) > 0 and len(serie_teste) > 0:
-                erros_absolutos = []
-                erros_percentuais = []
-                erros_reais = []
+                soma_erros_abs = 0
+                soma_erros_signed = 0
+                soma_reais = 0
+                count_valid = 0
 
                 tamanho_comparacao = min(len(previsoes_teste), len(serie_teste))
                 for i in range(tamanho_comparacao):
@@ -4862,19 +4861,17 @@ def _api_gerar_previsao_banco_legado():
                     previsto = previsoes_teste[i]
 
                     if real > 0:
-                        erro_abs = abs(previsto - real)
-                        erro_perc = (erro_abs / real) * 100
-                        erro_real = previsto - real
+                        soma_erros_abs += abs(previsto - real)
+                        soma_erros_signed += (previsto - real)
+                        soma_reais += real
+                        count_valid += 1
 
-                        erros_absolutos.append(erro_abs)
-                        erros_percentuais.append(erro_perc)
-                        erros_reais.append(erro_real)
-
-                if len(erros_percentuais) > 0:
-                    wmape_fallback = sum(erros_percentuais) / len(erros_percentuais)
-                    soma_reais = sum(serie_teste[:tamanho_comparacao])
-                    bias_fallback = (sum(erros_reais) / soma_reais) * 100 if soma_reais > 0 else 0
-                    mae_fallback = sum(erros_absolutos) / len(erros_absolutos)
+                if soma_reais > 0:
+                    # WMAPE (Weighted MAPE) = soma(|erro|) / soma(|real|) * 100
+                    wmape_fallback = (soma_erros_abs / soma_reais) * 100
+                    # BIAS = soma(erro com sinal) / soma(real) * 100
+                    bias_fallback = (soma_erros_signed / soma_reais) * 100
+                    mae_fallback = soma_erros_abs / count_valid if count_valid > 0 else 0
 
                 print(f"  Fallback métricas: WMAPE={wmape_fallback:.2f}%, BIAS={bias_fallback:.2f}%", flush=True)
 
@@ -5104,33 +5101,32 @@ def _api_gerar_previsao_banco_legado():
                 }
 
                 # Calcular WMAPE e BIAS para previsão futura comparando com ano anterior
-                # Usar apenas os primeiros períodos correspondentes à validação futura
+                # WMAPE (Weighted MAPE) = soma(|erro|) / soma(|real|) * 100
+                # BIAS = soma(erro com sinal) / soma(real) * 100
                 previsao_futuro = resultado['previsao_futuro']
                 if len(ano_anterior_valores) > 0 and len(previsao_futuro) > 0:
                     # Comparar apenas os períodos que temos no ano anterior (tamanho_validacao_futura)
                     tamanho_comparacao = min(tamanho_validacao_futura, len(ano_anterior_valores), len(previsao_futuro))
 
-                    erros_absolutos_futuro = []
-                    erros_percentuais_futuro = []
-                    erros_reais_futuro = []
+                    soma_erros_abs = 0
+                    soma_erros_signed = 0
+                    soma_reais = 0
+                    count_valid = 0
 
                     for i in range(tamanho_comparacao):
                         real = ano_anterior_valores[i]
                         previsto = previsao_futuro[i]
 
                         if real > 0:
-                            erro_abs = abs(previsto - real)
-                            erro_perc = (erro_abs / real) * 100
-                            erro_real = previsto - real
+                            soma_erros_abs += abs(previsto - real)
+                            soma_erros_signed += (previsto - real)
+                            soma_reais += real
+                            count_valid += 1
 
-                            erros_absolutos_futuro.append(erro_abs)
-                            erros_percentuais_futuro.append(erro_perc)
-                            erros_reais_futuro.append(erro_real)
-
-                    if len(erros_percentuais_futuro) > 0:
-                        wmape_futuro = sum(erros_percentuais_futuro) / len(erros_percentuais_futuro)
-                        bias_futuro = (sum(erros_reais_futuro) / sum(ano_anterior_valores[:tamanho_comparacao])) * 100
-                        mae_futuro = sum(erros_absolutos_futuro) / len(erros_absolutos_futuro)
+                    if soma_reais > 0:
+                        wmape_futuro = (soma_erros_abs / soma_reais) * 100
+                        bias_futuro = (soma_erros_signed / soma_reais) * 100
+                        mae_futuro = soma_erros_abs / count_valid if count_valid > 0 else 0
 
                         metricas_futuro[nome_modelo] = {
                             'wmape': wmape_futuro,
@@ -7289,22 +7285,24 @@ def api_gerar_previsao_banco_v2_interno():
             print(f"  Backtest calculado: {len(previsao_teste)} períodos", flush=True)
 
         # Calcular erro do backtest para diagnóstico (WMAPE e BIAS)
-        # Inicializar fora do bloco para garantir que existam
+        # WMAPE (Weighted MAPE) = soma(|erro|) / soma(|real|) * 100
+        # BIAS = soma(erro com sinal) / soma(real) * 100
         wmape_backtest = 0
         bias_backtest = 0
         if previsao_teste and valores_teste:
-            erros_bt = []
-            erros_reais_bt = []
+            soma_erros_abs = 0
+            soma_erros_signed = 0
+            soma_reais = 0
             for i in range(min(len(previsao_teste), len(valores_teste))):
-                if valores_teste[i] > 0:
-                    erro_pct = abs(previsao_teste[i] - valores_teste[i]) / valores_teste[i] * 100
-                    erro_real = previsao_teste[i] - valores_teste[i]
-                    erros_bt.append(erro_pct)
-                    erros_reais_bt.append(erro_real)
-            if erros_bt:
-                wmape_backtest = sum(erros_bt) / len(erros_bt)
-                soma_reais = sum(valores_teste[:len(erros_reais_bt)])
-                bias_backtest = (sum(erros_reais_bt) / soma_reais) * 100 if soma_reais > 0 else 0
+                real = valores_teste[i]
+                previsto = previsao_teste[i]
+                if real > 0:
+                    soma_erros_abs += abs(previsto - real)
+                    soma_erros_signed += (previsto - real)
+                    soma_reais += real
+            if soma_reais > 0:
+                wmape_backtest = (soma_erros_abs / soma_reais) * 100
+                bias_backtest = (soma_erros_signed / soma_reais) * 100
                 print(f"  WMAPE do backtest: {wmape_backtest:.1f}%", flush=True)
                 print(f"  BIAS do backtest: {bias_backtest:.1f}%", flush=True)
                 # Mostrar comparação período a período

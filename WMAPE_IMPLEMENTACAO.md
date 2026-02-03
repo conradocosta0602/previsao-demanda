@@ -1,8 +1,8 @@
 # 📊 Migração de MAPE para WMAPE
 
-**Data:** Janeiro 2026
+**Data:** Janeiro 2026 (Atualizado: Fevereiro 2026)
 **Status:** ✅ IMPLEMENTADO
-**Versão:** 2.0
+**Versão:** 2.1
 
 ---
 
@@ -25,6 +25,15 @@ WMAPE = Σ|actual - predicted| / Σ|actual| × 100
 - Pondera erros pelo volume de vendas
 - Produtos de alto volume têm peso proporcional à sua importância
 - Mais representativo para análise de varejo
+
+### BIAS (Direção do Erro)
+```
+BIAS = Σ(predicted - actual) / Σ|actual| × 100
+```
+- Indica se o modelo tende a **superestimar** (BIAS > 0) ou **subestimar** (BIAS < 0)
+- BIAS positivo = previsões maiores que valores reais
+- BIAS negativo = previsões menores que valores reais
+- BIAS próximo de 0 = modelo equilibrado
 
 ---
 
@@ -150,9 +159,88 @@ Depois (WMAPE):
 - [x] Alterar app.py para usar WMAPE
 - [x] Atualizar templates/index.html
 - [x] Atualizar static/js/app.js
-- [ ] Testar com dados reais
+- [x] Corrigir cálculo do fator de tendência (comparar períodos equivalentes ano-a-ano)
+- [x] Testar com dados reais (WMAPE≠BIAS confirma funcionamento correto)
 - [ ] Atualizar documentação completa
 - [ ] Commit e push para GitHub
+
+---
+
+## 🔧 Correção do Cálculo de Tendência (Fevereiro 2026)
+
+### Problema Identificado
+O WMAPE e o BIAS estavam mostrando valores idênticos (ex: 45.5% ambos), o que indicava que **todas as previsões tinham o mesmo sinal de erro** (todas superestimavam ou todas subestimavam).
+
+### Causa Raiz
+O fator de tendência era calculado comparando a **primeira metade vs segunda metade** da base histórica:
+```python
+# ANTES (problemático)
+media_primeira_metade = sum(valores_base[:meio]) / meio
+media_segunda_metade = sum(valores_base[meio:]) / (len - meio)
+fator_tendencia = media_segunda_metade / media_primeira_metade
+```
+
+Este método não capturava a **mudança real ano-a-ano**. Se 2024 teve vendas maiores que 2025, o backtest continuava prevendo valores de 2024, gerando erros sistematicamente positivos.
+
+### Solução Implementada
+Novo cálculo que compara **períodos equivalentes ano-a-ano**:
+```python
+# DEPOIS (corrigido)
+for data_str in datas_base:
+    # Para cada período, encontrar o mesmo mês/semana do ano anterior
+    valor_atual = valores_base[i]
+    valor_ano_anterior = vendas_por_data.get(data_aa_str, 0)
+
+    if valor_aa > 0 and valor_atual > 0:
+        soma_valores_ano_recente += valor_atual
+        soma_valores_ano_anterior += valor_aa
+        pares_encontrados += 1
+
+# Calcular fator baseado em períodos equivalentes
+if pares_encontrados >= 3:
+    fator_tendencia = soma_valores_ano_recente / soma_valores_ano_anterior
+```
+
+### Resultado
+- **Antes:** WMAPE = 45.5%, BIAS = 45.5% (idênticos = erro sistemático)
+- **Depois:** WMAPE = 14.5%, BIAS = 13.8% (diferentes = erros mistos)
+
+O fator de tendência agora reflete corretamente se as vendas estão **crescendo ou diminuindo** em relação ao ano anterior, resultando em previsões mais equilibradas.
+
+---
+
+## 📊 Metodologia do Backtest
+
+O backtest (validação com período de teste) usa a seguinte metodologia:
+
+### Divisão dos Dados
+```
+Histórico total → 75% Base + 25% Teste
+```
+
+### Cálculo da Previsão para Período de Teste
+
+1. **Buscar mesmo período do ano anterior**
+   - Para cada período de teste, procurar o mesmo mês/semana do ano anterior no histórico
+   - Exemplo: Para prever Ago/25, buscar Ago/24
+
+2. **Aplicar fator de tendência**
+   - Calcular tendência comparando primeira e segunda metade da base
+   - `fator_tendencia = média_segunda_metade / média_primeira_metade`
+   - Limitado entre **0.6 (-40%)** e **1.5 (+50%)** para evitar distorções
+
+3. **Cálculo da previsão**
+   ```
+   SE valor_ano_anterior > 0:
+       previsao = valor_ano_anterior × fator_tendencia
+   SENÃO:
+       previsao = média_base × fator_sazonal
+   ```
+
+### Por que essa abordagem?
+- Respeita a sazonalidade natural (mesmo período = mesmo comportamento)
+- Considera tendência de crescimento/queda
+- Evita superestimação quando a base inclui picos de outros meses
 
 ---
 

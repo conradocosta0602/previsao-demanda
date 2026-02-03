@@ -4,6 +4,13 @@
 **Issue:** Card "MAPE Médio" na interface mostrava 808.9%
 **Status:** ✅ RESOLVIDO
 
+> **⚠️ NOTA IMPORTANTE:** Este documento é histórico. O sistema agora usa **WMAPE** (Weighted MAPE)
+> em vez de MAPE simples. Consulte `WMAPE_IMPLEMENTACAO.md` para a documentação atual.
+>
+> **Fórmulas atuais:**
+> - **WMAPE** = Σ|previsto - real| / Σ|real| × 100 (ponderado pelo volume)
+> - **BIAS** = Σ(previsto - real) / Σ|real| × 100 (direção do erro)
+
 ---
 
 ## Resumo Executivo

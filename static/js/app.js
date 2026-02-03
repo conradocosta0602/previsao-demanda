@@ -1212,8 +1212,10 @@ async function carregarLojas() {
         }
 
         const response = await fetch('/api/lojas');
-        const lojas = await response.json();
+        const data = await response.json();
 
+        // API retorna {success: true, lojas: [...]}
+        const lojas = data.lojas || data;
         const options = lojas.map(l => ({
             value: l.cod_empresa.toString(),
             label: l.nome_loja
@@ -1242,8 +1244,10 @@ async function carregarFornecedores() {
         }
 
         const response = await fetch('/api/fornecedores');
-        const fornecedores = await response.json();
+        const data = await response.json();
 
+        // API retorna {success: true, fornecedores: [...]}
+        const fornecedores = data.fornecedores || data;
         const options = fornecedores.map(f => ({
             value: f.nome_fornecedor,
             label: f.nome_fornecedor
@@ -1274,11 +1278,13 @@ async function carregarLinhas() {
         }
 
         const response = await fetch('/api/linhas');
-        const linhas = await response.json();
+        const data = await response.json();
 
+        // API retorna {success: true, linhas: [...]} onde linhas é array de strings
+        const linhas = data.linhas || data;
         const options = linhas.map(l => ({
-            value: l.linha,
-            label: l.linha
+            value: l,
+            label: l
         }));
 
         MultiSelect.create('linha_banco', options, {
@@ -1314,11 +1320,13 @@ async function carregarSublinhas() {
         }
 
         const response = await fetch(url);
-        const sublinhas = await response.json();
+        const data = await response.json();
 
+        // API retorna {success: true, sublinhas: [{codigo, descricao}, ...]}
+        const sublinhas = data.sublinhas || data;
         const options = sublinhas.map(s => ({
-            value: s.codigo_linha,
-            label: s.descricao_linha
+            value: s.codigo,
+            label: s.descricao
         }));
 
         if (MultiSelect.instances['sublinha_banco']) {
@@ -1355,19 +1363,21 @@ async function carregarProdutosFiltrados() {
 
         // Construir URL com filtros
         const params = new URLSearchParams();
-        if (lojas.length > 0) params.append('loja', JSON.stringify(lojas));
-        if (fornecedores.length > 0) params.append('fornecedor', JSON.stringify(fornecedores));
-        if (linhas.length > 0) params.append('linha', JSON.stringify(linhas));
-        if (sublinhas.length > 0) params.append('sublinha', JSON.stringify(sublinhas));
+        if (fornecedores.length > 0) params.append('fornecedor', fornecedores[0]);
+        if (linhas.length > 0) params.append('categoria', linhas[0]);
+        if (sublinhas.length > 0) params.append('linha', sublinhas[0]);
+        params.append('limit', '200');
 
-        const url = '/api/produtos_completo' + (params.toString() ? '?' + params.toString() : '');
+        const url = '/api/produtos' + (params.toString() ? '?' + params.toString() : '');
 
         const response = await fetch(url);
-        const produtos = await response.json();
+        const data = await response.json();
 
+        // API retorna {success: true, produtos: [...]}
+        const produtos = data.produtos || data;
         const options = produtos.map(p => ({
             value: p.codigo.toString(),
-            label: p.codigo === 'TODOS' ? p.descricao : `${p.codigo} - ${p.descricao}`
+            label: `${p.codigo} - ${p.descricao}`
         }));
 
         if (MultiSelect.instances['produto_banco']) {
@@ -1889,6 +1899,181 @@ function exportarTabelaComparativa() {
     });
 }
 
+// =====================================================
+// FUNÇÕES PARA FORMATO V2 (Bottom-Up)
+// =====================================================
+
+// Criar gráfico de previsão para formato V2
+function criarGraficoPrevisaoV2(graficoData, granularidade = 'mensal') {
+    const canvas = document.getElementById('previsaoChart');
+    if (!canvas) {
+        console.error('Canvas previsaoChart não encontrado');
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
+
+    // Destruir gráfico anterior se existir
+    if (window.previsaoChartInstance) {
+        window.previsaoChartInstance.destroy();
+    }
+
+    // Preparar dados
+    const labels = graficoData.map(d => formatarLabelPeriodo(d.periodo, granularidade));
+    const valores = graficoData.map(d => d.previsao);
+
+    window.previsaoChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Previsão de Demanda',
+                data: valores,
+                backgroundColor: 'rgba(102, 126, 234, 0.7)',
+                borderColor: 'rgba(102, 126, 234, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `Previsão: ${formatarNumero(context.raw)} un.`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Quantidade'
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return formatarNumero(value);
+                        }
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Período'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Preencher tabela comparativa para formato V2
+function preencherTabelaComparativaV2(graficoData, granularidade = 'mensal') {
+    const headerContainer = document.getElementById('tabelaComparativaHeader');
+    const bodyContainer = document.getElementById('tabelaComparativaBody');
+
+    if (!headerContainer || !bodyContainer) {
+        console.warn('Containers da tabela comparativa não encontrados');
+        return;
+    }
+
+    // Cabeçalho
+    let headerHtml = '<tr><th style="padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">Período</th>';
+    headerHtml += '<th style="padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">Previsão</th></tr>';
+    headerContainer.innerHTML = headerHtml;
+
+    // Corpo
+    let bodyHtml = '';
+    let totalPrevisao = 0;
+
+    graficoData.forEach(d => {
+        const label = formatarLabelPeriodo(d.periodo, granularidade);
+        totalPrevisao += d.previsao;
+        bodyHtml += `<tr>
+            <td style="padding: 8px; border-bottom: 1px solid #eee;">${label}</td>
+            <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${formatarNumero(d.previsao)}</td>
+        </tr>`;
+    });
+
+    // Linha de total
+    bodyHtml += `<tr style="font-weight: bold; background: #f8f9fa;">
+        <td style="padding: 10px; border-top: 2px solid #667eea;">TOTAL</td>
+        <td style="padding: 10px; border-top: 2px solid #667eea; text-align: right;">${formatarNumero(totalPrevisao)}</td>
+    </tr>`;
+
+    bodyContainer.innerHTML = bodyHtml;
+}
+
+// Exibir itens detalhados para formato V2
+function exibirItensPrevisaoV2(itens) {
+    const container = document.getElementById('fornecedorItemBody');
+    if (!container) {
+        console.warn('Container fornecedorItemBody não encontrado');
+        return;
+    }
+
+    let html = `
+        <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+            <th style="padding: 10px;">Código</th>
+            <th style="padding: 10px;">Descrição</th>
+            <th style="padding: 10px;">Fornecedor</th>
+            <th style="padding: 10px; text-align: right;">Demanda/Dia</th>
+            <th style="padding: 10px; text-align: right;">Demanda Período</th>
+        </tr>
+    `;
+
+    itens.forEach(item => {
+        html += `
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 8px;">${item.cod_produto}</td>
+                <td style="padding: 8px;">${item.descricao || '-'}</td>
+                <td style="padding: 8px;">${item.fornecedor || '-'}</td>
+                <td style="padding: 8px; text-align: right;">${item.demanda_diaria?.toFixed(2) || '0.00'}</td>
+                <td style="padding: 8px; text-align: right;">${formatarNumero(item.demanda_periodo || 0)}</td>
+            </tr>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+// Formatar label de período
+function formatarLabelPeriodo(periodo, granularidade) {
+    if (!periodo) return '-';
+
+    if (granularidade === 'mensal') {
+        // Formato: "2026-02" -> "Fev/26"
+        const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+        const partes = periodo.split('-');
+        if (partes.length >= 2) {
+            const mes = parseInt(partes[1]) - 1;
+            const ano = partes[0].substring(2);
+            return `${meses[mes]}/${ano}`;
+        }
+    } else if (granularidade === 'semanal') {
+        // Formato: "2026-S05" -> "S05/26"
+        return periodo.replace(/(\d{4})-S(\d+)/, 'S$2/$1').replace(/\/20/, '/');
+    }
+
+    return periodo;
+}
+
+// Formatar número com separadores de milhares
+function formatarNumero(valor) {
+    if (valor === null || valor === undefined || isNaN(valor)) return '0';
+    return Math.round(valor).toLocaleString('pt-BR');
+}
+
+// =====================================================
+// FIM FUNÇÕES V2
+// =====================================================
+
 // Criar gráfico de previsão simplificado com 3 linhas + ano anterior
 function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorModelo, granularidade = 'mensal', anoAnterior = null) {
     const canvas = document.getElementById('previsaoChart');
@@ -1973,7 +2158,7 @@ function criarGraficoPrevisao(historicoBase, historicoTeste, modelos, melhorMode
     }
 
     datasets.push({
-        label: 'Base Histórica (50%)',
+        label: 'Base Histórica (75%)',
         data: dadosBase,
         borderColor: '#0070f3',
         backgroundColor: 'rgba(0, 112, 243, 0.1)',
@@ -2352,98 +2537,148 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
             document.getElementById('progress').style.display = 'none';
         }, 500);
 
-        if (response.status === 200) {
+        if (response.status === 200 && (resultado.success || resultado.sucesso || resultado.resultado?.success || resultado.resultado?.sucesso)) {
             console.log('Resultado recebido:', resultado);
 
             // Mostrar resultados
             document.getElementById('results').style.display = 'block';
 
-            // Obter métricas do melhor modelo
-            const melhorModelo = resultado.melhor_modelo;
+            // Detectar formato da resposta (V2 Bottom-Up ou V1 legado)
+            const isV2Format = resultado.grafico_data || resultado.resultado?.grafico_data;
 
-            // V2 tem métricas dentro de modelos[modelo].metricas, V1 tem em resultado.metricas[modelo]
-            const modeloData = resultado.modelos[melhorModelo] || {};
-            const metricasMelhor = modeloData.metricas || resultado.metricas?.[melhorModelo] || {};
+            console.log('=== DEBUG V2 ===');
+            console.log('isV2Format:', isV2Format);
+            console.log('resultado.grafico_data:', resultado.grafico_data);
+            console.log('resultado.resultado:', resultado.resultado);
 
-            // Calcular totais de previsão futura
-            const previsaoFuturo = modeloData?.futuro?.valores || [];
-            const totalPrevisao = previsaoFuturo.reduce((sum, val) => sum + val, 0);
+            if (isV2Format) {
+                // ========== FORMATO V2 (Bottom-Up) ==========
+                const dados = resultado.resultado || resultado;
+                const graficoData = dados.grafico_data || [];
+                const totalItens = dados.total_itens || 0;
+                const demandaTotal = dados.demanda_total || 0;
+                const granularidade = dados.granularidade || 'mensal';
 
-            // Total do ano anterior (apenas os períodos correspondentes à previsão)
-            const valoresAnoAnterior = resultado.ano_anterior?.valores || [];
-            const numPeriodos = previsaoFuturo.length;
-            const totalAnoAnterior = valoresAnoAnterior.slice(0, numPeriodos).reduce((sum, val) => sum + val, 0);
+                console.log('V2 - dados:', dados);
+                console.log('V2 - graficoData:', graficoData);
+                console.log('V2 - totalItens:', totalItens);
+                console.log('V2 - demandaTotal:', demandaTotal);
 
-            // Calcular variação de demanda: (total previsão - total ano anterior) / total ano anterior * 100
-            const variacaoDemanda = totalAnoAnterior > 0
-                ? ((totalPrevisao - totalAnoAnterior) / totalAnoAnterior * 100)
-                : 0;
+                // KPIs para V2 (sem WMAPE/BIAS, usar totais)
+                document.getElementById('kpi_wmape').textContent = `${totalItens} itens`;
+                document.getElementById('kpi_bias').textContent = '-';
+                document.getElementById('kpi_variacao').textContent = formatarNumero(demandaTotal);
 
-            // Preencher KPIs no topo (métricas do período de teste)
-            document.getElementById('kpi_wmape').textContent = `${(metricasMelhor.wmape || 0).toFixed(1)}%`;
-            document.getElementById('kpi_bias').textContent = `${(metricasMelhor.bias || 0).toFixed(1)}%`;
+                // Criar gráfico simples para V2
+                console.log('Chamando criarGraficoPrevisaoV2...');
+                criarGraficoPrevisaoV2(graficoData, granularidade);
+                console.log('criarGraficoPrevisaoV2 concluído');
 
-            const variacaoSinal = variacaoDemanda >= 0 ? '+' : '';
-            document.getElementById('kpi_variacao').textContent = `${variacaoSinal}${variacaoDemanda.toFixed(1)}%`;
+                // Preencher tabela comparativa V2
+                preencherTabelaComparativaV2(graficoData, granularidade);
 
-            // V2 usa serie_temporal, V1 usa historico_base e historico_teste
-            // Para V2, dividimos a série temporal em base e teste
-            let historicoBase = resultado.historico_base;
-            let historicoTeste = resultado.historico_teste;
+                // Exibir itens detalhados se disponível
+                if (dados.itens && dados.itens.length > 0) {
+                    exibirItensPrevisaoV2(dados.itens);
+                }
 
-            if (!historicoBase && resultado.serie_temporal) {
-                // V2: dividir serie_temporal em base e teste (80/20)
-                const datas = resultado.serie_temporal.datas || [];
-                const valores = resultado.serie_temporal.valores || [];
-                const splitIndex = Math.floor(datas.length * 0.8);
+                // Desabilitar download (não temos arquivo no V2 ainda)
+                const downloadBtn = document.getElementById('downloadBtn');
+                if (downloadBtn) {
+                    downloadBtn.href = '#';
+                    downloadBtn.style.opacity = '0.5';
+                    downloadBtn.style.pointerEvents = 'none';
+                }
 
-                historicoBase = {
-                    datas: datas.slice(0, splitIndex),
-                    valores: valores.slice(0, splitIndex)
-                };
-                historicoTeste = {
-                    datas: datas.slice(splitIndex),
-                    valores: valores.slice(splitIndex)
-                };
-            }
-
-            // Criar gráfico principal com 3 linhas (base, teste, futuro) + ano anterior
-            criarGraficoPrevisao(
-                historicoBase,
-                historicoTeste,
-                resultado.modelos,
-                melhorModelo,
-                resultado.granularidade || 'mensal',  // Passar granularidade para formatação de labels
-                resultado.ano_anterior  // Passar dados do ano anterior para comparação visual
-            );
-
-            // Preencher tabela comparativa
-            preencherTabelaComparativa(resultado, melhorModelo, resultado.granularidade || 'mensal');
-
-            // Exibir relatório detalhado por fornecedor/item (se houver dados)
-            if (resultado.relatorio_detalhado) {
-                console.log('[Debug] relatorio_detalhado encontrado com', resultado.relatorio_detalhado.itens?.length || 0, 'itens');
-                exibirRelatorioDetalhado(resultado.relatorio_detalhado);
             } else {
-                console.log('[Debug] relatorio_detalhado NAO encontrado no resultado');
-            }
+                // ========== FORMATO V1 (Legado) ==========
+                // Obter métricas do melhor modelo
+                const melhorModelo = resultado.melhor_modelo;
 
-            // Armazenar dados para validação de demanda (v6.0)
-            armazenarDadosPrevisao(resultado);
+                // V2 tem métricas dentro de modelos[modelo].metricas, V1 tem em resultado.metricas[modelo]
+                const modeloData = resultado.modelos?.[melhorModelo] || {};
+                const metricasMelhor = modeloData.metricas || resultado.metricas?.[melhorModelo] || {};
 
-            // Configurar botão de download Excel
-            const downloadBtn = document.getElementById('downloadBtn');
-            if (downloadBtn && resultado.arquivo_saida) {
-                downloadBtn.href = `/download/${resultado.arquivo_saida}`;
-                downloadBtn.style.opacity = '1';
-                downloadBtn.style.pointerEvents = 'auto';
-                downloadBtn.style.cursor = 'pointer';
-            } else if (downloadBtn) {
-                // Se não houver arquivo, desabilitar o botão visualmente
-                downloadBtn.href = '#';
-                downloadBtn.style.opacity = '0.5';
-                downloadBtn.style.pointerEvents = 'none';
-                downloadBtn.style.cursor = 'not-allowed';
+                // Calcular totais de previsão futura
+                const previsaoFuturo = modeloData?.futuro?.valores || [];
+                const totalPrevisao = previsaoFuturo.reduce((sum, val) => sum + val, 0);
+
+                // Total do ano anterior (apenas os períodos correspondentes à previsão)
+                const valoresAnoAnterior = resultado.ano_anterior?.valores || [];
+                const numPeriodos = previsaoFuturo.length;
+                const totalAnoAnterior = valoresAnoAnterior.slice(0, numPeriodos).reduce((sum, val) => sum + val, 0);
+
+                // Calcular variação de demanda: (total previsão - total ano anterior) / total ano anterior * 100
+                const variacaoDemanda = totalAnoAnterior > 0
+                    ? ((totalPrevisao - totalAnoAnterior) / totalAnoAnterior * 100)
+                    : 0;
+
+                // Preencher KPIs no topo (métricas do período de teste)
+                document.getElementById('kpi_wmape').textContent = `${(metricasMelhor.wmape || 0).toFixed(1)}%`;
+                document.getElementById('kpi_bias').textContent = `${(metricasMelhor.bias || 0).toFixed(1)}%`;
+
+                const variacaoSinal = variacaoDemanda >= 0 ? '+' : '';
+                document.getElementById('kpi_variacao').textContent = `${variacaoSinal}${variacaoDemanda.toFixed(1)}%`;
+
+                // V2 usa serie_temporal, V1 usa historico_base e historico_teste
+                // Para V2, dividimos a série temporal em base e teste
+                let historicoBase = resultado.historico_base;
+                let historicoTeste = resultado.historico_teste;
+
+                if (!historicoBase && resultado.serie_temporal) {
+                    // V2: dividir serie_temporal em base e teste (80/20)
+                    const datas = resultado.serie_temporal.datas || [];
+                    const valores = resultado.serie_temporal.valores || [];
+                    const splitIndex = Math.floor(datas.length * 0.8);
+
+                    historicoBase = {
+                        datas: datas.slice(0, splitIndex),
+                        valores: valores.slice(0, splitIndex)
+                    };
+                    historicoTeste = {
+                        datas: datas.slice(splitIndex),
+                        valores: valores.slice(splitIndex)
+                    };
+                }
+
+                // Criar gráfico principal com 3 linhas (base, teste, futuro) + ano anterior
+                criarGraficoPrevisao(
+                    historicoBase,
+                    historicoTeste,
+                    resultado.modelos,
+                    melhorModelo,
+                    resultado.granularidade || 'mensal',  // Passar granularidade para formatação de labels
+                    resultado.ano_anterior  // Passar dados do ano anterior para comparação visual
+                );
+
+                // Preencher tabela comparativa
+                preencherTabelaComparativa(resultado, melhorModelo, resultado.granularidade || 'mensal');
+
+                // Exibir relatório detalhado por fornecedor/item (se houver dados)
+                if (resultado.relatorio_detalhado) {
+                    console.log('[Debug] relatorio_detalhado encontrado com', resultado.relatorio_detalhado.itens?.length || 0, 'itens');
+                    exibirRelatorioDetalhado(resultado.relatorio_detalhado);
+                } else {
+                    console.log('[Debug] relatorio_detalhado NAO encontrado no resultado');
+                }
+
+                // Armazenar dados para validação de demanda (v6.0)
+                armazenarDadosPrevisao(resultado);
+
+                // Configurar botão de download Excel
+                const downloadBtn = document.getElementById('downloadBtn');
+                if (downloadBtn && resultado.arquivo_saida) {
+                    downloadBtn.href = `/download/${resultado.arquivo_saida}`;
+                    downloadBtn.style.opacity = '1';
+                    downloadBtn.style.pointerEvents = 'auto';
+                    downloadBtn.style.cursor = 'pointer';
+                } else if (downloadBtn) {
+                    // Se não houver arquivo, desabilitar o botão visualmente
+                    downloadBtn.href = '#';
+                    downloadBtn.style.opacity = '0.5';
+                    downloadBtn.style.pointerEvents = 'none';
+                    downloadBtn.style.cursor = 'not-allowed';
+                }
             }
 
         } else {

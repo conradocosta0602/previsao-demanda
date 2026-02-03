@@ -131,16 +131,31 @@ class PrevisaoV2Engine:
                     params.append(int(cod_empresa))
 
             if fornecedor and fornecedor != 'TODOS':
-                where_conditions.append("p.nome_fornecedor = %s")
-                params.append(fornecedor)
+                if isinstance(fornecedor, list):
+                    placeholders = ','.join(['%s'] * len(fornecedor))
+                    where_conditions.append(f"p.nome_fornecedor IN ({placeholders})")
+                    params.extend(fornecedor)
+                else:
+                    where_conditions.append("p.nome_fornecedor = %s")
+                    params.append(fornecedor)
 
             if linha1 and linha1 != 'TODAS':
-                where_conditions.append("p.categoria = %s")
-                params.append(linha1)
+                if isinstance(linha1, list):
+                    placeholders = ','.join(['%s'] * len(linha1))
+                    where_conditions.append(f"p.categoria IN ({placeholders})")
+                    params.extend(linha1)
+                else:
+                    where_conditions.append("p.categoria = %s")
+                    params.append(linha1)
 
             if linha3 and linha3 != 'TODAS':
-                where_conditions.append("p.codigo_linha = %s")
-                params.append(linha3)
+                if isinstance(linha3, list):
+                    placeholders = ','.join(['%s'] * len(linha3))
+                    where_conditions.append(f"p.codigo_linha IN ({placeholders})")
+                    params.extend(linha3)
+                else:
+                    where_conditions.append("p.codigo_linha = %s")
+                    params.append(linha3)
 
             where_sql = ""
             if where_conditions:
