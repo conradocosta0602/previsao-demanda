@@ -2968,12 +2968,13 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
                     exibirItensPrevisaoV2(itensDetalhados);
                 }
 
-                // Desabilitar download
+                // Desabilitar download temporariamente
                 const downloadBtn = document.getElementById('downloadBtn');
                 if (downloadBtn) {
-                    downloadBtn.href = '#';
+                    downloadBtn.disabled = true;
                     downloadBtn.style.opacity = '0.5';
                     downloadBtn.style.pointerEvents = 'none';
+                    downloadBtn.style.cursor = 'not-allowed';
                 }
 
                 armazenarDadosPrevisao(dados);
@@ -3069,17 +3070,20 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
 
                 // Configurar botão de download Excel
                 const downloadBtn = document.getElementById('downloadBtn');
-                if (downloadBtn && resultado.arquivo_saida) {
-                    downloadBtn.href = `/download/${resultado.arquivo_saida}`;
+                if (downloadBtn && resultado.relatorio_detalhado && resultado.relatorio_detalhado.itens && resultado.relatorio_detalhado.itens.length > 0) {
+                    // Habilitar botão de download (agora usa onclick para exportar via API)
+                    downloadBtn.disabled = false;
                     downloadBtn.style.opacity = '1';
                     downloadBtn.style.pointerEvents = 'auto';
                     downloadBtn.style.cursor = 'pointer';
+                    downloadBtn.title = 'Clique para exportar o relatório detalhado de itens';
                 } else if (downloadBtn) {
-                    // Se não houver arquivo, desabilitar o botão visualmente
-                    downloadBtn.href = '#';
+                    // Se não houver itens, desabilitar o botão visualmente
+                    downloadBtn.disabled = true;
                     downloadBtn.style.opacity = '0.5';
                     downloadBtn.style.pointerEvents = 'none';
                     downloadBtn.style.cursor = 'not-allowed';
+                    downloadBtn.title = 'Gere uma previsão para habilitar o download';
                 }
             }
 
@@ -5185,3 +5189,109 @@ function atualizarGraficoAposAjuste() {
         document.head.appendChild(style);
     }
 })();
+
+
+// =====================================================
+// EXPORTAÇÃO DO RELATÓRIO DETALHADO DE ITENS
+// =====================================================
+
+/**
+ * Exporta o relatório detalhado de itens para Excel
+ * IMPORTANTE: Só funciona fora do modo de ajuste manual
+ */
+async function exportarRelatorioItens() {
+    // Verificar se há dados para exportar
+    if (!dadosRelatorioDetalhado || !dadosRelatorioDetalhado.itens || dadosRelatorioDetalhado.itens.length === 0) {
+        alert('Nenhum dado de relatório para exportar. Gere uma previsão primeiro.');
+        return;
+    }
+
+    // Verificar se há ajustes pendentes (modo de ajuste manual ativo)
+    const temAjustesPendentes = Object.keys(ajustesPendentes).length > 0;
+    if (temAjustesPendentes) {
+        const confirmar = confirm(
+            'Existem ajustes pendentes que não foram salvos.\n\n' +
+            'Se exportar agora, os valores originais serão usados.\n\n' +
+            'Deseja continuar mesmo assim?'
+        );
+        if (!confirmar) {
+            return;
+        }
+    }
+
+    try {
+        // Mostrar loading
+        const downloadBtn = document.getElementById('downloadBtn');
+        const textoOriginal = downloadBtn.textContent;
+        downloadBtn.textContent = 'Gerando Excel...';
+        downloadBtn.style.opacity = '0.7';
+        downloadBtn.style.pointerEvents = 'none';
+
+        // Preparar dados para envio
+        const dadosExportar = {
+            itens: dadosRelatorioDetalhado.itens,
+            periodos: dadosRelatorioDetalhado.periodos_previsao || [],
+            granularidade: dadosRelatorioDetalhado.granularidade || 'mensal',
+            filtros: {
+                loja: document.getElementById('loja')?.value || '',
+                fornecedor: document.getElementById('fornecedor')?.value || '',
+                categoria: document.getElementById('categoria')?.value || ''
+            }
+        };
+
+        // Fazer requisição POST para a API
+        const response = await fetch('/api/exportar_relatorio_itens', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(dadosExportar)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.erro || 'Erro ao gerar arquivo Excel');
+        }
+
+        // Obter o blob do arquivo
+        const blob = await response.blob();
+
+        // Criar link de download
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+
+        // Extrair nome do arquivo do header ou usar nome padrão
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = 'relatorio_detalhado_itens.xlsx';
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            if (match && match[1]) {
+                filename = match[1].replace(/['"]/g, '');
+            }
+        }
+
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+        // Restaurar botão
+        downloadBtn.textContent = textoOriginal;
+        downloadBtn.style.opacity = '1';
+        downloadBtn.style.pointerEvents = 'auto';
+
+        console.log('[Export] Relatório de itens exportado com sucesso:', filename);
+
+    } catch (error) {
+        console.error('[Export] Erro ao exportar relatório de itens:', error);
+        alert('Erro ao exportar relatório: ' + error.message);
+
+        // Restaurar botão em caso de erro
+        const downloadBtn = document.getElementById('downloadBtn');
+        downloadBtn.textContent = 'Download Excel';
+        downloadBtn.style.opacity = '1';
+        downloadBtn.style.pointerEvents = 'auto';
+    }
+}

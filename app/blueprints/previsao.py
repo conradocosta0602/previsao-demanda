@@ -1642,3 +1642,235 @@ def api_historico_item():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+# =====================================================
+# API DE EXPORTACAO DO RELATORIO DETALHADO DE ITENS
+# =====================================================
+
+@previsao_bp.route('/api/exportar_relatorio_itens', methods=['POST'])
+def api_exportar_relatorio_itens():
+    """
+    Exporta o relatorio detalhado de itens para Excel.
+    Recebe os dados do relatorio_detalhado e gera arquivo Excel.
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
+
+        dados = request.get_json()
+
+        if not dados:
+            return jsonify({'success': False, 'erro': 'Dados nao fornecidos'}), 400
+
+        itens = dados.get('itens', [])
+        periodos = dados.get('periodos', [])
+        granularidade = dados.get('granularidade', 'mensal')
+        filtros = dados.get('filtros', {})
+
+        if not itens:
+            return jsonify({'success': False, 'erro': 'Nenhum item para exportar'}), 400
+
+        # Criar workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Relatorio Detalhado'
+
+        # Estilos
+        header_font = Font(bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='10B981', end_color='059669', fill_type='solid')
+        fornecedor_fill = PatternFill(start_color='E0F2F1', end_color='E0F2F1', fill_type='solid')
+        total_fill = PatternFill(start_color='047857', end_color='047857', fill_type='solid')
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        row_num = 1
+
+        # Informacoes de filtros (se houver)
+        if filtros:
+            ws.cell(row=row_num, column=1, value='Filtros Aplicados:').font = Font(bold=True)
+            row_num += 1
+            for chave, valor in filtros.items():
+                if valor:
+                    ws.cell(row=row_num, column=1, value=f'  {chave.title()}: {valor}')
+                    row_num += 1
+            row_num += 1
+
+        # Funcao auxiliar para formatar periodo
+        meses_nomes = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+
+        def formatar_periodo_header(periodo):
+            if not periodo:
+                return '-'
+            if granularidade == 'semanal':
+                if isinstance(periodo, dict):
+                    return f"S{periodo.get('semana', '?')}/{periodo.get('ano', '?')}"
+                elif isinstance(periodo, str) and '-S' in periodo:
+                    ano, sem = periodo.split('-S')
+                    return f"S{int(sem)}/{ano}"
+                return str(periodo)
+            elif granularidade in ['diario', 'diaria']:
+                if isinstance(periodo, str):
+                    partes = periodo.split('-')
+                    if len(partes) == 3:
+                        return f"{partes[2]}/{partes[1]}"
+                return str(periodo)
+            else:
+                # Mensal
+                if isinstance(periodo, dict):
+                    mes_idx = periodo.get('mes', 1) - 1
+                    return f"{meses_nomes[mes_idx]}/{periodo.get('ano', '?')}"
+                return str(periodo)
+
+        # Cabecalho
+        headers = ['Codigo', 'Descricao']
+        for periodo in periodos:
+            headers.append(formatar_periodo_header(periodo))
+        headers.extend(['Total Prev.', 'Ano Ant.', 'Var. %', 'Alerta', 'Metodo'])
+
+        for col, header in enumerate(headers, start=1):
+            cell = ws.cell(row=row_num, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center')
+
+        row_num += 1
+
+        # Agrupar itens por fornecedor
+        itens_por_fornecedor = {}
+        for item in itens:
+            fornecedor = item.get('nome_fornecedor') or 'SEM FORNECEDOR'
+            if fornecedor not in itens_por_fornecedor:
+                itens_por_fornecedor[fornecedor] = []
+            itens_por_fornecedor[fornecedor].append(item)
+
+        # Ordenar fornecedores alfabeticamente
+        fornecedores_ordenados = sorted(itens_por_fornecedor.keys())
+
+        for fornecedor in fornecedores_ordenados:
+            itens_fornecedor = itens_por_fornecedor[fornecedor]
+
+            # Calcular totais do fornecedor
+            total_prev_forn = 0
+            total_aa_forn = 0
+            totais_por_periodo = [0] * len(periodos)
+
+            for item in itens_fornecedor:
+                total_prev_forn += item.get('demanda_prevista_total', 0)
+                total_aa_forn += item.get('demanda_ano_anterior', 0)
+
+                if item.get('previsao_por_periodo'):
+                    for idx, p in enumerate(item['previsao_por_periodo']):
+                        if idx < len(periodos):
+                            totais_por_periodo[idx] += p.get('previsao', 0)
+
+            variacao_forn = ((total_prev_forn - total_aa_forn) / total_aa_forn * 100) if total_aa_forn > 0 else 0
+
+            # Linha do fornecedor (agregada)
+            ws.cell(row=row_num, column=1, value='').fill = fornecedor_fill
+            ws.cell(row=row_num, column=1).border = border
+            ws.cell(row=row_num, column=2, value=f'{fornecedor} ({len(itens_fornecedor)} itens)').font = Font(bold=True)
+            ws.cell(row=row_num, column=2).fill = fornecedor_fill
+            ws.cell(row=row_num, column=2).border = border
+
+            for idx, total in enumerate(totais_por_periodo, start=3):
+                cell = ws.cell(row=row_num, column=idx, value=round(total))
+                cell.fill = fornecedor_fill
+                cell.border = border
+                cell.number_format = '#,##0'
+                cell.font = Font(bold=True)
+
+            col_offset = 3 + len(periodos)
+            ws.cell(row=row_num, column=col_offset, value=round(total_prev_forn)).fill = fornecedor_fill
+            ws.cell(row=row_num, column=col_offset).border = border
+            ws.cell(row=row_num, column=col_offset).number_format = '#,##0'
+            ws.cell(row=row_num, column=col_offset).font = Font(bold=True)
+
+            ws.cell(row=row_num, column=col_offset + 1, value=round(total_aa_forn)).fill = fornecedor_fill
+            ws.cell(row=row_num, column=col_offset + 1).border = border
+            ws.cell(row=row_num, column=col_offset + 1).number_format = '#,##0'
+            ws.cell(row=row_num, column=col_offset + 1).font = Font(bold=True)
+
+            ws.cell(row=row_num, column=col_offset + 2, value=f'{variacao_forn:.1f}%').fill = fornecedor_fill
+            ws.cell(row=row_num, column=col_offset + 2).border = border
+            ws.cell(row=row_num, column=col_offset + 2).font = Font(bold=True)
+
+            ws.cell(row=row_num, column=col_offset + 3, value='').fill = fornecedor_fill
+            ws.cell(row=row_num, column=col_offset + 3).border = border
+
+            ws.cell(row=row_num, column=col_offset + 4, value='').fill = fornecedor_fill
+            ws.cell(row=row_num, column=col_offset + 4).border = border
+
+            row_num += 1
+
+            # Linhas dos itens do fornecedor
+            for item in itens_fornecedor:
+                ws.cell(row=row_num, column=1, value=item.get('cod_produto', '')).border = border
+                ws.cell(row=row_num, column=2, value=item.get('descricao', '')[:50]).border = border
+
+                # Valores por periodo
+                if item.get('previsao_por_periodo'):
+                    for idx, p in enumerate(item['previsao_por_periodo'], start=3):
+                        if idx - 3 < len(periodos):
+                            cell = ws.cell(row=row_num, column=idx, value=round(p.get('previsao', 0)))
+                            cell.border = border
+                            cell.number_format = '#,##0'
+
+                col_offset = 3 + len(periodos)
+                ws.cell(row=row_num, column=col_offset, value=round(item.get('demanda_prevista_total', 0))).border = border
+                ws.cell(row=row_num, column=col_offset).number_format = '#,##0'
+
+                ws.cell(row=row_num, column=col_offset + 1, value=round(item.get('demanda_ano_anterior', 0))).border = border
+                ws.cell(row=row_num, column=col_offset + 1).number_format = '#,##0'
+
+                variacao_item = item.get('variacao_percentual', 0)
+                ws.cell(row=row_num, column=col_offset + 2, value=f'{variacao_item:.1f}%').border = border
+
+                # Emoji de alerta (converter para texto)
+                sinal = item.get('sinal_emoji', '')
+                alerta_texto = {
+                    '🔴': 'CRITICO',
+                    '🟡': 'ALERTA',
+                    '🔵': 'ATENCAO',
+                    '🟢': 'NORMAL',
+                    '⚪': 'SEM DADOS'
+                }.get(sinal, '-')
+                ws.cell(row=row_num, column=col_offset + 3, value=alerta_texto).border = border
+
+                ws.cell(row=row_num, column=col_offset + 4, value=item.get('metodo_estatistico', '')).border = border
+
+                row_num += 1
+
+        # Ajustar largura das colunas
+        ws.column_dimensions['A'].width = 12
+        ws.column_dimensions['B'].width = 35
+        for col_idx in range(3, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = 12
+
+        ws.freeze_panes = 'C2'
+
+        # Salvar em memoria
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'relatorio_detalhado_itens_{timestamp}.xlsx'
+
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
