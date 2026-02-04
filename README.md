@@ -1,11 +1,16 @@
-# Sistema de Demanda e Reabastecimento v5.2
+# Sistema de Demanda e Reabastecimento v5.3
 
-Sistema completo para gestão de estoque multi-loja com Centro de Distribuição (CD), combinando previsão de demanda Bottom-Up com política de estoque baseada em curva ABC.
+Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v5.2:**
-- **Ajuste Manual de Demanda Persistente**: Ajustes salvos no banco sao aplicados automaticamente ao recarregar previsao
-- **Tabela Comparativa por Fornecedor**: Detalhamento com variacao % mes a mes por fornecedor
-- **Atualizacao em Tempo Real**: Ajustes refletem instantaneamente em todas as tabelas e graficos
+**Novidades v5.3 - Revisao do Modelo de Calculo (Fev/2026):**
+- **Ativacao dos 6 Metodos Estatisticos**: SMA, WMA, EMA, Tendencia, Sazonal e TSB agora aplicados corretamente
+- **Sazonalidade como Multiplicador**: Fatores sazonais (0.5 a 2.0) aplicados na formula de previsao
+- **Deteccao de Tendencia para Demanda Intermitente**: TSB com analise de queda/crescimento
+- **Exclusao de Dados do Periodo de Previsao**: Corte de data para evitar usar dados reais como previsao
+- **Saneamento de Rupturas com Limiar de 50%**: Cobertura minima de dados de estoque para identificar rupturas
+- **Normalizacao pelo Total de Dias**: Corrige superestimacao em itens com vendas esporadicas
+
+> **Documentacao Completa da Revisao:** [REVISAO_MODELO_PREVISAO_2026.md](REVISAO_MODELO_PREVISAO_2026.md)
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/flask-3.0.0-green.svg)](https://flask.palletsprojects.com/)
@@ -588,7 +593,45 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v5.2 (Fevereiro 2026) - ATUAL
+### v5.3 (Fevereiro 2026) - ATUAL
+
+**Revisao Completa do Modelo de Calculo de Previsao:**
+
+Esta versao corrige problemas fundamentais no calculo de previsao que causavam superestimacao (ex: DICOMPEL +81.6%, PHILIPS IL 991 un previstas com historico de 22 un).
+
+**1. Ativacao dos 6 Metodos Estatisticos:**
+- SMA, WMA, EMA, Tendencia, Sazonal e TSB ja existiam no `DemandCalculator` mas nao estavam sendo usados
+- Agora a formula usa `demanda_diaria_inteligente` retornada pelo calculador
+
+**2. Sazonalidade como Multiplicador:**
+- Fatores sazonais (0.5 a 2.0) aplicados na formula de previsao
+- Ex: fator 1.3 para dezembro = 30% acima da media
+
+**3. Deteccao de Tendencia para Demanda Intermitente:**
+- TSB simplificado agora detecta queda/crescimento comparando primeira e segunda metade da serie
+- Produtos em declinio tem previsao ajustada proporcionalmente
+
+**4. Exclusao de Dados do Periodo de Previsao:**
+- Corte de data para evitar usar dados reais (ex: Jan/2026) como base para previsao do mesmo periodo
+- Resolve inflacao de previsao quando dados futuros ja existem no banco
+
+**5. Saneamento de Rupturas com Limiar de 50%:**
+- Se cobertura de dados de estoque >= 50%: usa RupturaSanitizer (exclui rupturas reais)
+- Se cobertura < 50%: normaliza demanda pelo total de dias do periodo
+- Distingue corretamente entre "ruptura" (estoque=0, venda=0) e "demanda zero real" (estoque>0, venda=0)
+
+**6. Normalizacao pelo Total de Dias:**
+- Corrige o erro de calcular media apenas sobre dias com venda
+- Ex: 10.000 un em 200 dias de venda / 730 dias totais = 13.7 un/dia (nao 50 un/dia)
+
+**Arquivos Modificados:**
+- `app/blueprints/previsao.py` - Logica principal de calculo revisada
+- `core/demand_calculator.py` - TSB com deteccao de tendencia
+
+**Documentacao:**
+- [REVISAO_MODELO_PREVISAO_2026.md](REVISAO_MODELO_PREVISAO_2026.md) - Documentacao completa da revisao
+
+### v5.2 (Fevereiro 2026)
 
 **Melhorias na Tabela Comparativa:**
 - **Detalhamento por Fornecedor**: Tabela comparativa agora mostra linhas separadas para cada fornecedor quando multiplos sao selecionados
@@ -754,6 +797,7 @@ R: Sim. No arquivo `core/pedido_fornecedor_integrado.py`, edite as constantes `N
 
 ## Documentacao Completa
 
+- **[REVISAO_MODELO_PREVISAO_2026.md](REVISAO_MODELO_PREVISAO_2026.md)** - **NOVO** - Revisao completa do modelo de calculo (Fev/2026)
 - **[docs/PEDIDO_FORNECEDOR_INTEGRADO.md](docs/PEDIDO_FORNECEDOR_INTEGRADO.md)** - Guia completo do pedido multi-loja
 - **[docs/TRANSFERENCIAS_ENTRE_LOJAS.md](docs/TRANSFERENCIAS_ENTRE_LOJAS.md)** - Sistema de transferencias regionais
 - **[GRANULARIDADE_E_PREVISOES.md](GRANULARIDADE_E_PREVISOES.md)** - Guia sobre diferencas entre granularidades
@@ -824,8 +868,8 @@ Para duvidas ou problemas:
 
 ---
 
-**Versao:** 5.1
+**Versao:** 5.3
 **Status:** Em Producao
-**Ultima Atualizacao:** Janeiro 2026
+**Ultima Atualizacao:** Fevereiro 2026
 
 **Se este projeto foi util, considere dar uma estrela!**

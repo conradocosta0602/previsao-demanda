@@ -1,8 +1,12 @@
 # CLAUDE CODE MAP - Previsão de Demanda
 ## Mapeamento Completo do Código | ValterFC
 
-**Última atualização:** 2026-02-02
+**Última atualização:** 2026-02-04
+**Versão do Sistema:** 5.3
 **Objetivo:** Documentar todas as funções, dependências e oportunidades de melhoria
+
+> **IMPORTANTE:** Em 04/02/2026 foi realizada uma revisão completa do modelo de cálculo de previsão.
+> Consulte [REVISAO_MODELO_PREVISAO_2026.md](REVISAO_MODELO_PREVISAO_2026.md) para detalhes.
 
 ---
 
@@ -1213,8 +1217,36 @@ tests/
 | 2026-02-02 | Documentação de 4 cálculos de cobertura (manter todos) | Valter + Claude |
 | 2026-02-02 | Adição de análise de estoque de segurança | Valter + Claude |
 | 2026-02-02 | Atualização das sugestões de melhorias com prioridades | Valter + Claude |
+| **2026-02-04** | **REVISÃO COMPLETA DO MODELO DE CÁLCULO** | Valter + Claude |
+| 2026-02-04 | Ativação dos 6 métodos estatísticos (SMA, WMA, EMA, etc.) | Valter + Claude |
+| 2026-02-04 | Ativação de sazonalidade como multiplicador | Valter + Claude |
+| 2026-02-04 | TSB simplificado com detecção de tendência | Valter + Claude |
+| 2026-02-04 | Corte de data para excluir período de previsão | Valter + Claude |
+| 2026-02-04 | Saneamento de rupturas com limiar de 50% cobertura | Valter + Claude |
+| 2026-02-04 | Normalização pelo total de dias do período | Valter + Claude |
 
 ---
 
-*Última atualização: 2026-02-02*
+## REVISÃO DO MODELO v5.3 (Fevereiro 2026)
+
+### Problemas Corrigidos:
+1. **6 métodos estatísticos não eram usados** - Corrigido: agora aplicados via DemandCalculator
+2. **Sazonalidade não era aplicada** - Corrigido: fatores 0.5-2.0 como multiplicadores
+3. **TSB sem detecção de tendência** - Corrigido: analisa primeira/segunda metade da série
+4. **Dados do período de previsão usados** - Corrigido: corte de data na query SQL
+5. **RupturaSanitizer não era usado** - Corrigido: limiar de 50% cobertura de estoque
+6. **Média inflada por dias com venda** - Corrigido: normalização pelo total de dias
+
+### Arquivos Modificados:
+| Arquivo | Mudança |
+|---------|---------|
+| `app/blueprints/previsao.py` | Lógica principal revisada (linhas 201-543) |
+| `core/demand_calculator.py` | TSB com tendência (linhas 115-165) |
+
+### Documentação:
+- [REVISAO_MODELO_PREVISAO_2026.md](REVISAO_MODELO_PREVISAO_2026.md) - Documentação completa
+
+---
+
+*Última atualização: 2026-02-04*
 *Para uso exclusivo do projeto Previsão de Demanda - ValterFC*

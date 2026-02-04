@@ -115,18 +115,52 @@ class DemandCalculator:
         # Verificar intermitência (muitos zeros)
         zeros_pct = (vendas_array == 0).sum() / n
         if zeros_pct > 0.4:
-            # Demanda intermitente - usar TSB simplificado
+            # Demanda intermitente - usar TSB simplificado COM TENDENCIA
             demandas_nz = vendas_array[vendas_array > 0]
             if len(demandas_nz) > 0:
                 prob_demanda = len(demandas_nz) / n
                 media_nz = np.mean(demandas_nz)
-                demanda = prob_demanda * media_nz
+                demanda_base = prob_demanda * media_nz
+
+                # CORRECAO: Considerar tendencia para demanda intermitente
+                # Se a segunda metade da serie tem menos vendas, aplicar fator de queda
+                meio = n // 2
+                primeira_metade = vendas_array[:meio]
+                segunda_metade = vendas_array[meio:]
+
+                media_primeira = np.mean(primeira_metade)
+                media_segunda = np.mean(segunda_metade)
+
+                fator_tendencia = 1.0
+                tendencia = 'estavel'
+
+                if media_primeira > 0:
+                    razao = media_segunda / media_primeira
+                    if razao < 0.5:
+                        # Queda significativa (>50%) - produto pode estar saindo de linha
+                        fator_tendencia = max(0.1, razao)  # Minimo 10% da demanda base
+                        tendencia = 'queda_acentuada'
+                    elif razao < 0.85:
+                        # Queda moderada
+                        fator_tendencia = razao
+                        tendencia = 'decrescente'
+                    elif razao > 1.15:
+                        # Crescimento
+                        fator_tendencia = min(1.5, razao)  # Maximo 50% acima
+                        tendencia = 'crescente'
+
+                demanda = demanda_base * fator_tendencia
                 desvio = demanda * 0.5  # Alta incerteza
+
                 return demanda, desvio, {
                     'metodo_usado': 'tsb_simplificado',
                     'confianca': 'baixa',
                     'num_periodos': n,
                     'zeros_pct': round(zeros_pct * 100, 1),
+                    'tendencia_detectada': tendencia,
+                    'fator_tendencia': round(fator_tendencia, 3),
+                    'media_primeira_metade': round(media_primeira, 4),
+                    'media_segunda_metade': round(media_segunda, 4),
                     'fator_seguranca_recomendado': 1.6
                 }
 
