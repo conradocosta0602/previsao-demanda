@@ -16,7 +16,6 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from app.utils.db_connection import get_db_connection, DB_CONFIG
-from core.ruptura_sanitizer import RupturaSanitizer
 from core.forecasting_models import get_modelo
 
 
@@ -34,7 +33,6 @@ class PrevisaoV2Engine:
             conn: Conexao PostgreSQL opcional (sera criada se nao fornecida)
         """
         self.conn = conn
-        self.sanitizer = RupturaSanitizer()
 
     def _get_connection(self):
         """Obtem conexao com o banco"""

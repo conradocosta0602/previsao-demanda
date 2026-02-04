@@ -102,3 +102,7 @@ def _register_blueprints(app):
     # Blueprint: Configuracao (Parametros Globais)
     from app.blueprints.configuracao import configuracao_bp
     app.register_blueprint(configuracao_bp)
+
+    # Blueprint: Validacao e Conformidade de Metodologia
+    from app.blueprints.validacao import validacao_bp
+    app.register_blueprint(validacao_bp)

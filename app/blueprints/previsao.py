@@ -108,7 +108,6 @@ def _api_gerar_previsao_banco_v2_interno():
     from datetime import datetime as dt, timedelta
     from calendar import monthrange
     from app.utils.db_connection import get_db_connection, DB_CONFIG
-    from core.ruptura_sanitizer import RupturaSanitizer
     from core.demand_calculator import DemandCalculator
 
     try:
@@ -264,8 +263,12 @@ def _api_gerar_previsao_banco_v2_interno():
 
         # =====================================================
         # BUSCAR DADOS DE ESTOQUE PARA CALCULAR COBERTURA
-        # Usado para decidir entre RupturaSanitizer vs normalização
+        # Usado para decidir entre saneamento de rupturas vs normalização
         # =====================================================
+        # Ajustar filtros para usar alias 'e' em vez de 'h'
+        where_sql_estoque = where_sql.replace("h.cod_empresa", "e.cod_empresa").replace("h.codigo", "e.codigo")
+        corte_sql_estoque = corte_sql.replace("h.data", "e.data")
+
         query_estoque = f"""
             SELECT
                 e.codigo as cod_produto,
@@ -274,8 +277,8 @@ def _api_gerar_previsao_banco_v2_interno():
             FROM historico_estoque_diario e
             JOIN cadastro_produtos_completo p ON e.codigo::text = p.cod_produto
             WHERE e.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
-            {where_sql}
-            {corte_sql}
+            {where_sql_estoque}
+            {corte_sql_estoque}
             ORDER BY e.codigo, e.data
         """
         cursor.execute(query_estoque, params_com_corte)
@@ -422,7 +425,7 @@ def _api_gerar_previsao_banco_v2_interno():
 
             # =====================================================
             # LOGICA DE COBERTURA DE ESTOQUE (LIMIAR 50%)
-            # - >= 50%: Usar RupturaSanitizer (excluir rupturas)
+            # - >= 50%: Sanear rupturas (excluir rupturas)
             # - < 50%: Normalizar pelo total de dias do periodo
             # =====================================================
             estoque_item = estoque_item_dict.get(cod_produto, {})
@@ -435,7 +438,7 @@ def _api_gerar_previsao_banco_v2_interno():
 
             if cobertura_estoque >= 0.50:
                 # =====================================================
-                # COBERTURA >= 50%: Usar RupturaSanitizer
+                # COBERTURA >= 50%: Sanear rupturas
                 # Exclui dias com estoque=0 E venda=0 (ruptura)
                 # Inclui dias com estoque>0 E venda=0 (demanda zero real)
                 # =====================================================
