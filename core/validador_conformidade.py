@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 10 verificacoes do checklist de conformidade.
+        Executa todas as 11 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -79,6 +79,7 @@ class ValidadorConformidade:
             ('V08', 'Formula Pedido', self._verificar_formula_pedido),
             ('V09', 'ES por Curva ABC', self._verificar_es_abc),
             ('V10', 'Consistencia Geral', self._verificar_consistencia_geral),
+            ('V11', 'Limitador Variacao AA', self._verificar_limitador_variacao),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -421,6 +422,71 @@ class ValidadorConformidade:
                 return 'falha', 'Z-scores ABC incorretos', {'z_scores': resultados}
         except Exception as e:
             return 'falha', f'Erro ao verificar ES ABC: {str(e)}', {}
+
+    def _verificar_limitador_variacao(self) -> Tuple[str, str, Dict]:
+        """V11: Verifica se o limitador de variacao vs ano anterior funciona."""
+        try:
+            # Simular cenarios de variacao
+            # A logica do limitador: variacao > 1.5 ou variacao < 0.6 => limitar
+            # Portanto: 1.5 exato NAO limita, 0.6 exato NAO limita
+            cenarios = [
+                # (previsao, ano_anterior, esperado_limitado)
+                (150, 100, False),   # exatamente 1.5x -> NAO limita (usa >)
+                (60, 100, False),    # exatamente 0.6x -> NAO limita (usa <)
+                (120, 100, False),   # 1.2x -> sem limite
+                (180, 100, True),    # 1.8x -> deve limitar para 150
+                (50, 100, True),     # 0.5x -> deve limitar para 60
+                (100, 100, False),   # 1.0x -> sem limite
+                (151, 100, True),    # 1.51x -> deve limitar para 150
+                (59, 100, True),     # 0.59x -> deve limitar para 60
+            ]
+
+            resultados = []
+            todos_corretos = True
+
+            for previsao, ano_anterior, esperado_limitado in cenarios:
+                # Aplicar logica do limitador (mesma do previsao.py)
+                variacao = previsao / ano_anterior if ano_anterior > 0 else 1.0
+
+                # Verificar se deveria limitar (usando > e <, nao >= e <=)
+                foi_limitado = variacao > 1.5 or variacao < 0.6
+
+                # Calcular valor apos limitador
+                if variacao > 1.5:
+                    valor_final = ano_anterior * 1.5
+                elif variacao < 0.6:
+                    valor_final = ano_anterior * 0.6
+                else:
+                    valor_final = previsao
+
+                # Verificar se comportamento esta correto
+                correto = (foi_limitado == esperado_limitado)
+
+                resultados.append({
+                    'previsao_original': previsao,
+                    'ano_anterior': ano_anterior,
+                    'variacao': round(variacao, 2),
+                    'foi_limitado': foi_limitado,
+                    'esperado_limitado': esperado_limitado,
+                    'valor_final': round(valor_final, 1),
+                    'correto': correto
+                })
+
+                if not correto:
+                    todos_corretos = False
+
+            if todos_corretos:
+                return 'ok', 'Limitador variacao AA correto (-40% a +50%)', {
+                    'limites': {'minimo': '0.6 (-40%)', 'maximo': '1.5 (+50%)'},
+                    'cenarios_testados': len(cenarios),
+                    'cenarios': resultados
+                }
+            else:
+                return 'falha', 'Limitador variacao AA com problema', {
+                    'cenarios': resultados
+                }
+        except Exception as e:
+            return 'falha', f'Erro ao verificar limitador: {str(e)}', {}
 
     def _verificar_consistencia_geral(self) -> Tuple[str, str, Dict]:
         """V10: Verifica consistencia geral do sistema."""

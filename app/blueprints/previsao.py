@@ -640,6 +640,27 @@ def _api_gerar_previsao_banco_v2_interno():
                 valor_aa_periodo = vendas_item_por_data.get(chave_ano_anterior, 0)
                 total_ano_anterior_item += valor_aa_periodo
 
+                # =====================================================
+                # LIMITADOR DE VARIACAO vs ANO ANTERIOR (V11)
+                # Evita previsoes extremas limitando variacao entre -40% e +50%
+                # do valor do ano anterior. Aplica-se apenas quando ha historico.
+                # =====================================================
+                previsao_periodo_limitada = previsao_periodo
+                variacao_limitada = False
+
+                if valor_aa_periodo > 0:
+                    variacao_vs_aa = previsao_periodo / valor_aa_periodo
+                    # Limitar variacao entre 0.6 (-40%) e 1.5 (+50%)
+                    if variacao_vs_aa > 1.5:
+                        previsao_periodo_limitada = valor_aa_periodo * 1.5
+                        variacao_limitada = True
+                    elif variacao_vs_aa < 0.6:
+                        previsao_periodo_limitada = valor_aa_periodo * 0.6
+                        variacao_limitada = True
+
+                # Usar valor limitado se aplicavel
+                previsao_periodo = previsao_periodo_limitada
+
                 # Arredondar previsao do periodo para inteiro (como exibido no frontend)
                 previsao_periodo_int = round(previsao_periodo)
 

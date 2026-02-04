@@ -896,7 +896,7 @@ Garantir que os calculos de Demanda e Pedido Fornecedor **sempre** sigam a metod
 
 ### 13.1 Checklist Diario de Conformidade
 
-O checklist executa 10 verificacoes automaticas diariamente:
+O checklist executa 11 verificacoes automaticas diariamente:
 
 | # | Codigo | Verificacao | Criticidade |
 |---|--------|-------------|-------------|
@@ -910,13 +910,14 @@ O checklist executa 10 verificacoes automaticas diariamente:
 | 8 | V08 | Formula pedido: max(0, Dem + ES - Est) | Bloqueante |
 | 9 | V09 | Estoque seguranca por curva ABC | Alerta |
 | 10 | V10 | Consistencia geral do sistema | Alerta |
+| 11 | V11 | Limitador variacao vs ano anterior (-40% a +50%) | Bloqueante |
 
 **Exemplo de Relatorio:**
 ```
 ==============================================================
-  RELATORIO DE CONFORMIDADE - 2026-02-04 18:49
+  RELATORIO DE CONFORMIDADE - 2026-02-04 19:19
 ==============================================================
-  Status Geral: APROVADO (10/10 verificacoes)
+  Status Geral: APROVADO (11/11 verificacoes)
 ==============================================================
   Verificacoes:
   [OK] V01: Modulos Carregam
@@ -939,8 +940,10 @@ O checklist executa 10 verificacoes automaticas diariamente:
        Z-scores ABC corretos: A=2.05, B=1.65, C=1.28
   [OK] V10: Consistencia Geral
        Sistema consistente: demanda=171.1364, metodo=tendencia
+  [OK] V11: Limitador Variacao AA
+       Limitador variacao AA correto (-40% a +50%)
 ==============================================================
-  Tempo total: 381ms
+  Tempo total: 185ms
 ==============================================================
 ```
 
@@ -1093,17 +1096,54 @@ Onde:
 - LT: lead time em dias
 ```
 
-### 13.8 Arquivos do Sistema de Conformidade
+### 13.8 Limitador de Variacao vs Ano Anterior (V11)
+
+O sistema implementa um **limitador de variacao** que evita previsoes extremas comparando com o ano anterior:
+
+**Regra:**
+```
+Se variacao_vs_ano_anterior > 1.5 (mais de +50%):
+    previsao_limitada = ano_anterior × 1.5
+
+Se variacao_vs_ano_anterior < 0.6 (mais de -40%):
+    previsao_limitada = ano_anterior × 0.6
+```
+
+**Codigo em previsao.py:**
+```python
+# LIMITADOR DE VARIACAO vs ANO ANTERIOR (V11)
+# Evita previsoes extremas limitando variacao entre -40% e +50%
+if valor_aa_periodo > 0:
+    variacao_vs_aa = previsao_periodo / valor_aa_periodo
+    if variacao_vs_aa > 1.5:
+        previsao_periodo = valor_aa_periodo * 1.5
+    elif variacao_vs_aa < 0.6:
+        previsao_periodo = valor_aa_periodo * 0.6
+```
+
+**Justificativa:**
+- Evita que combinacao de tendencia + sazonalidade gere valores irreais
+- O fator de tendencia (ate 1.5x) × fator sazonal (ate 2.0x) poderia resultar em 3.0x
+- Com o limitador, a variacao maxima vs ano anterior e de +50%
+
+**Exemplo - Fornecedor FAME:**
+| Cenario | Nov/25 (AA) | Previsao Original | Previsao Limitada |
+|---------|-------------|-------------------|-------------------|
+| Sem limitador | 7.609 | 13.201 (+73%) | 13.201 |
+| Com limitador | 7.609 | 13.201 (+73%) | 11.414 (+50%) |
+
+### 13.9 Arquivos do Sistema de Conformidade
 
 | Arquivo | Descricao |
 |---------|-----------|
-| [core/validador_conformidade.py](core/validador_conformidade.py) | Classe ValidadorConformidade + decorador |
+| [core/validador_conformidade.py](core/validador_conformidade.py) | Classe ValidadorConformidade + 11 verificacoes |
 | [jobs/checklist_diario.py](jobs/checklist_diario.py) | Script do cronjob com APScheduler |
 | [jobs/configuracao_jobs.py](jobs/configuracao_jobs.py) | Configuracoes de alertas e banco |
 | [app/blueprints/validacao.py](app/blueprints/validacao.py) | Endpoints REST da API |
+| [app/blueprints/previsao.py](app/blueprints/previsao.py) | Implementacao do limitador V11 |
 | [database/migration_v10_auditoria_conformidade.sql](database/migration_v10_auditoria_conformidade.sql) | Tabelas de auditoria |
 
-### 13.9 Beneficios do Sistema
+### 13.10 Beneficios do Sistema
 
 1. **Deteccao Proativa**: Problemas identificados antes de impactar usuarios
 2. **Rastreabilidade**: Historico completo de todas as execucoes e calculos
@@ -1124,6 +1164,7 @@ Onde:
 | 11 | Padrao de Compra | padrao_compra.py | Integrado |
 | 12 | Normalizacao Desvio | demand_calculator.py | Implementado |
 | **13** | **Auditoria e Conformidade** | **validador_conformidade.py** | **Implementado** |
+| **14** | **Limitador Variacao AA (-40% a +50%)** | **previsao.py** | **Implementado** |
 
 ---
 
@@ -1141,4 +1182,4 @@ Onde:
 
 **Documento criado em:** 04/02/2026
 **Ultima atualizacao:** 04/02/2026
-**Versao do sistema:** 5.4
+**Versao do sistema:** 5.5
