@@ -1364,17 +1364,67 @@ DEPOIS: Previsao = +36% antes do limitador V11 → +36% (dentro de +50%)
 ```
 Demanda = demanda_diaria_base × fator_sazonal × fator_tendencia_yoy × dias_periodo
 
-Depois aplica limitador V11 (se valor_aa > 0):
-  if demanda > valor_aa × 1.5: demanda = valor_aa × 1.5
-  if demanda < valor_aa × 0.6: demanda = valor_aa × 0.6
+Depois aplica limitador V11 ATUALIZADO (se valor_aa > 0):
+
+  # NOVO v5.7: Correcao para itens em crescimento
+  if fator_tendencia_yoy > 1.05 AND demanda < valor_aa:
+      demanda = valor_aa × min(fator_tendencia_yoy, 1.4)  # Usa tendencia, max +40%
+
+  # Limites originais
+  if demanda > valor_aa × 1.5: demanda = valor_aa × 1.5   # Max +50%
+  if demanda < valor_aa × 0.6: demanda = valor_aa × 0.6   # Min -40%
 
 Ordem de aplicacao:
 1. demanda_diaria_base (SMA, WMA, EMA, etc)
 2. fator_sazonal (0.5 a 2.0)
 3. fator_tendencia_yoy (0.7 a 1.4)  ← NOVO
 4. dias_periodo
-5. limitador_v11 (-40% a +50%)
+5. limitador_v11 ATUALIZADO (-40% a +50%, com correcao para crescimento)
 ```
+
+### Mudanca no Limitador V11 (v5.7)
+
+**Problema anterior:**
+Mesmo com fator de tendencia YoY aplicado, em alguns casos a demanda prevista ainda ficava **abaixo do ano anterior** para itens com crescimento consistente. Isso acontecia porque:
+1. O fator de tendencia era aplicado sobre uma base ja baixa
+2. O limitador V11 so limitava para cima (+50%) ou para baixo (-40%)
+3. Nao havia correcao para itens que deveriam crescer mas estavam previstos para cair
+
+**Solucao:**
+```python
+# NOVO v5.7: Ajuste para itens em crescimento
+# Se item tem tendencia de crescimento (fator_yoy > 1.05)
+# mas previsao ficou < AA, corrigir usando o fator de tendencia
+if fator_tendencia_yoy > 1.05 and variacao < 1.0:
+    demanda_prevista = valor_aa * min(fator_tendencia_yoy, 1.4)
+    limitador_aplicado = True
+```
+
+**Exemplo pratico (ZAGONEL):**
+```
+Ano Anterior (AA): 73.944 un
+Previsao inicial (sem correcao): 60.554 un (-18%)
+Fator tendencia YoY: 1.21 (crescimento de 21% amortecido)
+
+ANTES v5.7:
+  - Previsao final = 60.554 un (mantinha queda)
+  - Limitador so atuava se < 60% ou > 150% do AA
+
+DEPOIS v5.7:
+  - Detecta: fator_yoy (1.21) > 1.05 E variacao (-18%) < 1.0
+  - Corrige: 73.944 × 1.21 = 89.472 un (+21%)
+  - Previsao final = 89.472 un (alinhado com tendencia)
+```
+
+**Quando a correcao e aplicada:**
+| Condicao | Correcao | Resultado |
+|----------|----------|-----------|
+| fator_yoy > 1.05 E previsao < AA | Aplica fator sobre AA | Crescimento projetado |
+| fator_yoy <= 1.05 | Nao aplica | Limitadores originais |
+| previsao >= AA | Nao aplica | Ja esta crescendo |
+
+**Flag de rastreabilidade:**
+Quando a correcao e aplicada, o campo `limitador_aplicado = True` e gravado na tabela `demanda_pre_calculada`, permitindo identificar quais itens foram ajustados.
 
 ### Por que Amortecimento de 70%?
 
