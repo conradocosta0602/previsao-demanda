@@ -1,7 +1,7 @@
 # Revisao do Modelo de Calculo de Previsao de Demanda
 
 **Data:** Fevereiro 2026
-**Versao:** 5.3
+**Versao:** 5.7
 **Autor:** Valter Lino / Claude (Anthropic)
 
 ---
@@ -1166,6 +1166,7 @@ if valor_aa_periodo > 0:
 | **13** | **Auditoria e Conformidade** | **validador_conformidade.py** | **Implementado** |
 | **14** | **Limitador Variacao AA (-40% a +50%)** | **previsao.py** | **Implementado** |
 | **15** | **Demanda Pre-Calculada (Cronjob)** | **calcular_demanda_diaria.py** | **Implementado** |
+| **16** | **Fator Tendencia YoY (v5.7)** | **demand_calculator.py, calcular_demanda_diaria.py** | **Implementado** |
 
 ---
 
@@ -1275,6 +1276,196 @@ python jobs/calcular_demanda_diaria.py --status
 
 ---
 
+## 16. Fator de Tendencia YoY (Year-over-Year) - v5.7
+
+### Contexto e Problema Identificado
+
+Durante a analise do fornecedor **ZAGONEL** em Fev/2026, foi identificado um problema critico:
+
+| Metrica | Valor |
+|---------|-------|
+| Vendas 2023 | 31.769 un |
+| Vendas 2024 | 57.246 un (+80.2%) |
+| Vendas 2025 | 73.944 un (+29.2%) |
+| **Previsao 2026 (modelo)** | **-18% vs 2025** |
+
+O modelo previa **queda de 18%** para um fornecedor com **crescimento consistente de +29% ao ano**.
+
+### Causa Raiz
+
+Os metodos estatisticos implementados (SMA, WMA, EMA) calculam medias ponderadas do historico, mas **nao capturam tendencias de crescimento em series sazonais**. O teste Mann-Kendall existente tinha limiar alto (50%) que falhava com dados sazonais.
+
+**Exemplo simplificado:**
+```
+Historico: Jan/24=100, Fev/24=110, Mar/24=105, Jan/25=130, Fev/25=143, Mar/25=137
+Media simples = 121
+Mas tendencia real = +30% YoY
+```
+
+### Solucao Implementada
+
+Criamos a funcao `calcular_fator_tendencia_yoy()` que:
+
+1. **Agrupa vendas por ano** (soma total anual)
+2. **Calcula taxa de crescimento** entre anos consecutivos
+3. **Aplica media geometrica** (CAGR simplificado) para multiplos anos
+4. **Amortece a projecao** (70% do crescimento detectado)
+5. **Limita o fator** entre 0.7 e 1.4
+
+### Formula Matematica
+
+```
+1. Crescimento por ano:
+   taxa_i = vendas_ano[i] / vendas_ano[i-1]
+
+2. Media geometrica (CAGR):
+   cagr = (produto de todas as taxas) ^ (1/n_periodos)
+
+3. Fator de tendencia amortecido:
+   fator_raw = 1.0 + (cagr - 1.0) * fator_amortecimento
+   fator_final = max(0.7, min(1.4, fator_raw))
+
+Onde:
+- fator_amortecimento = 0.7 (nao projetamos 100% do crescimento)
+- limites = [0.7, 1.4] (evita extremos)
+```
+
+### Classificacao de Tendencia
+
+| Fator | Classificacao | Interpretacao |
+|-------|---------------|---------------|
+| > 1.15 | `forte_crescimento` | Crescimento acima de 15% ao ano |
+| > 1.05 | `crescimento` | Crescimento moderado (5-15%) |
+| 0.95-1.05 | `estavel` | Variacao dentro de +-5% |
+| < 0.95 | `queda` | Queda de 5-15% |
+| < 0.85 | `forte_queda` | Queda acima de 15% |
+| - | `dados_insuficientes` | Menos de 2 anos de dados |
+
+### Exemplo: ZAGONEL (Corrigido)
+
+```
+Vendas por ano:
+  2023: 31.769
+  2024: 57.246 (taxa = 1.80)
+  2025: 73.944 (taxa = 1.29)
+
+CAGR = (1.80 × 1.29) ^ (1/2) = 1.52
+Fator raw = 1.0 + (1.52 - 1.0) × 0.7 = 1.36
+Fator final = min(1.4, max(0.7, 1.36)) = 1.36
+Classificacao = 'forte_crescimento'
+
+ANTES: Previsao = -18% (usando apenas SMA/WMA)
+DEPOIS: Previsao = +36% antes do limitador V11 → +36% (dentro de +50%)
+```
+
+### Formula de Demanda Atualizada (v5.7)
+
+```
+Demanda = demanda_diaria_base × fator_sazonal × fator_tendencia_yoy × dias_periodo
+
+Depois aplica limitador V11 (se valor_aa > 0):
+  if demanda > valor_aa × 1.5: demanda = valor_aa × 1.5
+  if demanda < valor_aa × 0.6: demanda = valor_aa × 0.6
+
+Ordem de aplicacao:
+1. demanda_diaria_base (SMA, WMA, EMA, etc)
+2. fator_sazonal (0.5 a 2.0)
+3. fator_tendencia_yoy (0.7 a 1.4)  ← NOVO
+4. dias_periodo
+5. limitador_v11 (-40% a +50%)
+```
+
+### Por que Amortecimento de 70%?
+
+Nao e prudente projetar 100% do crescimento historico porque:
+- Crescimento passado nao garante crescimento futuro
+- Fatores externos (economia, concorrencia) podem mudar
+- O limitador V11 ja fornece seguranca adicional
+
+**Exemplo de amortecimento:**
+```
+Crescimento real detectado: +30%
+Fator sem amortecimento: 1.30
+Fator com amortecimento 70%: 1.0 + (0.30 × 0.7) = 1.21
+```
+
+### Por que Limites de 0.7 a 1.4?
+
+| Limite | Justificativa |
+|--------|---------------|
+| 0.7 (minimo) | Queda de 30% e significativa; mais que isso indica problema estrutural |
+| 1.4 (maximo) | Crescimento de 40% ja e agressivo; mais que isso pode ser anomalia |
+
+### Verificacao V12 no Checklist
+
+A verificacao V12 foi adicionada ao checklist de conformidade:
+
+```python
+('V12', 'Fator Tendencia YoY', self._verificar_fator_tendencia_yoy)
+```
+
+**Testes realizados:**
+1. Serie com crescimento (+30%/ano) → fator > 1.0, classificacao crescimento
+2. Serie estavel (~0% variacao) → fator ~= 1.0, classificacao estavel
+3. Serie com queda (-25%/ano) → fator < 1.0, classificacao queda
+4. Limites respeitados (0.7 a 1.4)
+5. Dados insuficientes (< 2 anos) → fator = 1.0, classificacao dados_insuficientes
+
+### Tabela Alterada (Migration V13)
+
+```sql
+-- Novas colunas em demanda_pre_calculada
+ALTER TABLE demanda_pre_calculada
+ADD COLUMN fator_tendencia_yoy NUMERIC(6,4) DEFAULT 1.0;
+
+ALTER TABLE demanda_pre_calculada
+ADD COLUMN classificacao_tendencia VARCHAR(30) DEFAULT 'nao_calculado';
+
+-- View de analise de tendencias por fornecedor
+CREATE VIEW vw_tendencia_fornecedor AS
+SELECT cnpj_fornecedor, classificacao_tendencia, COUNT(*), AVG(fator_tendencia_yoy)
+FROM demanda_pre_calculada
+GROUP BY cnpj_fornecedor, classificacao_tendencia;
+```
+
+### Arquivos Modificados
+
+| Arquivo | Mudanca |
+|---------|---------|
+| [core/demand_calculator.py](core/demand_calculator.py) | Funcao `calcular_fator_tendencia_yoy()` |
+| [jobs/calcular_demanda_diaria.py](jobs/calcular_demanda_diaria.py) | Integracao do fator no cronjob |
+| [core/validador_conformidade.py](core/validador_conformidade.py) | Verificacao V12 |
+| [database/migration_v13_fator_tendencia_yoy.sql](database/migration_v13_fator_tendencia_yoy.sql) | Novas colunas |
+
+### Impacto Esperado
+
+| Tipo de Fornecedor | Antes | Depois |
+|--------------------|-------|--------|
+| Crescimento consistente (ex: ZAGONEL) | Subestimacao (-18%) | Previsao alinhada (+20-30%) |
+| Estavel | Sem mudanca | Sem mudanca |
+| Queda consistente | Superestimacao | Previsao mais conservadora |
+
+### Monitoramento Recomendado
+
+```sql
+-- Fornecedores com forte crescimento
+SELECT DISTINCT cnpj_fornecedor, nome_fornecedor,
+       AVG(fator_tendencia_yoy) as fator_medio
+FROM demanda_pre_calculada d
+JOIN cadastro_produtos_completo p ON d.cod_produto = p.cod_produto
+WHERE classificacao_tendencia = 'forte_crescimento'
+GROUP BY cnpj_fornecedor, nome_fornecedor
+ORDER BY fator_medio DESC;
+
+-- Distribuicao de classificacoes
+SELECT classificacao_tendencia, COUNT(*) as qtd_itens
+FROM demanda_pre_calculada
+WHERE data_calculo >= CURRENT_DATE - INTERVAL '7 days'
+GROUP BY classificacao_tendencia;
+```
+
+---
+
 ## Proximos Passos Recomendados
 
 1. **Monitorar WMAPE por fornecedor** apos as mudancas
@@ -1289,5 +1480,5 @@ python jobs/calcular_demanda_diaria.py --status
 ---
 
 **Documento criado em:** 04/02/2026
-**Ultima atualizacao:** 04/02/2026
-**Versao do sistema:** 5.6
+**Ultima atualizacao:** 05/02/2026
+**Versao do sistema:** 5.7

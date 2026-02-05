@@ -55,7 +55,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from jobs.configuracao_jobs import CONFIGURACAO_BANCO
-from core.demand_calculator import DemandCalculator
+from core.demand_calculator import DemandCalculator, calcular_fator_tendencia_yoy
 
 
 # Configuracoes
@@ -282,6 +282,22 @@ def calcular_demanda_item(
     # Calcular fatores sazonais
     fatores_sazonais = calcular_fatores_sazonais(meta_hist.get('vendas_por_mes', {}))
 
+    # ==========================================================================
+    # NOVO: Calcular fator de tendencia YoY (Year-over-Year)
+    # Implementado em Fev/2026 para corrigir subestimacao em itens com crescimento
+    # ==========================================================================
+    vendas_por_mes = meta_hist.get('vendas_por_mes', {})
+    fator_tendencia_yoy = 1.0
+    classificacao_tendencia = 'nao_calculado'
+    meta_tendencia = {}
+
+    if vendas_por_mes:
+        fator_tendencia_yoy, classificacao_tendencia, meta_tendencia = calcular_fator_tendencia_yoy(
+            vendas_por_mes,
+            min_anos=2,
+            fator_amortecimento=0.7
+        )
+
     # Gerar registros para os proximos 12 meses
     registros = []
     mes_atual = datetime.now().month
@@ -302,8 +318,18 @@ def calcular_demanda_item(
         # Fator sazonal do mes
         fator_sazonal = fatores_sazonais.get(mes, 1.0)
 
-        # Demanda prevista = base * fator * dias
-        demanda_prevista = demanda_diaria_base * fator_sazonal * dias_mes
+        # ==========================================================================
+        # FORMULA ATUALIZADA (v5.7):
+        # Demanda = base * fator_sazonal * fator_tendencia_yoy * dias
+        #
+        # Ordem de aplicacao:
+        # 1. demanda_diaria_base (metodos estatisticos: SMA, WMA, EMA, etc)
+        # 2. fator_sazonal (0.5 a 2.0 - padrao mensal)
+        # 3. fator_tendencia_yoy (0.7 a 1.4 - crescimento/queda anual)
+        # 4. dias_mes (dias no periodo)
+        # 5. limitador_v11 (aplicado depois, -40% a +50% vs ano anterior)
+        # ==========================================================================
+        demanda_prevista = demanda_diaria_base * fator_sazonal * fator_tendencia_yoy * dias_mes
 
         # Buscar valor ano anterior
         ano_anterior = ano - 1
@@ -333,6 +359,8 @@ def calcular_demanda_item(
             'demanda_diaria_base': round(demanda_diaria_base, 4),
             'desvio_padrao': round(meta_calc.get('desvio_diario_base', 0), 4),
             'fator_sazonal': round(fator_sazonal, 4),
+            'fator_tendencia_yoy': round(fator_tendencia_yoy, 4),
+            'classificacao_tendencia': classificacao_tendencia,
             'valor_ano_anterior': round(valor_aa, 2) if valor_aa else None,
             'variacao_vs_aa': round(variacao_vs_aa, 4) if variacao_vs_aa else None,
             'limitador_aplicado': limitador_aplicado,
@@ -346,7 +374,13 @@ def calcular_demanda_item(
 
 
 def salvar_demanda_batch(conn, registros: List[Dict]):
-    """Salva batch de registros de demanda no banco."""
+    """
+    Salva batch de registros de demanda no banco.
+
+    ATUALIZADO v5.7 (Fev/2026):
+    - Adicionado fator_tendencia_yoy (captura crescimento/queda YoY)
+    - Adicionado classificacao_tendencia (forte_crescimento, crescimento, estavel, queda, forte_queda)
+    """
     if not registros:
         return 0
 
@@ -358,13 +392,15 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             INSERT INTO demanda_pre_calculada (
                 cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
                 demanda_prevista, demanda_diaria_base, desvio_padrao,
-                fator_sazonal, valor_ano_anterior, variacao_vs_aa,
+                fator_sazonal, fator_tendencia_yoy, classificacao_tendencia,
+                valor_ano_anterior, variacao_vs_aa,
                 limitador_aplicado, metodo_usado, categoria_serie,
                 dias_historico, total_vendido_historico, data_calculo
             ) VALUES (
                 %s, %s, %s, %s, %s,
                 %s, %s, %s,
                 %s, %s, %s,
+                %s, %s,
                 %s, %s, %s,
                 %s, %s, NOW()
             )
@@ -374,6 +410,8 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
                 demanda_diaria_base = EXCLUDED.demanda_diaria_base,
                 desvio_padrao = EXCLUDED.desvio_padrao,
                 fator_sazonal = EXCLUDED.fator_sazonal,
+                fator_tendencia_yoy = EXCLUDED.fator_tendencia_yoy,
+                classificacao_tendencia = EXCLUDED.classificacao_tendencia,
                 valor_ano_anterior = EXCLUDED.valor_ano_anterior,
                 variacao_vs_aa = EXCLUDED.variacao_vs_aa,
                 limitador_aplicado = EXCLUDED.limitador_aplicado,
@@ -387,7 +425,8 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             reg['cod_produto'], reg['cnpj_fornecedor'], reg['cod_empresa'],
             reg['ano'], reg['mes'],
             reg['demanda_prevista'], reg['demanda_diaria_base'], reg['desvio_padrao'],
-            reg['fator_sazonal'], reg['valor_ano_anterior'], reg['variacao_vs_aa'],
+            reg['fator_sazonal'], reg['fator_tendencia_yoy'], reg['classificacao_tendencia'],
+            reg['valor_ano_anterior'], reg['variacao_vs_aa'],
             reg['limitador_aplicado'], reg['metodo_usado'], reg['categoria_serie'],
             reg['dias_historico'], reg['total_vendido_historico']
         ))

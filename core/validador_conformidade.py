@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 11 verificacoes do checklist de conformidade.
+        Executa todas as 12 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -80,6 +80,7 @@ class ValidadorConformidade:
             ('V09', 'ES por Curva ABC', self._verificar_es_abc),
             ('V10', 'Consistencia Geral', self._verificar_consistencia_geral),
             ('V11', 'Limitador Variacao AA', self._verificar_limitador_variacao),
+            ('V12', 'Fator Tendencia YoY', self._verificar_fator_tendencia_yoy),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -487,6 +488,173 @@ class ValidadorConformidade:
                 }
         except Exception as e:
             return 'falha', f'Erro ao verificar limitador: {str(e)}', {}
+
+    def _verificar_fator_tendencia_yoy(self) -> Tuple[str, str, Dict]:
+        """
+        V12: Verifica se o calculo de fator de tendencia YoY funciona corretamente.
+
+        Implementado em Fev/2026 para corrigir subestimacao em itens com
+        crescimento historico (ex: ZAGONEL +29% real, previsao -18%).
+
+        Testa:
+        1. Funcao calcular_fator_tendencia_yoy existe e funciona
+        2. Serie com crescimento -> fator > 1.0
+        3. Serie estavel -> fator ~= 1.0
+        4. Serie com queda -> fator < 1.0
+        5. Fator limitado entre 0.7 e 1.4
+        6. Classificacao correta (forte_crescimento, crescimento, estavel, queda, forte_queda)
+        """
+        try:
+            from core.demand_calculator import calcular_fator_tendencia_yoy
+
+            resultados_testes = []
+            todos_corretos = True
+
+            # =================================================================
+            # Teste 1: Serie com crescimento consistente (+30% ao ano)
+            # =================================================================
+            vendas_crescimento = {
+                (2023, 1): 100, (2023, 2): 110, (2023, 3): 105,
+                (2023, 4): 115, (2023, 5): 120, (2023, 6): 125,
+                (2023, 7): 130, (2023, 8): 135, (2023, 9): 140,
+                (2023, 10): 145, (2023, 11): 150, (2023, 12): 155,
+                (2024, 1): 130, (2024, 2): 143, (2024, 3): 137,
+                (2024, 4): 150, (2024, 5): 156, (2024, 6): 163,
+                (2024, 7): 169, (2024, 8): 176, (2024, 9): 182,
+                (2024, 10): 189, (2024, 11): 195, (2024, 12): 202,
+                (2025, 1): 169, (2025, 2): 186, (2025, 3): 178,
+            }
+
+            fator1, class1, meta1 = calcular_fator_tendencia_yoy(vendas_crescimento)
+
+            teste1_ok = fator1 > 1.0 and class1 in ['crescimento', 'forte_crescimento']
+            resultados_testes.append({
+                'teste': 'Serie crescimento (+30%/ano)',
+                'fator': round(fator1, 4),
+                'classificacao': class1,
+                'esperado_fator': '> 1.0',
+                'esperado_class': 'crescimento ou forte_crescimento',
+                'correto': teste1_ok
+            })
+            if not teste1_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 2: Serie estavel (variacao < 5%)
+            # =================================================================
+            vendas_estavel = {
+                (2023, 1): 100, (2023, 2): 102, (2023, 3): 98,
+                (2023, 4): 101, (2023, 5): 99, (2023, 6): 100,
+                (2023, 7): 102, (2023, 8): 98, (2023, 9): 101,
+                (2023, 10): 99, (2023, 11): 100, (2023, 12): 102,
+                (2024, 1): 101, (2024, 2): 103, (2024, 3): 99,
+                (2024, 4): 102, (2024, 5): 100, (2024, 6): 101,
+                (2024, 7): 103, (2024, 8): 99, (2024, 9): 102,
+                (2024, 10): 100, (2024, 11): 101, (2024, 12): 103,
+                (2025, 1): 102, (2025, 2): 104, (2025, 3): 100,
+            }
+
+            fator2, class2, meta2 = calcular_fator_tendencia_yoy(vendas_estavel)
+
+            # Para serie estavel, fator deve estar entre 0.95 e 1.05
+            teste2_ok = 0.95 <= fator2 <= 1.05 and class2 == 'estavel'
+            resultados_testes.append({
+                'teste': 'Serie estavel (~0% variacao)',
+                'fator': round(fator2, 4),
+                'classificacao': class2,
+                'esperado_fator': '0.95 a 1.05',
+                'esperado_class': 'estavel',
+                'correto': teste2_ok
+            })
+            if not teste2_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 3: Serie com queda (-25% ao ano)
+            # =================================================================
+            vendas_queda = {
+                (2023, 1): 200, (2023, 2): 195, (2023, 3): 190,
+                (2023, 4): 185, (2023, 5): 180, (2023, 6): 175,
+                (2023, 7): 170, (2023, 8): 165, (2023, 9): 160,
+                (2023, 10): 155, (2023, 11): 150, (2023, 12): 145,
+                (2024, 1): 150, (2024, 2): 146, (2024, 3): 143,
+                (2024, 4): 139, (2024, 5): 135, (2024, 6): 131,
+                (2024, 7): 128, (2024, 8): 124, (2024, 9): 120,
+                (2024, 10): 116, (2024, 11): 113, (2024, 12): 109,
+                (2025, 1): 113, (2025, 2): 110, (2025, 3): 107,
+            }
+
+            fator3, class3, meta3 = calcular_fator_tendencia_yoy(vendas_queda)
+
+            teste3_ok = fator3 < 1.0 and class3 in ['queda', 'forte_queda']
+            resultados_testes.append({
+                'teste': 'Serie queda (-25%/ano)',
+                'fator': round(fator3, 4),
+                'classificacao': class3,
+                'esperado_fator': '< 1.0',
+                'esperado_class': 'queda ou forte_queda',
+                'correto': teste3_ok
+            })
+            if not teste3_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 4: Limites respeitados (0.7 a 1.4)
+            # =================================================================
+            limites_ok = (0.7 <= fator1 <= 1.4 and
+                         0.7 <= fator2 <= 1.4 and
+                         0.7 <= fator3 <= 1.4)
+
+            resultados_testes.append({
+                'teste': 'Limites respeitados (0.7 a 1.4)',
+                'fatores': [round(fator1, 4), round(fator2, 4), round(fator3, 4)],
+                'correto': limites_ok
+            })
+            if not limites_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 5: Dados insuficientes (menos de 2 anos)
+            # =================================================================
+            vendas_curta = {
+                (2025, 1): 100, (2025, 2): 110, (2025, 3): 105,
+            }
+
+            fator5, class5, meta5 = calcular_fator_tendencia_yoy(vendas_curta)
+
+            teste5_ok = fator5 == 1.0 and class5 == 'dados_insuficientes'
+            resultados_testes.append({
+                'teste': 'Dados insuficientes (< 2 anos)',
+                'fator': round(fator5, 4),
+                'classificacao': class5,
+                'esperado_fator': '1.0',
+                'esperado_class': 'dados_insuficientes',
+                'correto': teste5_ok
+            })
+            if not teste5_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Resultado final
+            # =================================================================
+            if todos_corretos:
+                return 'ok', f'Fator tendencia YoY correto: crescimento={round(fator1, 2)}, estavel={round(fator2, 2)}, queda={round(fator3, 2)}', {
+                    'testes': resultados_testes,
+                    'metodologia': 'Media geometrica (CAGR) com amortecimento 70% e limites 0.7-1.4'
+                }
+            else:
+                return 'falha', 'Fator tendencia YoY com problema', {
+                    'testes': resultados_testes
+                }
+
+        except ImportError:
+            return 'falha', 'Funcao calcular_fator_tendencia_yoy nao encontrada', {
+                'erro': 'A funcao precisa ser implementada em core/demand_calculator.py'
+            }
+        except Exception as e:
+            return 'falha', f'Erro ao verificar fator tendencia YoY: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
 
     def _verificar_consistencia_geral(self) -> Tuple[str, str, Dict]:
         """V10: Verifica consistencia geral do sistema."""

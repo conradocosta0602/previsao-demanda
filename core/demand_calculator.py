@@ -1164,3 +1164,232 @@ def processar_demandas_dataframe(
         resultados.append(resultado)
 
     return pd.DataFrame(resultados)
+
+
+# =============================================================================
+# FATOR DE TENDENCIA YoY (Year-over-Year)
+# =============================================================================
+# Implementado em Fev/2026 para corrigir problema de subestimacao em itens
+# com forte crescimento (ex: ZAGONEL +29% real -> -18% previsto).
+#
+# O problema: metodos estatisticos (SMA, WMA, EMA) nao capturam tendencia
+# de crescimento quando combinados com sazonalidade forte.
+#
+# A solucao: calcular taxa de crescimento anual e aplicar como fator
+# multiplicador na previsao.
+# =============================================================================
+
+
+def calcular_fator_tendencia_yoy(
+    vendas_por_mes: Dict,
+    min_anos: int = 2,
+    fator_amortecimento: float = 0.7
+) -> Tuple[float, str, Dict]:
+    """
+    Calcula fator de tendencia baseado no crescimento Year-over-Year (YoY).
+
+    Este metodo analisa o crescimento historico entre anos e projeta
+    uma taxa de crescimento amortecida para o periodo de previsao.
+
+    Metodologia:
+    1. Agrupa vendas totais por ano
+    2. Calcula taxa de crescimento entre anos consecutivos
+    3. Aplica media geometrica dos crescimentos (CAGR simplificado)
+    4. Amortece a projecao (nao projeta 100% do crescimento)
+    5. Limita fator entre 0.7 e 1.4 para evitar extremos
+
+    Args:
+        vendas_por_mes: Dicionario {(ano, mes): quantidade}
+                       Exemplo: {(2024, 1): 100, (2024, 2): 120, ...}
+        min_anos: Minimo de anos necessarios para calcular tendencia (default: 2)
+        fator_amortecimento: Quanto do crescimento historico projetar (default: 0.7 = 70%)
+
+    Returns:
+        Tuple[float, str, Dict]:
+        - fator_tendencia: Multiplicador (1.15 = +15% crescimento esperado)
+        - classificacao: 'forte_crescimento', 'crescimento', 'estavel', 'queda', 'forte_queda'
+        - metadata: Detalhes do calculo para auditoria
+
+    Exemplo:
+        vendas = {(2023, 1): 100, (2023, 2): 110, ..., (2024, 1): 130, (2024, 2): 145, ...}
+        fator, classificacao, meta = calcular_fator_tendencia_yoy(vendas)
+        # fator = 1.21 (crescimento de 21% esperado)
+        # classificacao = 'crescimento'
+
+    Referencia teorica:
+        - CAGR (Compound Annual Growth Rate)
+        - Damped Trend (Holt-Winters com amortecimento)
+        - Principio de conservadorismo em projecoes (nao projetar 100%)
+    """
+    from math import prod
+
+    # Agrupar vendas por ano
+    totais_por_ano = {}
+    for (ano, mes), qtd in vendas_por_mes.items():
+        totais_por_ano[ano] = totais_por_ano.get(ano, 0) + qtd
+
+    # Metadata inicial
+    metadata = {
+        'anos_disponiveis': list(sorted(totais_por_ano.keys())),
+        'totais_por_ano': {str(k): round(v, 2) for k, v in sorted(totais_por_ano.items())},
+        'min_anos_requerido': min_anos,
+        'fator_amortecimento': fator_amortecimento
+    }
+
+    # Verificar se tem dados suficientes
+    anos = sorted(totais_por_ano.keys())
+    if len(anos) < min_anos:
+        metadata['motivo'] = f'Dados insuficientes: {len(anos)} anos (minimo: {min_anos})'
+        return 1.0, 'insuficiente', metadata
+
+    # Calcular crescimento entre anos consecutivos
+    crescimentos = []
+    detalhes_crescimento = []
+
+    for i in range(1, len(anos)):
+        ano_ant = anos[i-1]
+        ano_atual = anos[i]
+
+        if totais_por_ano[ano_ant] > 0:
+            taxa = totais_por_ano[ano_atual] / totais_por_ano[ano_ant]
+            crescimentos.append(taxa)
+            detalhes_crescimento.append({
+                'de': ano_ant,
+                'para': ano_atual,
+                'valor_ant': round(totais_por_ano[ano_ant], 2),
+                'valor_atual': round(totais_por_ano[ano_atual], 2),
+                'taxa': round(taxa, 4),
+                'variacao_pct': round((taxa - 1) * 100, 1)
+            })
+
+    metadata['crescimentos_anuais'] = detalhes_crescimento
+
+    if not crescimentos:
+        metadata['motivo'] = 'Nao foi possivel calcular crescimento (ano anterior = 0)'
+        return 1.0, 'indeterminado', metadata
+
+    # Calcular media geometrica dos crescimentos (CAGR simplificado)
+    # Media geometrica: (x1 * x2 * ... * xn)^(1/n)
+    media_geometrica = prod(crescimentos) ** (1/len(crescimentos))
+
+    metadata['media_geometrica_crescimento'] = round(media_geometrica, 4)
+    metadata['cagr_equivalente_pct'] = round((media_geometrica - 1) * 100, 2)
+
+    # Aplicar amortecimento
+    # Nao projetamos 100% do crescimento historico (principio de conservadorismo)
+    # fator_final = 1 + (crescimento - 1) * amortecimento
+    fator_tendencia = 1.0 + (media_geometrica - 1.0) * fator_amortecimento
+
+    metadata['fator_antes_limites'] = round(fator_tendencia, 4)
+
+    # Limitar fator entre 0.7 (-30%) e 1.4 (+40%)
+    # Isso evita projecoes extremas mesmo com historico muito volatil
+    LIMITE_INFERIOR = 0.7
+    LIMITE_SUPERIOR = 1.4
+
+    fator_limitado = max(LIMITE_INFERIOR, min(LIMITE_SUPERIOR, fator_tendencia))
+
+    if fator_limitado != fator_tendencia:
+        metadata['limite_aplicado'] = True
+        metadata['limite_tipo'] = 'superior' if fator_tendencia > LIMITE_SUPERIOR else 'inferior'
+    else:
+        metadata['limite_aplicado'] = False
+
+    metadata['fator_final'] = round(fator_limitado, 4)
+    metadata['variacao_projetada_pct'] = round((fator_limitado - 1) * 100, 2)
+
+    # Classificar tendencia
+    if fator_limitado >= 1.20:
+        classificacao = 'forte_crescimento'
+    elif fator_limitado >= 1.08:
+        classificacao = 'crescimento'
+    elif fator_limitado >= 0.92:
+        classificacao = 'estavel'
+    elif fator_limitado >= 0.80:
+        classificacao = 'queda'
+    else:
+        classificacao = 'forte_queda'
+
+    metadata['classificacao'] = classificacao
+
+    return fator_limitado, classificacao, metadata
+
+
+def calcular_fator_tendencia_yoy_dessazonalizado(
+    vendas_por_mes: Dict,
+    min_anos: int = 2,
+    fator_amortecimento: float = 0.7
+) -> Tuple[float, str, Dict]:
+    """
+    Versao avancada que dessazonaliza os dados antes de calcular tendencia.
+
+    Isso e mais preciso para series com forte sazonalidade, pois remove
+    o efeito sazonal antes de analisar a tendencia de crescimento.
+
+    Metodologia:
+    1. Calcula indice sazonal de cada mes (media_mes / media_geral)
+    2. Dessazonaliza cada valor (valor / indice_sazonal)
+    3. Calcula crescimento YoY sobre dados dessazonalizados
+    4. Aplica mesma logica de amortecimento e limites
+
+    Args:
+        vendas_por_mes: Dicionario {(ano, mes): quantidade}
+        min_anos: Minimo de anos para calcular
+        fator_amortecimento: Quanto projetar do crescimento
+
+    Returns:
+        Tuple[float, str, Dict]: (fator, classificacao, metadata)
+    """
+    # Calcular indices sazonais
+    totais_por_mes_ano = {}
+    contagem_por_mes = {}
+
+    for (ano, mes), qtd in vendas_por_mes.items():
+        if mes not in totais_por_mes_ano:
+            totais_por_mes_ano[mes] = 0
+            contagem_por_mes[mes] = 0
+        totais_por_mes_ano[mes] += qtd
+        contagem_por_mes[mes] += 1
+
+    # Media por mes do ano
+    medias_mensais = {}
+    for mes in range(1, 13):
+        if mes in totais_por_mes_ano and contagem_por_mes[mes] > 0:
+            medias_mensais[mes] = totais_por_mes_ano[mes] / contagem_por_mes[mes]
+        else:
+            medias_mensais[mes] = 0
+
+    # Media geral
+    medias_validas = [m for m in medias_mensais.values() if m > 0]
+    media_geral = sum(medias_validas) / len(medias_validas) if medias_validas else 0
+
+    if media_geral == 0:
+        return 1.0, 'indeterminado', {'motivo': 'Media geral = 0'}
+
+    # Indices sazonais (limitados entre 0.5 e 2.0)
+    indices_sazonais = {}
+    for mes in range(1, 13):
+        if medias_mensais[mes] > 0:
+            indice = medias_mensais[mes] / media_geral
+            indices_sazonais[mes] = max(0.5, min(2.0, indice))
+        else:
+            indices_sazonais[mes] = 1.0
+
+    # Dessazonalizar
+    vendas_dessazonalizadas = {}
+    for (ano, mes), qtd in vendas_por_mes.items():
+        indice = indices_sazonais.get(mes, 1.0)
+        vendas_dessazonalizadas[(ano, mes)] = qtd / indice if indice > 0 else qtd
+
+    # Calcular tendencia sobre dados dessazonalizados
+    fator, classificacao, metadata = calcular_fator_tendencia_yoy(
+        vendas_dessazonalizadas,
+        min_anos=min_anos,
+        fator_amortecimento=fator_amortecimento
+    )
+
+    # Adicionar info de dessazonalizacao ao metadata
+    metadata['dessazonalizado'] = True
+    metadata['indices_sazonais'] = {str(k): round(v, 3) for k, v in indices_sazonais.items()}
+
+    return fator, classificacao, metadata
