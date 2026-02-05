@@ -145,6 +145,8 @@ def obter_demanda_diaria_efetiva(
                 'fonte': 'pre_calculada',
                 'metodo_usado': demanda.get('metodo_usado', 'auto'),
                 'fator_sazonal': float(demanda.get('fator_sazonal', 1.0) or 1.0),
+                'fator_tendencia_yoy': float(demanda.get('fator_tendencia_yoy', 1.0) or 1.0),
+                'classificacao_tendencia': demanda.get('classificacao_tendencia', 'nao_calculado'),
                 'limitador_aplicado': demanda.get('limitador_aplicado', False),
                 'tem_ajuste_manual': demanda.get('tem_ajuste_manual', False),
                 'data_calculo': demanda.get('data_calculo'),

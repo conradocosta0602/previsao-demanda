@@ -335,13 +335,24 @@ def calcular_demanda_item(
         ano_anterior = ano - 1
         valor_aa = meta_hist.get('vendas_por_mes', {}).get((ano_anterior, mes), 0)
 
-        # Aplicar limitador V11 (-40% a +50%)
+        # Aplicar limitador V11 (-40% a +50%) - Atualizado v5.7
+        # NOVO: Para itens com tendencia de crescimento, se previsao < AA, corrigir
         limitador_aplicado = False
         if valor_aa > 0:
             variacao = demanda_prevista / valor_aa
-            if variacao > 1.5:
+
+            # NOVO v5.7: Ajuste para itens em crescimento
+            # Se item tem tendencia de crescimento mas previsao < AA, corrigir
+            if fator_tendencia_yoy > 1.05 and variacao < 1.0:
+                # Usar o fator de tendencia para projetar sobre o AA
+                # Limitado a +40% para evitar exageros
+                demanda_prevista = valor_aa * min(fator_tendencia_yoy, 1.4)
+                limitador_aplicado = True
+            # Limitar variacao maxima para cima (+50%)
+            elif variacao > 1.5:
                 demanda_prevista = valor_aa * 1.5
                 limitador_aplicado = True
+            # Limitar variacao maxima para baixo (-40%)
             elif variacao < 0.6:
                 demanda_prevista = valor_aa * 0.6
                 limitador_aplicado = True

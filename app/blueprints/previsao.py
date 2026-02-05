@@ -108,7 +108,7 @@ def _api_gerar_previsao_banco_v2_interno():
     from datetime import datetime as dt, timedelta
     from calendar import monthrange
     from app.utils.db_connection import get_db_connection, DB_CONFIG
-    from core.demand_calculator import DemandCalculator
+    from core.demand_calculator import DemandCalculator, calcular_fator_tendencia_yoy
 
     try:
         dados = request.get_json()
@@ -577,6 +577,33 @@ def _api_gerar_previsao_banco_v2_interno():
                 # Fallback apenas se DemandCalculator retornou 0
                 demanda_diaria_inteligente = sum(serie_item) / len(serie_item)
 
+            # =====================================================
+            # FATOR DE TENDENCIA YoY (V5.7)
+            # Corrige subestimacao em itens com crescimento historico
+            # Ex: Item com +29% de crescimento real nao deve prever queda
+            # =====================================================
+            vendas_por_mes_yoy = {}
+            for venda in vendas_hist_sorted:
+                data_venda = venda['periodo']
+                try:
+                    ano_v = int(data_venda[:4])
+                    mes_v = int(data_venda[5:7])
+                    chave_yoy = (ano_v, mes_v)
+                    if chave_yoy not in vendas_por_mes_yoy:
+                        vendas_por_mes_yoy[chave_yoy] = 0
+                    vendas_por_mes_yoy[chave_yoy] += venda['qtd_venda']
+                except:
+                    continue
+
+            fator_tendencia_yoy = 1.0
+            classificacao_tendencia = 'nao_calculado'
+            if vendas_por_mes_yoy:
+                fator_tendencia_yoy, classificacao_tendencia, _ = calcular_fator_tendencia_yoy(
+                    vendas_por_mes=vendas_por_mes_yoy,
+                    min_anos=2,
+                    fator_amortecimento=0.7
+                )
+
             # Calcular previsao de cada periodo usando demanda diaria especifica
             previsao_item_periodos = []
             total_previsao_item = 0
@@ -628,32 +655,46 @@ def _api_gerar_previsao_banco_v2_interno():
                     chave_ano_anterior = f"{data_obj.year - 1}-{data_obj.month:02d}-{data_obj.day:02d}"
 
                 # =====================================================
-                # FORMULA CORRETA: demanda_inteligente * fator_sazonal * dias
+                # FORMULA CORRETA V5.7: demanda * fator_sazonal * fator_tendencia_yoy * dias
                 # - demanda_inteligente: vem dos 6 metodos (SMA, WMA, EMA, Tendencia, Sazonal, TSB)
                 # - fator_sazonal: multiplicador baseado na sazonalidade historica
+                # - fator_tendencia_yoy: ajuste para crescimento/queda historica YoY
                 # - dias: quantidade de dias no periodo
                 # =====================================================
                 fator_sazonal = fatores_sazonais.get(chave_periodo, 1.0)
-                previsao_periodo = demanda_diaria_inteligente * fator_sazonal * dias_periodo
+                previsao_periodo = demanda_diaria_inteligente * fator_sazonal * fator_tendencia_yoy * dias_periodo
 
                 # Buscar valor do ano anterior para este item neste periodo
                 valor_aa_periodo = vendas_item_por_data.get(chave_ano_anterior, 0)
                 total_ano_anterior_item += valor_aa_periodo
 
                 # =====================================================
-                # LIMITADOR DE VARIACAO vs ANO ANTERIOR (V11)
+                # LIMITADOR DE VARIACAO vs ANO ANTERIOR (V11) - Atualizado v5.7
                 # Evita previsoes extremas limitando variacao entre -40% e +50%
-                # do valor do ano anterior. Aplica-se apenas quando ha historico.
+                # do valor do ano anterior.
+                #
+                # NOVO v5.7: Para itens com tendencia de crescimento, se a previsao
+                # estiver abaixo do ano anterior, ajusta para pelo menos igualar o AA
+                # (respeitando o fator de tendencia detectado).
                 # =====================================================
                 previsao_periodo_limitada = previsao_periodo
                 variacao_limitada = False
 
                 if valor_aa_periodo > 0:
                     variacao_vs_aa = previsao_periodo / valor_aa_periodo
-                    # Limitar variacao entre 0.6 (-40%) e 1.5 (+50%)
-                    if variacao_vs_aa > 1.5:
+
+                    # NOVO v5.7: Ajuste para itens em crescimento
+                    # Se item tem tendencia de crescimento mas previsao < AA, corrigir
+                    if fator_tendencia_yoy > 1.05 and variacao_vs_aa < 1.0:
+                        # Usar o fator de tendencia para projetar sobre o AA
+                        # Limitado a +40% para evitar exageros
+                        previsao_periodo_limitada = valor_aa_periodo * min(fator_tendencia_yoy, 1.4)
+                        variacao_limitada = True
+                    # Limitar variacao maxima para cima (+50%)
+                    elif variacao_vs_aa > 1.5:
                         previsao_periodo_limitada = valor_aa_periodo * 1.5
                         variacao_limitada = True
+                    # Limitar variacao maxima para baixo (-40%)
                     elif variacao_vs_aa < 0.6:
                         previsao_periodo_limitada = valor_aa_periodo * 0.6
                         variacao_limitada = True
@@ -731,6 +772,8 @@ def _api_gerar_previsao_banco_v2_interno():
                 'variacao_percentual': round(variacao_pct, 1),
                 'sinal_emoji': sinal_emoji,
                 'metodo_estatistico': metodo_exibicao,
+                'fator_tendencia_yoy': round(fator_tendencia_yoy, 4),
+                'classificacao_tendencia': classificacao_tendencia,
                 'previsao_por_periodo': previsao_item_periodos
             })
 

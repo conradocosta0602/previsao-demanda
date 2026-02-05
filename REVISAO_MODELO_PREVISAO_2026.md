@@ -1167,6 +1167,7 @@ if valor_aa_periodo > 0:
 | **14** | **Limitador Variacao AA (-40% a +50%)** | **previsao.py** | **Implementado** |
 | **15** | **Demanda Pre-Calculada (Cronjob)** | **calcular_demanda_diaria.py** | **Implementado** |
 | **16** | **Fator Tendencia YoY (v5.7)** | **demand_calculator.py, calcular_demanda_diaria.py** | **Implementado** |
+| **17** | **Botao Salvar Demanda (v5.7)** | **index.html, app.js** | **Implementado** |
 
 ---
 
@@ -1463,6 +1464,112 @@ FROM demanda_pre_calculada
 WHERE data_calculo >= CURRENT_DATE - INTERVAL '7 days'
 GROUP BY classificacao_tendencia;
 ```
+
+---
+
+## 17. Botao "Salvar Demanda" na Tela de Previsao (v5.7)
+
+### Contexto e Necessidade
+
+Apos gerar a previsao de demanda na tela, o usuario precisava de uma forma de **persistir os valores calculados** na tabela `demanda_pre_calculada` para que a Tela de Pedido Fornecedor usasse os mesmos valores.
+
+Anteriormente, a unica forma de sincronizar era aguardar o cronjob diario ou chamar a API manualmente via Postman/curl.
+
+### Solucao Implementada
+
+Adicionado botao **"Salvar Demanda"** na tela de Previsao de Demanda (`index.html`) que:
+
+1. **Verifica** se um fornecedor especifico esta selecionado
+2. **Solicita confirmacao** do usuario antes de executar
+3. **Chama a API** `/api/demanda_job/recalcular` com o CNPJ do fornecedor
+4. **Exibe resultado** com estatisticas (itens processados, registros salvos, tempo)
+
+### Interface do Usuario
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Botoes de Acao                              │
+├─────────────────────────────────────────────────────────────────┤
+│  [ Download Excel ]     [ Salvar Demanda ]                      │
+│       (azul)                 (verde)                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Botao desabilitado** quando:
+  - Nenhum fornecedor selecionado (ou "Todos")
+  - Nenhuma previsao gerada ainda
+
+- **Botao habilitado** quando:
+  - Um fornecedor especifico esta selecionado
+  - Uma previsao foi gerada com sucesso
+
+### Fluxo de Uso
+
+```
+1. Usuario seleciona FORNECEDOR especifico no filtro
+2. Usuario clica em "Gerar Previsao"
+3. Sistema calcula e exibe resultados (ex: ZAGONEL +20.1%)
+4. Usuario clica em "Salvar Demanda"
+5. Sistema pede confirmacao
+6. Sistema executa recalculo e salva na tabela demanda_pre_calculada
+7. Sistema exibe resultado:
+   - Itens processados: 150
+   - Registros salvos: 450 (3 meses × 150 itens)
+   - Tempo: 2.3s
+8. Na Tela de Pedido Fornecedor, valores sao usados automaticamente
+```
+
+### Arquivos Modificados
+
+| Arquivo | Mudanca |
+|---------|---------|
+| `templates/index.html` | Adicionado botao "Salvar Demanda" (linha ~361) |
+| `static/js/app.js` | Funcao `salvarDemandaPreCalculada()` e `atualizarBotaoSalvarDemanda()` |
+
+### Codigo JavaScript Principal
+
+```javascript
+async function salvarDemandaPreCalculada() {
+    // Verificar fornecedor selecionado
+    const { valido, fornecedor } = verificarFornecedorUnico();
+    if (!valido) {
+        alert('Selecione um fornecedor especifico...');
+        return;
+    }
+
+    // Confirmar acao
+    if (!confirm(`Deseja salvar demanda para ${fornecedor}?`)) return;
+
+    // Chamar API
+    const response = await fetch('/api/demanda_job/recalcular', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cnpj_fornecedor: fornecedor })
+    });
+
+    // Exibir resultado
+    const resultado = await response.json();
+    alert(`Itens processados: ${resultado.resultado.total_itens}
+Registros salvos: ${resultado.resultado.total_registros}
+Tempo: ${(resultado.resultado.tempo_ms / 1000).toFixed(1)}s`);
+}
+```
+
+### Beneficios
+
+1. **Praticidade**: Usuario pode sincronizar demanda sem esperar cronjob
+2. **Controle**: Apenas fornecedores desejados sao recalculados
+3. **Feedback Imediato**: Usuario ve o resultado da operacao
+4. **Consistencia**: Garante que Tela Demanda e Pedido Fornecedor usem mesmos valores
+
+### Quando Usar
+
+| Cenario | Acao Recomendada |
+|---------|------------------|
+| Analise rotineira de fornecedor | Gerar previsao + Salvar Demanda |
+| Ajuste manual de demanda feito | Nao precisa salvar (ajuste ja esta no banco) |
+| Antes de gerar pedido ao fornecedor | Salvar Demanda para garantir valores atualizados |
+| Cronjob executou hoje | Nao precisa salvar (valores ja atualizados) |
 
 ---
 

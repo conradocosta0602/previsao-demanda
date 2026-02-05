@@ -3100,6 +3100,9 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
                     downloadBtn.style.cursor = 'not-allowed';
                     downloadBtn.title = 'Gere uma previsão para habilitar o download';
                 }
+
+                // Configurar botão de salvar demanda pré-calculada (v5.7)
+                atualizarBotaoSalvarDemanda();
             }
 
         } else {
@@ -5308,5 +5311,113 @@ async function exportarRelatorioItens() {
         downloadBtn.textContent = 'Download Excel';
         downloadBtn.style.opacity = '1';
         downloadBtn.style.pointerEvents = 'auto';
+    }
+}
+
+// =====================================================
+// SALVAR DEMANDA PRE-CALCULADA (v5.7)
+// =====================================================
+
+/**
+ * Salva a demanda calculada na tabela demanda_pre_calculada para uso no Pedido Fornecedor.
+ * Chama a API /api/demanda_job/recalcular que executa o job de cálculo.
+ */
+async function salvarDemandaPreCalculada() {
+    const btn = document.getElementById('salvarDemandaBtn');
+    if (!btn) return;
+
+    // Verificar se há fornecedor selecionado
+    const { valido: fornecedorUnico, fornecedor } = verificarFornecedorUnico();
+
+    if (!fornecedorUnico || !fornecedor) {
+        alert('Selecione um fornecedor específico para salvar a demanda.\n\nA demanda será recalculada e salva para todos os itens deste fornecedor.');
+        return;
+    }
+
+    // Confirmar ação
+    const confirmar = confirm(
+        `Deseja salvar a demanda pré-calculada para o fornecedor selecionado?\n\n` +
+        `CNPJ: ${fornecedor}\n\n` +
+        `Esta ação irá:\n` +
+        `• Recalcular a demanda de todos os itens do fornecedor\n` +
+        `• Salvar os valores na tabela demanda_pre_calculada\n` +
+        `• Os valores serão usados na Tela de Pedido Fornecedor\n\n` +
+        `Deseja continuar?`
+    );
+
+    if (!confirmar) return;
+
+    // Atualizar botão para estado de carregamento
+    const textoOriginal = btn.innerHTML;
+    btn.innerHTML = '⏳ Salvando...';
+    btn.disabled = true;
+    btn.style.opacity = '0.7';
+
+    try {
+        // Chamar API de recálculo
+        const response = await fetch('/api/demanda_job/recalcular', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                cnpj_fornecedor: fornecedor
+            })
+        });
+
+        const resultado = await response.json();
+
+        if (!response.ok || !resultado.success) {
+            throw new Error(resultado.erro || 'Erro ao salvar demanda');
+        }
+
+        // Mostrar resultado de sucesso
+        const stats = resultado.resultado || {};
+        alert(
+            `✅ Demanda salva com sucesso!\n\n` +
+            `Itens processados: ${stats.total_itens || 0}\n` +
+            `Registros salvos: ${stats.total_registros || 0}\n` +
+            `Tempo de execução: ${((stats.tempo_ms || 0) / 1000).toFixed(1)}s\n\n` +
+            `Os valores agora estão disponíveis na Tela de Pedido Fornecedor.`
+        );
+
+        console.log('[SalvarDemanda] Demanda salva com sucesso:', resultado);
+
+    } catch (error) {
+        console.error('[SalvarDemanda] Erro ao salvar demanda:', error);
+        alert(`❌ Erro ao salvar demanda:\n\n${error.message}`);
+    } finally {
+        // Restaurar botão
+        btn.innerHTML = textoOriginal;
+        btn.disabled = false;
+        btn.style.opacity = '1';
+    }
+}
+
+// Função para habilitar/desabilitar botão de salvar demanda
+function atualizarBotaoSalvarDemanda() {
+    const btn = document.getElementById('salvarDemandaBtn');
+    if (!btn) return;
+
+    const { valido: fornecedorUnico } = verificarFornecedorUnico();
+
+    // Habilitar botão se houver fornecedor selecionado e resultados na tela
+    const temResultados = document.getElementById('results')?.style.display !== 'none';
+
+    if (fornecedorUnico && temResultados) {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        btn.style.cursor = 'pointer';
+        btn.title = 'Salvar demanda pré-calculada para o fornecedor selecionado';
+    } else if (!fornecedorUnico) {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+        btn.title = 'Selecione um único fornecedor para salvar a demanda';
+    } else {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+        btn.title = 'Gere uma previsão primeiro para salvar a demanda';
     }
 }

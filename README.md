@@ -1,6 +1,12 @@
-# Sistema de Demanda e Reabastecimento v5.6
+# Sistema de Demanda e Reabastecimento v5.7
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v5.7 - Fator de Tendencia YoY e Botao Salvar Demanda (Fev/2026):**
+- **Fator de Tendencia YoY**: Corrige subestimacao em fornecedores com crescimento historico (ex: ZAGONEL +29% real, modelo previa -18% → agora preve +20%)
+- **Botao "Salvar Demanda"**: Permite salvar demanda calculada na tela direto no banco para uso no Pedido Fornecedor
+- **Limitador V11 Atualizado**: Para itens em crescimento, se previsao < AA, corrige automaticamente usando fator de tendencia
+- **12 verificacoes de conformidade**: Incluindo nova verificacao V12 para fator de tendencia YoY
 
 **Novidades v5.6 - Demanda Pre-Calculada e Validacao (Fev/2026):**
 - **Demanda Pre-Calculada**: Cronjob diario (05:00) calcula demanda para todos os itens, garantindo integridade entre Tela de Demanda e Pedido Fornecedor
@@ -88,6 +94,8 @@ Novo modulo que integra previsao de demanda com calculo de pedidos:
 | **Parametros Fornecedor** | Lead Time, Ciclo, Faturamento Minimo | **Novo v5.0** |
 | **Demanda Pre-Calculada** | Cronjob diario para integridade entre telas | **Novo v5.6** |
 | **Validacao Conformidade** | Checklist automatico de metodologia | **Novo v5.6** |
+| **Fator Tendencia YoY** | Corrige subestimacao em crescimento | **Novo v5.7** |
+| **Botao Salvar Demanda** | Persiste demanda da tela no banco | **Novo v5.7** |
 | Pedido Manual | Entrada manual de pedidos | Ativo |
 
 ---
@@ -616,7 +624,56 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v5.6 (Fevereiro 2026) - ATUAL
+### v5.7 (Fevereiro 2026) - ATUAL
+
+**Fator de Tendencia YoY e Botao Salvar Demanda:**
+
+Esta versao corrige o problema de subestimacao em fornecedores com crescimento historico consistente. O modelo anterior previa queda onde havia crescimento real.
+
+**1. Fator de Tendencia YoY (Year-over-Year):**
+- **Problema identificado**: ZAGONEL tinha +29% de crescimento real mas modelo previa -18%
+- **Solucao**: Nova funcao `calcular_fator_tendencia_yoy()` que:
+  - Agrupa vendas por ano e calcula taxa de crescimento
+  - Aplica media geometrica (CAGR) para multiplos anos
+  - Amortece projecao em 70% (nao projeta 100% do crescimento)
+  - Limita fator entre 0.7 e 1.4
+- **Classificacoes**: `forte_crescimento`, `crescimento`, `estavel`, `queda`, `forte_queda`, `dados_insuficientes`
+- **Impacto**: ZAGONEL agora preve +20% (alinhado com tendencia real)
+
+**2. Limitador V11 Atualizado:**
+- Para itens com tendencia de crescimento (fator_yoy > 1.05) mas previsao < AA
+- Sistema corrige automaticamente usando fator de tendencia
+- Evita que modelo preveja queda onde ha crescimento
+
+**3. Botao "Salvar Demanda" na Tela de Previsao:**
+- Permite salvar demanda calculada direto no banco
+- Chama API `/api/demanda_job/recalcular` com CNPJ do fornecedor
+- Garante que Pedido Fornecedor use mesmos valores da Tela Demanda
+- Feedback imediato com estatisticas (itens, registros, tempo)
+
+**4. Verificacao V12 no Checklist de Conformidade:**
+- Testa funcao de fator de tendencia YoY
+- Valida: serie crescimento, serie estavel, serie queda
+- Verifica limites (0.7 a 1.4) e classificacoes
+
+**Arquivos Modificados:**
+- `core/demand_calculator.py` - Funcao `calcular_fator_tendencia_yoy()`
+- `jobs/calcular_demanda_diaria.py` - Integracao do fator no cronjob + limitador V11
+- `core/validador_conformidade.py` - Verificacao V12
+- `templates/index.html` - Botao "Salvar Demanda"
+- `static/js/app.js` - Funcoes `salvarDemandaPreCalculada()` e `atualizarBotaoSalvarDemanda()`
+- `app/utils/demanda_pre_calculada.py` - Retorno de `fator_tendencia_yoy` e `classificacao_tendencia`
+
+**Tabela Alterada (Migration V13):**
+- `demanda_pre_calculada.fator_tendencia_yoy` - Fator calculado (0.7 a 1.4)
+- `demanda_pre_calculada.classificacao_tendencia` - Classificacao da tendencia
+
+**Documentacao:**
+- [REVISAO_MODELO_PREVISAO_2026.md - Secoes 16 e 17](REVISAO_MODELO_PREVISAO_2026.md)
+
+---
+
+### v5.6 (Fevereiro 2026)
 
 **Sistema de Demanda Pre-Calculada:**
 
@@ -945,8 +1002,8 @@ Para duvidas ou problemas:
 
 ---
 
-**Versao:** 5.6
+**Versao:** 5.7
 **Status:** Em Producao
-**Ultima Atualizacao:** Fevereiro 2026
+**Ultima Atualizacao:** 05 Fevereiro 2026
 
 **Se este projeto foi util, considere dar uma estrela!**
