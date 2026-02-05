@@ -1223,26 +1223,38 @@ def calcular_fator_tendencia_yoy(
     """
     from math import prod
 
-    # Agrupar vendas por ano
+    # Agrupar vendas por ano E contar meses por ano
     totais_por_ano = {}
+    meses_por_ano = {}
     for (ano, mes), qtd in vendas_por_mes.items():
         totais_por_ano[ano] = totais_por_ano.get(ano, 0) + qtd
+        if ano not in meses_por_ano:
+            meses_por_ano[ano] = set()
+        meses_por_ano[ano].add(mes)
+
+    # Filtrar anos com menos de 6 meses de dados (anos incompletos)
+    # Isso evita comparar ano completo vs ano parcial
+    MIN_MESES_PARA_CONSIDERAR = 6
+    anos_completos = {ano: total for ano, total in totais_por_ano.items()
+                      if len(meses_por_ano.get(ano, set())) >= MIN_MESES_PARA_CONSIDERAR}
 
     # Metadata inicial
     metadata = {
         'anos_disponiveis': list(sorted(totais_por_ano.keys())),
         'totais_por_ano': {str(k): round(v, 2) for k, v in sorted(totais_por_ano.items())},
+        'meses_por_ano': {str(k): len(v) for k, v in meses_por_ano.items()},
+        'anos_usados_calculo': list(sorted(anos_completos.keys())),
         'min_anos_requerido': min_anos,
         'fator_amortecimento': fator_amortecimento
     }
 
-    # Verificar se tem dados suficientes
-    anos = sorted(totais_por_ano.keys())
+    # Verificar se tem dados suficientes (anos com >= 6 meses)
+    anos = sorted(anos_completos.keys())
     if len(anos) < min_anos:
-        metadata['motivo'] = f'Dados insuficientes: {len(anos)} anos (minimo: {min_anos})'
-        return 1.0, 'insuficiente', metadata
+        metadata['motivo'] = f'Dados insuficientes: {len(anos)} anos completos (minimo: {min_anos})'
+        return 1.0, 'dados_insuficientes', metadata
 
-    # Calcular crescimento entre anos consecutivos
+    # Calcular crescimento entre anos consecutivos (usando apenas anos completos)
     crescimentos = []
     detalhes_crescimento = []
 
@@ -1250,14 +1262,16 @@ def calcular_fator_tendencia_yoy(
         ano_ant = anos[i-1]
         ano_atual = anos[i]
 
-        if totais_por_ano[ano_ant] > 0:
-            taxa = totais_por_ano[ano_atual] / totais_por_ano[ano_ant]
+        if anos_completos[ano_ant] > 0:
+            taxa = anos_completos[ano_atual] / anos_completos[ano_ant]
             crescimentos.append(taxa)
             detalhes_crescimento.append({
                 'de': ano_ant,
                 'para': ano_atual,
-                'valor_ant': round(totais_por_ano[ano_ant], 2),
-                'valor_atual': round(totais_por_ano[ano_atual], 2),
+                'valor_ant': round(anos_completos[ano_ant], 2),
+                'valor_atual': round(anos_completos[ano_atual], 2),
+                'meses_ant': len(meses_por_ano.get(ano_ant, set())),
+                'meses_atual': len(meses_por_ano.get(ano_atual, set())),
                 'taxa': round(taxa, 4),
                 'variacao_pct': round((taxa - 1) * 100, 1)
             })
