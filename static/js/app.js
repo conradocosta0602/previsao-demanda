@@ -2905,13 +2905,28 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
         console.log('Dados completos:', JSON.stringify(dados, null, 2));
 
         // Enviar requisição (Bottom-Up com sazonalidade, tendência e limitadores)
-        const response = await fetch('/api/gerar_previsao_banco', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(dados)
-        });
+        // Timeout de 5 minutos para permitir processamento de grandes volumes
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutos
+
+        let response;
+        try {
+            response = await fetch('/api/gerar_previsao_banco', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(dados),
+                signal: controller.signal
+            });
+        } catch (fetchError) {
+            clearTimeout(timeoutId);
+            if (fetchError.name === 'AbortError') {
+                throw new Error('Tempo limite excedido (5 min). Tente filtrar menos itens.');
+            }
+            throw fetchError;
+        }
+        clearTimeout(timeoutId);
 
         const resultado = await response.json();
 
