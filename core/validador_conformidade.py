@@ -425,12 +425,18 @@ class ValidadorConformidade:
             return 'falha', f'Erro ao verificar ES ABC: {str(e)}', {}
 
     def _verificar_limitador_variacao(self) -> Tuple[str, str, Dict]:
-        """V11: Verifica se o limitador de variacao vs ano anterior funciona."""
+        """
+        V11: Verifica se o limitador de variacao vs ano anterior funciona.
+
+        ATUALIZADO v5.7: Inclui verificacao da correcao para itens em crescimento.
+        Quando fator_tendencia_yoy > 1.05 E previsao < AA, o sistema deve corrigir
+        usando o fator de tendencia (limitado a 1.4).
+        """
         try:
-            # Simular cenarios de variacao
-            # A logica do limitador: variacao > 1.5 ou variacao < 0.6 => limitar
-            # Portanto: 1.5 exato NAO limita, 0.6 exato NAO limita
-            cenarios = [
+            # =================================================================
+            # PARTE 1: Cenarios basicos de limitador (-40% a +50%)
+            # =================================================================
+            cenarios_basicos = [
                 # (previsao, ano_anterior, esperado_limitado)
                 (150, 100, False),   # exatamente 1.5x -> NAO limita (usa >)
                 (60, 100, False),    # exatamente 0.6x -> NAO limita (usa <)
@@ -442,17 +448,13 @@ class ValidadorConformidade:
                 (59, 100, True),     # 0.59x -> deve limitar para 60
             ]
 
-            resultados = []
-            todos_corretos = True
+            resultados_basicos = []
+            basicos_corretos = True
 
-            for previsao, ano_anterior, esperado_limitado in cenarios:
-                # Aplicar logica do limitador (mesma do previsao.py)
+            for previsao, ano_anterior, esperado_limitado in cenarios_basicos:
                 variacao = previsao / ano_anterior if ano_anterior > 0 else 1.0
-
-                # Verificar se deveria limitar (usando > e <, nao >= e <=)
                 foi_limitado = variacao > 1.5 or variacao < 0.6
 
-                # Calcular valor apos limitador
                 if variacao > 1.5:
                     valor_final = ano_anterior * 1.5
                 elif variacao < 0.6:
@@ -460,10 +462,8 @@ class ValidadorConformidade:
                 else:
                     valor_final = previsao
 
-                # Verificar se comportamento esta correto
                 correto = (foi_limitado == esperado_limitado)
-
-                resultados.append({
+                resultados_basicos.append({
                     'previsao_original': previsao,
                     'ano_anterior': ano_anterior,
                     'variacao': round(variacao, 2),
@@ -472,19 +472,75 @@ class ValidadorConformidade:
                     'valor_final': round(valor_final, 1),
                     'correto': correto
                 })
-
                 if not correto:
-                    todos_corretos = False
+                    basicos_corretos = False
+
+            # =================================================================
+            # PARTE 2: Cenarios de correcao para itens em crescimento (v5.7)
+            # Quando fator_yoy > 1.05 E previsao < AA, deve corrigir
+            # =================================================================
+            cenarios_crescimento = [
+                # (previsao, ano_anterior, fator_yoy, esperado_corrigido, valor_esperado_aprox)
+                (80, 100, 1.21, True, 121),    # Previsao < AA, crescimento 21% -> corrige para AA * 1.21
+                (80, 100, 1.50, True, 140),    # Previsao < AA, crescimento 50% -> corrige para AA * 1.4 (limite)
+                (80, 100, 1.03, False, 80),    # Previsao < AA, mas fator <= 1.05 -> NAO corrige
+                (110, 100, 1.21, False, 110),  # Previsao >= AA -> NAO corrige (ja esta crescendo)
+                (80, 100, 0.95, False, 80),    # Fator < 1.0 (queda) -> NAO corrige
+            ]
+
+            resultados_crescimento = []
+            crescimento_corretos = True
+
+            for previsao, ano_anterior, fator_yoy, esperado_corrigido, valor_esperado in cenarios_crescimento:
+                variacao = previsao / ano_anterior if ano_anterior > 0 else 1.0
+
+                # Logica v5.7: correcao para itens em crescimento
+                foi_corrigido = False
+                valor_final = previsao
+
+                if fator_yoy > 1.05 and variacao < 1.0:
+                    valor_final = ano_anterior * min(fator_yoy, 1.4)
+                    foi_corrigido = True
+
+                # Verificar se comportamento esta correto
+                correto_correcao = (foi_corrigido == esperado_corrigido)
+                correto_valor = abs(valor_final - valor_esperado) < 1  # Tolerancia de 1 unidade
+
+                resultados_crescimento.append({
+                    'previsao_original': previsao,
+                    'ano_anterior': ano_anterior,
+                    'fator_yoy': fator_yoy,
+                    'variacao_original': round(variacao, 2),
+                    'foi_corrigido': foi_corrigido,
+                    'esperado_corrigido': esperado_corrigido,
+                    'valor_final': round(valor_final, 1),
+                    'valor_esperado': valor_esperado,
+                    'correto': correto_correcao and correto_valor
+                })
+
+                if not (correto_correcao and correto_valor):
+                    crescimento_corretos = False
+
+            # =================================================================
+            # Resultado final
+            # =================================================================
+            todos_corretos = basicos_corretos and crescimento_corretos
 
             if todos_corretos:
-                return 'ok', 'Limitador variacao AA correto (-40% a +50%)', {
-                    'limites': {'minimo': '0.6 (-40%)', 'maximo': '1.5 (+50%)'},
-                    'cenarios_testados': len(cenarios),
-                    'cenarios': resultados
+                return 'ok', 'Limitador V11 correto (basico + correcao crescimento v5.7)', {
+                    'limites_basicos': {'minimo': '0.6 (-40%)', 'maximo': '1.5 (+50%)'},
+                    'correcao_crescimento': 'fator_yoy > 1.05 AND previsao < AA -> corrige para AA * min(fator, 1.4)',
+                    'cenarios_basicos': len(cenarios_basicos),
+                    'cenarios_crescimento': len(cenarios_crescimento),
+                    'resultados_basicos': resultados_basicos,
+                    'resultados_crescimento': resultados_crescimento
                 }
             else:
-                return 'falha', 'Limitador variacao AA com problema', {
-                    'cenarios': resultados
+                return 'falha', 'Limitador V11 com problema', {
+                    'basicos_ok': basicos_corretos,
+                    'crescimento_ok': crescimento_corretos,
+                    'resultados_basicos': resultados_basicos,
+                    'resultados_crescimento': resultados_crescimento
                 }
         except Exception as e:
             return 'falha', f'Erro ao verificar limitador: {str(e)}', {}
