@@ -106,3 +106,7 @@ def _register_blueprints(app):
     # Blueprint: Validacao e Conformidade de Metodologia
     from app.blueprints.validacao import validacao_bp
     app.register_blueprint(validacao_bp)
+
+    # Blueprint: Gerenciamento de Demanda Pre-Calculada
+    from app.blueprints.demanda_job import demanda_job_bp
+    app.register_blueprint(demanda_job_bp)

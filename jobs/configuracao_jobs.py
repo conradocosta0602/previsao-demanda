@@ -59,7 +59,7 @@ CONFIGURACAO_BANCO = {
     'port': 5432,
     'database': 'previsao_demanda',
     'user': 'postgres',
-    'password': 'postgres'
+    'password': 'FerreiraCost@01'
 }
 
 # Tentar carregar configuracao do arquivo principal do sistema

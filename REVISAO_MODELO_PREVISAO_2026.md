@@ -1165,6 +1165,113 @@ if valor_aa_periodo > 0:
 | 12 | Normalizacao Desvio | demand_calculator.py | Implementado |
 | **13** | **Auditoria e Conformidade** | **validador_conformidade.py** | **Implementado** |
 | **14** | **Limitador Variacao AA (-40% a +50%)** | **previsao.py** | **Implementado** |
+| **15** | **Demanda Pre-Calculada (Cronjob)** | **calcular_demanda_diaria.py** | **Implementado** |
+
+---
+
+## 15. Demanda Pre-Calculada (Cronjob Diario)
+
+### Contexto e Problema
+A Tela de Demanda e a Tela de Pedido Fornecedor usavam calculos diferentes para demanda:
+- **Tela Demanda**: `calcular_demanda_diaria_unificada()` com fatores sazonais e limitador V11
+- **Tela Pedido**: `calcular_demanda_inteligente()` SEM fatores sazonais e SEM limitador V11
+
+Isso causava **inconsistencia** nos valores entre as duas telas.
+
+### Solucao Implementada
+Um **cronjob diario** (05:00) calcula a demanda de todos os itens e salva em uma tabela pre-calculada. A Tela de Pedido agora usa esses valores pre-calculados, garantindo **integridade total** com a Tela de Demanda.
+
+### Arquitetura
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                SISTEMA DE DEMANDA PRE-CALCULADA                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  CRONJOB DIARIO (05:00)                                        │
+│  ├─ Calcula demanda para todos os itens x fornecedores         │
+│  ├─ Aplica mesma metodologia da Tela Demanda:                  │
+│  │   • 6 metodos estatisticos                                  │
+│  │   • Fatores sazonais (0.5 a 2.0)                           │
+│  │   • Limitador V11 (-40% a +50%)                            │
+│  ├─ Salva em demanda_pre_calculada                             │
+│  └─ Preserva ajustes manuais (nao sobrescreve)                 │
+│                                                                 │
+│  TELA DEMANDA                                                   │
+│  └─ Continua calculando em tempo real (para graficos)          │
+│                                                                 │
+│  TELA PEDIDO FORNECEDOR                                         │
+│  └─ Busca valores da tabela demanda_pre_calculada              │
+│     (fallback para calculo em tempo real se nao existir)       │
+│                                                                 │
+│  AJUSTES MANUAIS                                                │
+│  └─ Sobrepõem valores calculados (via API ou interface)        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Tabelas Criadas (Migration V12)
+
+```sql
+-- Tabela principal de demanda pre-calculada
+demanda_pre_calculada
+├─ cod_produto, cnpj_fornecedor, cod_empresa
+├─ ano, mes (periodo)
+├─ demanda_prevista, demanda_diaria_base, desvio_padrao
+├─ fator_sazonal, limitador_aplicado
+├─ metodo_usado, categoria_serie
+├─ ajuste_manual (sobrepõe calculado)
+└─ data_calculo
+
+-- Historico de calculos (auditoria)
+demanda_pre_calculada_historico
+
+-- Controle de execucoes do cronjob
+demanda_calculo_execucao
+
+-- View que retorna demanda efetiva
+vw_demanda_efetiva
+```
+
+### API Endpoints
+
+| Endpoint | Metodo | Descricao |
+|----------|--------|-----------|
+| `/api/demanda_job/status` | GET | Status do job e ultimas execucoes |
+| `/api/demanda_job/recalcular` | POST | Inicia recalculo (todos ou fornecedor especifico) |
+| `/api/demanda_job/ajustar` | POST | Registra ajuste manual de demanda |
+| `/api/demanda_job/remover_ajuste` | POST | Remove ajuste manual |
+| `/api/demanda_job/consultar` | GET | Consulta demanda pre-calculada |
+
+### Execucao do Cronjob
+
+```bash
+# Execucao automatica (scheduler)
+python jobs/calcular_demanda_diaria.py
+
+# Execucao manual (todos os fornecedores)
+python jobs/calcular_demanda_diaria.py --manual
+
+# Recalculo de fornecedor especifico
+python jobs/calcular_demanda_diaria.py --fornecedor 60620366000195
+
+# Verificar status
+python jobs/calcular_demanda_diaria.py --status
+```
+
+### Arquivos de Referencia
+- [database/migration_v12_demanda_pre_calculada.sql](database/migration_v12_demanda_pre_calculada.sql)
+- [jobs/calcular_demanda_diaria.py](jobs/calcular_demanda_diaria.py)
+- [app/utils/demanda_pre_calculada.py](app/utils/demanda_pre_calculada.py)
+- [app/blueprints/demanda_job.py](app/blueprints/demanda_job.py)
+- [app/blueprints/pedido_fornecedor.py](app/blueprints/pedido_fornecedor.py) - Adaptado para usar tabela
+
+### Beneficios
+1. **Integridade Total**: Mesmos valores em Tela Demanda e Tela Pedido
+2. **Performance**: Consulta rapida em vez de calculo em tempo real
+3. **Ajustes Manuais**: Usuarios podem sobrepor valores calculados
+4. **Auditoria**: Historico completo de calculos e ajustes
+5. **Recalculo Sob Demanda**: API permite recalcular fornecedor especifico
 
 ---
 
@@ -1177,9 +1284,10 @@ if valor_aa_periodo > 0:
 5. **Documentar ajustes manuais** mais utilizados para identificar padroes
 6. **Revisar padroes de compra** para itens com critica `sem_padrao_compra`
 7. **Monitorar dashboard de conformidade** diariamente para detectar regressoes
+8. **Verificar execucao do cronjob** diariamente via `/api/demanda_job/status`
 
 ---
 
 **Documento criado em:** 04/02/2026
 **Ultima atualizacao:** 04/02/2026
-**Versao do sistema:** 5.5
+**Versao do sistema:** 5.6

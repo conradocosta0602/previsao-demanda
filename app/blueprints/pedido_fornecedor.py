@@ -12,6 +12,7 @@ import numpy as np
 from flask import Blueprint, render_template, request, jsonify, send_file, current_app
 
 from app.utils.db_connection import get_db_connection
+from app.utils.demanda_pre_calculada import obter_demanda_diaria_efetiva, verificar_dados_disponiveis
 
 pedido_fornecedor_bp = Blueprint('pedido_fornecedor', __name__)
 
@@ -108,7 +109,9 @@ def api_pedido_fornecedor_integrado():
                 query_fornecedores = """
                     SELECT DISTINCT nome_fornecedor
                     FROM cadastro_produtos_completo
-                    WHERE ativo = TRUE AND nome_fornecedor IS NOT NULL
+                    WHERE ativo = TRUE
+                    AND nome_fornecedor IS NOT NULL
+                    AND TRIM(nome_fornecedor) != ''
                 """
                 params_forn = []
 
@@ -300,20 +303,30 @@ def api_pedido_fornecedor_integrado():
                 pedido_min_forn = float(row.get('pedido_minimo_valor', 0))
                 fornecedor_cadastrado = row.get('fornecedor_cadastrado', False)
 
+                # Obter CNPJ do fornecedor para busca na tabela pre-calculada
+                cnpj_forn = row.get('codigo_fornecedor', '')
+
                 if is_pedido_multiloja:
                     for loja_cod in lojas_demanda:
                         loja_nome = mapa_nomes_lojas.get(loja_cod, f"Loja {loja_cod}")
-                        historico_loja = processador.buscar_historico_vendas(codigo, loja_cod)
 
-                        demanda_diaria = 0
-                        desvio_padrao = 0
-                        metadata = {'metodo_usado': 'sem_historico'}
+                        # PRIORIDADE 1: Usar demanda pre-calculada (garante integridade com Tela Demanda)
+                        demanda_diaria, desvio_padrao, metadata = obter_demanda_diaria_efetiva(
+                            conn, str(codigo), cnpj_forn, cod_empresa=loja_cod
+                        )
 
-                        if historico_loja and len(historico_loja) >= 7:
-                            demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_loja, metodo='auto')
-                            # IMPORTANTE: calcular_demanda_inteligente retorna demanda MENSAL
-                            # Converter para diaria dividindo por 30
-                            demanda_diaria = (demanda_media / 30) if demanda_media > 0 else 0
+                        # FALLBACK: Se nao houver dados pre-calculados, calcular em tempo real
+                        if metadata.get('fonte') == 'sem_dados':
+                            historico_loja = processador.buscar_historico_vendas(codigo, loja_cod)
+                            if historico_loja and len(historico_loja) >= 7:
+                                demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_loja, metodo='auto')
+                                # calcular_demanda_inteligente retorna demanda MENSAL
+                                demanda_diaria = (demanda_media / 30) if demanda_media > 0 else 0
+                                metadata['fonte'] = 'tempo_real'
+                            else:
+                                demanda_diaria = 0
+                                desvio_padrao = 0
+                                metadata = {'metodo_usado': 'sem_historico', 'fonte': 'sem_dados'}
 
                         resultado = processador.processar_item(
                             codigo=codigo,
@@ -350,6 +363,7 @@ def api_pedido_fornecedor_integrado():
                         resultado['nome_loja'] = loja_nome
                         resultado['codigo_fornecedor'] = row.get('codigo_fornecedor', '')
                         resultado['metodo_previsao'] = metadata.get('metodo_usado', 'auto')
+                        resultado['fonte_demanda'] = metadata.get('fonte', 'tempo_real')  # pre_calculada ou tempo_real
                         resultado['lojas_consideradas'] = 1
                         resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
                         resultado['lead_time_usado'] = lead_time_forn
@@ -363,24 +377,32 @@ def api_pedido_fornecedor_integrado():
 
                         resultados.append(resultado)
                 else:
-                    historico_total = []
-                    for loja in lojas_demanda:
-                        historico_loja = processador.buscar_historico_vendas(codigo, loja)
-                        if historico_loja:
-                            if not historico_total:
-                                historico_total = historico_loja.copy()
-                            else:
-                                for i in range(min(len(historico_total), len(historico_loja))):
-                                    historico_total[i] += historico_loja[i]
+                    # PRIORIDADE 1: Usar demanda pre-calculada (garante integridade com Tela Demanda)
+                    # Para mono-loja, buscar consolidado (cod_empresa=None)
+                    demanda_diaria, desvio_padrao, metadata = obter_demanda_diaria_efetiva(
+                        conn, str(codigo), cnpj_forn, cod_empresa=None
+                    )
 
-                    if not historico_total or len(historico_total) < 7:
-                        itens_sem_historico += 1
-                        continue
+                    # FALLBACK: Se nao houver dados pre-calculados, calcular em tempo real
+                    if metadata.get('fonte') == 'sem_dados':
+                        historico_total = []
+                        for loja in lojas_demanda:
+                            historico_loja = processador.buscar_historico_vendas(codigo, loja)
+                            if historico_loja:
+                                if not historico_total:
+                                    historico_total = historico_loja.copy()
+                                else:
+                                    for i in range(min(len(historico_total), len(historico_loja))):
+                                        historico_total[i] += historico_loja[i]
 
-                    demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_total, metodo='auto')
-                    # IMPORTANTE: calcular_demanda_inteligente retorna demanda MENSAL
-                    # Converter para diaria dividindo por 30
-                    demanda_diaria = demanda_media / 30 if demanda_media > 0 else 0
+                        if not historico_total or len(historico_total) < 7:
+                            itens_sem_historico += 1
+                            continue
+
+                        demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_total, metodo='auto')
+                        # calcular_demanda_inteligente retorna demanda MENSAL
+                        demanda_diaria = demanda_media / 30 if demanda_media > 0 else 0
+                        metadata['fonte'] = 'tempo_real'
 
                     if demanda_diaria <= 0:
                         itens_sem_demanda += 1
@@ -402,6 +424,7 @@ def api_pedido_fornecedor_integrado():
                         resultado['cod_loja'] = cod_destino
                         resultado['codigo_fornecedor'] = row.get('codigo_fornecedor', '')
                         resultado['metodo_previsao'] = metadata.get('metodo_usado', 'auto')
+                        resultado['fonte_demanda'] = metadata.get('fonte', 'tempo_real')  # pre_calculada ou tempo_real
                         resultado['lojas_consideradas'] = len(lojas_demanda)
                         resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
                         resultado['lead_time_usado'] = lead_time_forn
