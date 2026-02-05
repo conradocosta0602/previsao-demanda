@@ -110,16 +110,26 @@ def atualizar_execucao(conn, execucao_id: int, status: str, metricas: Dict):
 
 
 def buscar_fornecedores(conn, cnpj_filtro: str = None) -> List[Dict]:
-    """Busca lista de fornecedores para processar."""
+    """
+    Busca lista de fornecedores para processar.
+
+    Args:
+        conn: Conexao com o banco
+        cnpj_filtro: CNPJ ou NOME do fornecedor (ambos aceitos)
+
+    Returns:
+        Lista de dicionarios com cnpj_fornecedor e nome_fornecedor
+    """
     from psycopg2.extras import RealDictCursor
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
     if cnpj_filtro:
+        # Aceita tanto CNPJ quanto nome do fornecedor
         cursor.execute("""
             SELECT DISTINCT cnpj_fornecedor, nome_fornecedor
             FROM cadastro_produtos_completo
-            WHERE cnpj_fornecedor = %s
-        """, (cnpj_filtro,))
+            WHERE cnpj_fornecedor = %s OR nome_fornecedor = %s
+        """, (cnpj_filtro, cnpj_filtro))
     else:
         cursor.execute("""
             SELECT DISTINCT cnpj_fornecedor, nome_fornecedor

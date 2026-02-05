@@ -3541,16 +3541,19 @@ let dadosPrevisaoAtual = null;
 
 // Função para verificar se há um único fornecedor selecionado
 function verificarFornecedorUnico() {
-    const selectFornecedor = document.getElementById('fornecedor_banco');
-    if (!selectFornecedor) {
-        console.log('[Validacao] Select fornecedor_banco nao encontrado');
+    // Usar MultiSelect API em vez de getElementById
+    const fornecedores = MultiSelect.getSelected('fornecedor_banco');
+
+    if (!fornecedores || fornecedores.length === 0) {
+        console.log('[Validacao] Nenhum fornecedor selecionado');
         return { valido: false, fornecedor: null };
     }
 
-    const valor = selectFornecedor.value;
-    // Válido apenas se não for vazio, não for "TODOS" e for um único valor
-    const valido = valor && valor !== '' && valor !== 'TODOS' && valor !== 'Carregando...';
-    console.log('[Validacao] Fornecedor verificado:', valor, '- Valido:', valido);
+    // Válido apenas se houver exatamente um fornecedor selecionado
+    // e não for "TODOS" ou "Carregando..."
+    const valor = fornecedores[0];
+    const valido = fornecedores.length === 1 && valor && valor !== 'TODOS' && valor !== 'Carregando...';
+    console.log('[Validacao] Fornecedor verificado:', valor, '- Valido:', valido, '- Total selecionados:', fornecedores.length);
     return { valido: valido, fornecedor: valido ? valor : null };
 }
 
@@ -5337,11 +5340,12 @@ async function salvarDemandaPreCalculada() {
     // Confirmar ação
     const confirmar = confirm(
         `Deseja salvar a demanda pré-calculada para o fornecedor selecionado?\n\n` +
-        `CNPJ: ${fornecedor}\n\n` +
+        `Fornecedor: ${fornecedor}\n\n` +
         `Esta ação irá:\n` +
         `• Recalcular a demanda de todos os itens do fornecedor\n` +
         `• Salvar os valores na tabela demanda_pre_calculada\n` +
         `• Os valores serão usados na Tela de Pedido Fornecedor\n\n` +
+        `O processo será executado em background e pode levar alguns minutos.\n\n` +
         `Deseja continuar?`
     );
 
@@ -5349,37 +5353,51 @@ async function salvarDemandaPreCalculada() {
 
     // Atualizar botão para estado de carregamento
     const textoOriginal = btn.innerHTML;
-    btn.innerHTML = '⏳ Salvando...';
+    btn.innerHTML = '⏳ Iniciando...';
     btn.disabled = true;
     btn.style.opacity = '0.7';
 
     try {
-        // Chamar API de recálculo
+        // Chamar API de recálculo (async por padrão)
         const response = await fetch('/api/demanda_job/recalcular', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                cnpj_fornecedor: fornecedor
+                cnpj_fornecedor: fornecedor,
+                async: true
             })
         });
 
         const resultado = await response.json();
 
         if (!response.ok || !resultado.success) {
-            throw new Error(resultado.erro || 'Erro ao salvar demanda');
+            throw new Error(resultado.erro || 'Erro ao iniciar cálculo');
         }
 
-        // Mostrar resultado de sucesso
+        // Mostrar resultado
         const stats = resultado.resultado || {};
-        alert(
-            `✅ Demanda salva com sucesso!\n\n` +
-            `Itens processados: ${stats.total_itens || 0}\n` +
-            `Registros salvos: ${stats.total_registros || 0}\n` +
-            `Tempo de execução: ${((stats.tempo_ms || 0) / 1000).toFixed(1)}s\n\n` +
-            `Os valores agora estão disponíveis na Tela de Pedido Fornecedor.`
-        );
+        const isAsync = resultado.async;
+
+        if (isAsync) {
+            alert(
+                `✅ Cálculo iniciado em background!\n\n` +
+                `Fornecedor: ${fornecedor}\n` +
+                `Itens a processar: ${stats.total_itens || 'calculando...'}\n` +
+                `Registros estimados: ${stats.total_registros || 'calculando...'}\n\n` +
+                `O processo está sendo executado em segundo plano.\n` +
+                `Os valores estarão disponíveis na Tela de Pedido Fornecedor em alguns minutos.`
+            );
+        } else {
+            alert(
+                `✅ Demanda salva com sucesso!\n\n` +
+                `Itens processados: ${stats.total_itens || 0}\n` +
+                `Registros salvos: ${stats.total_registros || 0}\n` +
+                `Tempo de execução: ${((stats.tempo_ms || 0) / 1000).toFixed(1)}s\n\n` +
+                `Os valores agora estão disponíveis na Tela de Pedido Fornecedor.`
+            );
+        }
 
         console.log('[SalvarDemanda] Demanda salva com sucesso:', resultado);
 

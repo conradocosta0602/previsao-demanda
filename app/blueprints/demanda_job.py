@@ -82,24 +82,80 @@ def api_demanda_job_recalcular():
 
     Request JSON:
     {
-        "cnpj_fornecedor": "60620366000195"  # Opcional, se omitido recalcula todos
+        "cnpj_fornecedor": "60620366000195" ou "NOME FORNECEDOR"  # Opcional
+        "async": true  # Se true, executa em background e retorna imediatamente
     }
 
     Returns:
-        JSON com resultado do recalculo
+        JSON com resultado do recalculo (ou status de inicio se async)
     """
+    import threading
+
     try:
         # Adicionar pasta raiz ao path para importar jobs
         ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if ROOT_DIR not in sys.path:
             sys.path.insert(0, ROOT_DIR)
 
-        from jobs.calcular_demanda_diaria import executar_calculo
+        from jobs.calcular_demanda_diaria import executar_calculo, buscar_fornecedores, buscar_itens_fornecedor, obter_conexao
 
         dados = request.get_json() or {}
         cnpj_filtro = dados.get('cnpj_fornecedor')
+        executar_async = dados.get('async', True)  # Por padrao, executa em background
 
-        # Executar calculo
+        # Normalizar cnpj_filtro: se veio como lista, pegar o primeiro elemento
+        if isinstance(cnpj_filtro, list):
+            cnpj_filtro = cnpj_filtro[0] if cnpj_filtro else None
+
+        # Verificar quantidade de itens para estimar tempo
+        if cnpj_filtro:
+            conn = obter_conexao()
+            fornecedores = buscar_fornecedores(conn, cnpj_filtro)
+            total_itens_estimado = 0
+            nome_fornecedor = cnpj_filtro
+
+            if fornecedores:
+                for f in fornecedores:
+                    itens = buscar_itens_fornecedor(conn, f['cnpj_fornecedor'])
+                    total_itens_estimado += len(itens)
+                    nome_fornecedor = f['nome_fornecedor']
+            conn.close()
+
+            if not fornecedores:
+                return jsonify({
+                    'success': False,
+                    'erro': f'Fornecedor nao encontrado: {cnpj_filtro}'
+                }), 404
+
+        # Se async, executar em thread separada
+        if executar_async:
+            def executar_em_background():
+                try:
+                    if cnpj_filtro:
+                        executar_calculo(tipo='recalculo_fornecedor', cnpj_filtro=cnpj_filtro)
+                    else:
+                        executar_calculo(tipo='manual')
+                except Exception as e:
+                    print(f"[ERRO] Calculo em background: {e}")
+
+            thread = threading.Thread(target=executar_em_background)
+            thread.daemon = True
+            thread.start()
+
+            return jsonify({
+                'success': True,
+                'async': True,
+                'mensagem': f'Calculo iniciado em background para {nome_fornecedor if cnpj_filtro else "todos os fornecedores"}',
+                'resultado': {
+                    'total_itens': total_itens_estimado if cnpj_filtro else 0,
+                    'total_registros': total_itens_estimado * 12 if cnpj_filtro else 0,  # Estimativa: 12 meses por item
+                    'total_erros': 0,
+                    'total_fornecedores': len(fornecedores) if cnpj_filtro else 0,
+                    'tempo_ms': 0
+                }
+            })
+
+        # Se sincrono, executar e aguardar
         if cnpj_filtro:
             resultado = executar_calculo(tipo='recalculo_fornecedor', cnpj_filtro=cnpj_filtro)
         else:
@@ -107,6 +163,7 @@ def api_demanda_job_recalcular():
 
         return jsonify({
             'success': True,
+            'async': False,
             'resultado': {
                 'total_itens': resultado.get('total_itens', 0),
                 'total_registros': resultado.get('total_registros', 0),

@@ -290,6 +290,7 @@ def api_pedido_fornecedor_integrado():
         processador.precarregar_situacoes_compra(codigos_produtos, lojas_demanda)
         processador.precarregar_estoque(codigos_produtos, lojas_demanda)
         processador.precarregar_historico_vendas(codigos_produtos, lojas_demanda)
+        processador.precarregar_embalagens(codigos_produtos)
 
         resultados = []
         itens_sem_historico = 0

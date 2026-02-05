@@ -251,6 +251,8 @@ class PedidoFornecedorIntegrado:
         self._cache_historico = None
         # Cache de dados de produtos: codigo -> dict
         self._cache_produtos = None
+        # Cache de embalagem de arredondamento: codigo -> qtd_embalagem
+        self._cache_embalagem = None
 
     def carregar_regras_sit_compra(self) -> Dict:
         """
@@ -440,6 +442,97 @@ class PedidoFornecedorIntegrado:
         except Exception as e:
             print(f"  [CACHE] Erro ao pré-carregar histórico: {e}")
             self._cache_historico = {}
+
+    def precarregar_embalagens(self, codigos: List[int]) -> None:
+        """
+        Pré-carrega dados de embalagem de arredondamento de todos os produtos em lote.
+
+        Args:
+            codigos: Lista de códigos de produtos
+        """
+        if not codigos:
+            self._cache_embalagem = {}
+            return
+
+        try:
+            placeholders = ','.join(['%s'] * len(codigos))
+
+            query = f"""
+                SELECT codigo, qtd_embalagem, unidade_compra, unidade_menor
+                FROM embalagem_arredondamento
+                WHERE codigo IN ({placeholders})
+            """
+
+            df = pd.read_sql(query, self.conn, params=list(codigos))
+
+            # Montar cache: codigo -> dict com qtd_embalagem e unidades
+            self._cache_embalagem = {}
+            for _, row in df.iterrows():
+                codigo = int(row['codigo'])
+                qtd_embalagem = float(row['qtd_embalagem']) if row['qtd_embalagem'] else 1
+                # Garantir que qtd_embalagem seja pelo menos 1
+                if qtd_embalagem < 1:
+                    qtd_embalagem = 1
+                self._cache_embalagem[codigo] = {
+                    'qtd_embalagem': int(qtd_embalagem),
+                    'unidade_compra': row.get('unidade_compra', ''),
+                    'unidade_menor': row.get('unidade_menor', '')
+                }
+
+            print(f"  [CACHE] Embalagem pré-carregada: {len(self._cache_embalagem)} produtos")
+
+        except Exception as e:
+            print(f"  [CACHE] Erro ao pré-carregar embalagem (tabela pode não existir): {e}")
+            self._cache_embalagem = {}
+
+    def buscar_embalagem(self, codigo) -> Dict:
+        """
+        Busca dados de embalagem de arredondamento do produto.
+
+        Args:
+            codigo: Código do produto
+
+        Returns:
+            Dicionário com qtd_embalagem, unidade_compra, unidade_menor
+        """
+        default_result = {'qtd_embalagem': 1, 'unidade_compra': '', 'unidade_menor': ''}
+
+        try:
+            codigo_int = int(codigo)
+        except (ValueError, TypeError):
+            return default_result
+
+        # Usar cache se disponível
+        if self._cache_embalagem is not None:
+            cached = self._cache_embalagem.get(codigo_int)
+            if cached:
+                return cached
+            return default_result
+
+        # Fallback: query individual (mais lento)
+        try:
+            query = """
+                SELECT qtd_embalagem, unidade_compra, unidade_menor
+                FROM embalagem_arredondamento
+                WHERE codigo = %s
+            """
+            df = pd.read_sql(query, self.conn, params=[codigo_int])
+
+            if df.empty:
+                return default_result
+
+            row = df.iloc[0]
+            qtd_embalagem = float(row['qtd_embalagem']) if row['qtd_embalagem'] else 1
+            if qtd_embalagem < 1:
+                qtd_embalagem = 1
+
+            return {
+                'qtd_embalagem': int(qtd_embalagem),
+                'unidade_compra': row.get('unidade_compra', ''),
+                'unidade_menor': row.get('unidade_menor', '')
+            }
+        except Exception:
+            return default_result
 
     def verificar_situacao_compra(self, codigo, cod_empresa: int) -> Optional[Dict]:
         """
@@ -883,6 +976,13 @@ class PedidoFornecedorIntegrado:
         # 3. Buscar parâmetros de gôndola
         parametros = self.buscar_parametros_gondola(codigo, cod_empresa)
 
+        # 3.1. Buscar embalagem de arredondamento (sobrescreve multiplo_caixa se existir)
+        embalagem = self.buscar_embalagem(codigo)
+        if embalagem['qtd_embalagem'] > 1:
+            parametros['multiplo_caixa'] = embalagem['qtd_embalagem']
+            parametros['unidade_compra'] = embalagem['unidade_compra']
+            parametros['unidade_menor'] = embalagem['unidade_menor']
+
         # 4. Buscar preço de custo
         preco_custo = self.buscar_preco_custo(codigo, cod_empresa)
 
@@ -1045,6 +1145,8 @@ class PedidoFornecedorIntegrado:
             'quantidade_pedido': sanitizar_float(pedido_info['quantidade_pedido'], 0),
             'numero_caixas': sanitizar_float(pedido_info['numero_caixas'], 0),
             'multiplo_caixa': sanitizar_float(parametros['multiplo_caixa'], 1),
+            'unidade_compra': parametros.get('unidade_compra', ''),
+            'unidade_menor': parametros.get('unidade_menor', ''),
             'deve_pedir': pedido_info['deve_pedir'],
             'ajustado_multiplo': pedido_info['ajustado_multiplo'],
 
