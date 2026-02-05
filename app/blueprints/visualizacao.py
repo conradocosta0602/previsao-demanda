@@ -89,7 +89,9 @@ def api_fornecedores():
         query = """
             SELECT DISTINCT nome_fornecedor, cnpj_fornecedor
             FROM cadastro_produtos_completo
-            WHERE ativo = TRUE AND nome_fornecedor IS NOT NULL
+            WHERE ativo = TRUE
+            AND nome_fornecedor IS NOT NULL
+            AND TRIM(nome_fornecedor) != ''
         """
         params = []
 

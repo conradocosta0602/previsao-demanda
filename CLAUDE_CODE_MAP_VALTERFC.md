@@ -1234,7 +1234,7 @@ tests/
 2. **Sazonalidade não era aplicada** - Corrigido: fatores 0.5-2.0 como multiplicadores
 3. **TSB sem detecção de tendência** - Corrigido: analisa primeira/segunda metade da série
 4. **Dados do período de previsão usados** - Corrigido: corte de data na query SQL
-5. **RupturaSanitizer não era usado** - Corrigido: limiar de 50% cobertura de estoque
+5. **Saneamento de rupturas não era usado** - Corrigido: limiar de 50% cobertura de estoque
 6. **Média inflada por dias com venda** - Corrigido: normalização pelo total de dias
 
 ### Arquivos Modificados:

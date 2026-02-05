@@ -1,819 +1,800 @@
-// KPIs Dashboard - JavaScript
+// KPIs Dashboard - JavaScript Reformulado
 // Controla filtros, gráficos e visualizações
+// Versão 2.0 - Fevereiro 2026
 
-// Estado Global
-let currentView = 'mensal';
-let filtros = {
-    loja: [],
-    produto: [],
-    categoria: [],
-    fornecedor: []
+// ========================================
+// ESTADO GLOBAL
+// ========================================
+let state = {
+    visaoTemporal: 'mensal',      // mensal, semanal, diario
+    agregacao: 'geral',            // geral, fornecedor, linha, filial, item
+    filtros: {
+        fornecedores: [],
+        categorias: [],
+        linhas3: [],
+        filiais: []
+    },
+    ranking: {
+        pagina: 1,
+        porPagina: 20,
+        ordenarPor: 'ruptura',
+        ordem: 'desc'
+    }
 };
 
-let charts = {}; // Armazena instâncias dos gráficos
+let charts = {};  // Armazena instâncias dos gráficos
+let filtrosData = {};  // Dados dos filtros carregados
 
-// ===== INICIALIZAÇÃO =====
+// Cores padrão para os gráficos
+const CORES = {
+    ruptura: '#ef4444',
+    cobertura: '#10b981',
+    wmape: '#3b82f6',
+    bias: '#f59e0b',
+    melhorHistorico: '#9ca3af'
+};
+
+// Faixas de alerta
+const FAIXAS = {
+    ruptura: {
+        verde: 5,      // < 5%
+        amarelo: 10    // 5-10%, > 10% = vermelho
+    },
+    wmape: {
+        azul: 20,      // < 20%
+        verde: 50      // 20-50%, >= 50% = vermelho
+    },
+    cobertura: {
+        meta: 90       // Meta de 90 dias
+    }
+};
+
+// ========================================
+// INICIALIZAÇÃO
+// ========================================
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('Inicializando Dashboard de KPIs...');
+    console.log('Inicializando Dashboard de KPIs v2.0...');
 
-    // Carregar filtros
+    // Inicializar event listeners
+    inicializarEventListeners();
+
+    // Carregar filtros do servidor
     carregarFiltros();
 
     // Carregar dados iniciais
     carregarDados();
 });
 
-// ===== FUNÇÕES DE FILTROS =====
+function inicializarEventListeners() {
+    // Visão temporal
+    document.querySelectorAll('input[name="visao-temporal"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            state.visaoTemporal = e.target.value;
+            carregarDados();
+        });
+    });
+
+    // Agregação
+    document.querySelectorAll('input[name="agregacao"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            state.agregacao = e.target.value;
+            atualizarVisibilidadeGraficos();
+            carregarDados();
+        });
+    });
+
+    // Ordenação da tabela
+    document.querySelectorAll('.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const campo = th.dataset.sort;
+            if (state.ranking.ordenarPor === campo) {
+                state.ranking.ordem = state.ranking.ordem === 'asc' ? 'desc' : 'asc';
+            } else {
+                state.ranking.ordenarPor = campo;
+                state.ranking.ordem = 'desc';
+            }
+            atualizarIconesOrdenacao();
+            carregarRanking();
+        });
+    });
+}
+
+// ========================================
+// FILTROS
+// ========================================
 function carregarFiltros() {
-    // Buscar opções de filtros do backend
     fetch('/api/kpis/filtros')
         .then(response => response.json())
         .then(data => {
-            // Criar multi-select para Loja
-            const lojasOptions = (data.lojas || []).map(l => ({
-                value: (l.id || l.codigo || l).toString(),
-                label: l.nome || l.descricao || l
-            }));
-            MultiSelect.create('filter-loja', lojasOptions, {
-                allSelectedText: 'Todas as lojas',
-                selectAllByDefault: true,
-                onchange: () => {} // Não recarrega automaticamente, aguarda botão "Aplicar"
-            });
-
-            // Criar multi-select para Produto
-            const produtosOptions = (data.produtos || []).map(p => ({
-                value: (p.id || p.codigo || p).toString(),
-                label: p.nome || p.descricao || p
-            }));
-            MultiSelect.create('filter-produto', produtosOptions, {
-                allSelectedText: 'Todos os produtos',
-                selectAllByDefault: true,
-                onchange: () => {}
-            });
-
-            // Criar multi-select para Categoria
-            const categoriasOptions = (data.categorias || []).map(c => ({
-                value: (c.id || c.codigo || c).toString(),
-                label: c.nome || c.descricao || c
-            }));
-            MultiSelect.create('filter-categoria', categoriasOptions, {
-                allSelectedText: 'Todas as categorias',
-                selectAllByDefault: true,
-                onchange: () => {}
-            });
+            filtrosData = data;
 
             // Criar multi-select para Fornecedor
-            const fornecedoresOptions = (data.fornecedores || []).map(f => ({
-                value: (f.id || f.codigo || f).toString(),
-                label: f.nome || f.descricao || f
-            }));
-            MultiSelect.create('filter-fornecedor', fornecedoresOptions, {
-                allSelectedText: 'Todos os fornecedores',
-                selectAllByDefault: true,
-                onchange: () => {}
-            });
+            if (data.fornecedores && data.fornecedores.length > 0) {
+                const fornecedoresOptions = data.fornecedores.map(f => ({
+                    value: f,
+                    label: f
+                }));
+                MultiSelect.create('filter-fornecedor', fornecedoresOptions, {
+                    allSelectedText: 'Todos os fornecedores',
+                    selectAllByDefault: true,
+                    onchange: () => {}
+                });
+            }
+
+            // Criar multi-select para Categoria (Linha1)
+            if (data.categorias && data.categorias.length > 0) {
+                const categoriasOptions = data.categorias.map(c => ({
+                    value: c,
+                    label: c
+                }));
+                MultiSelect.create('filter-categoria', categoriasOptions, {
+                    allSelectedText: 'Todas as categorias',
+                    selectAllByDefault: true,
+                    onchange: () => atualizarLinhas3()
+                });
+            }
+
+            // Criar multi-select para Linha3 (dependente de Categoria)
+            atualizarLinhas3();
+
+            // Criar multi-select para Filial
+            if (data.filiais && data.filiais.length > 0) {
+                const filiaisOptions = data.filiais.map(f => ({
+                    value: f.codigo.toString(),
+                    label: `${f.codigo} - ${f.nome}`
+                }));
+                MultiSelect.create('filter-filial', filiaisOptions, {
+                    allSelectedText: 'Todas as filiais',
+                    selectAllByDefault: true,
+                    onchange: () => {}
+                });
+            }
         })
         .catch(error => {
             console.error('Erro ao carregar filtros:', error);
         });
 }
 
+function atualizarLinhas3() {
+    // Pegar categorias selecionadas
+    const categoriasSelecionadas = MultiSelect.getSelected('filter-categoria') || [];
+
+    // Filtrar linhas3 pelas categorias selecionadas
+    let linhas3Filtradas = [];
+
+    if (filtrosData.linhas3_por_categoria) {
+        if (categoriasSelecionadas.length === 0) {
+            // Se nenhuma categoria selecionada, mostrar todas as linhas3
+            Object.values(filtrosData.linhas3_por_categoria).forEach(linhas => {
+                linhas3Filtradas = linhas3Filtradas.concat(linhas);
+            });
+        } else {
+            // Filtrar pelas categorias selecionadas
+            categoriasSelecionadas.forEach(cat => {
+                if (filtrosData.linhas3_por_categoria[cat]) {
+                    linhas3Filtradas = linhas3Filtradas.concat(filtrosData.linhas3_por_categoria[cat]);
+                }
+            });
+        }
+    }
+
+    // Remover duplicatas
+    linhas3Filtradas = [...new Set(linhas3Filtradas)];
+
+    // Recriar multi-select de Linha3
+    const linhas3Options = linhas3Filtradas.map(l => ({
+        value: l.codigo,
+        label: `${l.codigo} - ${l.descricao}`
+    }));
+
+    MultiSelect.create('filter-linha3', linhas3Options, {
+        allSelectedText: 'Todas as linhas',
+        selectAllByDefault: true,
+        onchange: () => {}
+    });
+}
+
 function aplicarFiltros() {
-    filtros = {
-        loja: MultiSelect.getSelected('filter-loja') || [],
-        produto: MultiSelect.getSelected('filter-produto') || [],
-        categoria: MultiSelect.getSelected('filter-categoria') || [],
-        fornecedor: MultiSelect.getSelected('filter-fornecedor') || []
+    state.filtros = {
+        fornecedores: MultiSelect.getSelected('filter-fornecedor') || [],
+        categorias: MultiSelect.getSelected('filter-categoria') || [],
+        linhas3: MultiSelect.getSelected('filter-linha3') || [],
+        filiais: MultiSelect.getSelected('filter-filial') || []
     };
 
-    console.log('Aplicando filtros:', filtros);
+    state.ranking.pagina = 1;  // Reset paginação
+
+    console.log('Aplicando filtros:', state.filtros);
     carregarDados();
 }
 
 function limparFiltros() {
-    // Selecionar todos os itens em cada multi-select
-    MultiSelect.selectAll('filter-loja');
-    MultiSelect.selectAll('filter-produto');
-    MultiSelect.selectAll('filter-categoria');
     MultiSelect.selectAll('filter-fornecedor');
+    MultiSelect.selectAll('filter-categoria');
+    MultiSelect.selectAll('filter-linha3');
+    MultiSelect.selectAll('filter-filial');
 
-    filtros = { loja: [], produto: [], categoria: [], fornecedor: [] };
+    state.filtros = {
+        fornecedores: [],
+        categorias: [],
+        linhas3: [],
+        filiais: []
+    };
+
+    state.ranking.pagina = 1;
     carregarDados();
 }
 
-// ===== MUDANÇA DE VISÃO =====
-function mudarVisao(visao) {
-    currentView = visao;
-
-    // Atualizar tabs
-    document.querySelectorAll('.view-tab').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    event.target.classList.add('active');
-
-    // Atualizar conteúdo
-    document.querySelectorAll('.view-content').forEach(content => {
-        content.classList.remove('active');
-    });
-
-    document.getElementById(`demanda-${visao}`).classList.add('active');
-    document.getElementById(`reabastecimento-${visao}`).classList.add('active');
-
-    // Recarregar dados
-    carregarDados();
-}
-
-// ===== CARREGAMENTO DE DADOS =====
+// ========================================
+// CARREGAMENTO DE DADOS
+// ========================================
 function carregarDados() {
-    const params = new URLSearchParams();
-    params.append('visao', currentView);
-
-    // Adicionar filtros como JSON arrays
-    if (filtros.loja && filtros.loja.length > 0) {
-        params.append('loja', JSON.stringify(filtros.loja));
-    }
-    if (filtros.produto && filtros.produto.length > 0) {
-        params.append('produto', JSON.stringify(filtros.produto));
-    }
-    if (filtros.categoria && filtros.categoria.length > 0) {
-        params.append('categoria', JSON.stringify(filtros.categoria));
-    }
-    if (filtros.fornecedor && filtros.fornecedor.length > 0) {
-        params.append('fornecedor', JSON.stringify(filtros.fornecedor));
-    }
-
     mostrarLoading(true);
 
-    fetch(`/api/kpis/dados?${params}`)
+    // Carregar resumo, evolução e ranking em paralelo
+    Promise.all([
+        carregarResumo(),
+        carregarEvolucao(),
+        carregarRanking()
+    ]).then(() => {
+        mostrarLoading(false);
+    }).catch(error => {
+        console.error('Erro ao carregar dados:', error);
+        mostrarLoading(false);
+    });
+}
+
+function buildQueryParams() {
+    const params = new URLSearchParams();
+    params.append('visao', state.visaoTemporal);
+    params.append('agregacao', state.agregacao);
+
+    if (state.filtros.fornecedores.length > 0) {
+        params.append('fornecedores', JSON.stringify(state.filtros.fornecedores));
+    }
+    if (state.filtros.categorias.length > 0) {
+        params.append('categorias', JSON.stringify(state.filtros.categorias));
+    }
+    if (state.filtros.linhas3.length > 0) {
+        params.append('linhas3', JSON.stringify(state.filtros.linhas3));
+    }
+    if (state.filtros.filiais.length > 0) {
+        params.append('filiais', JSON.stringify(state.filtros.filiais));
+    }
+
+    return params;
+}
+
+function carregarResumo() {
+    const params = buildQueryParams();
+
+    return fetch(`/api/kpis/resumo?${params}`)
         .then(response => response.json())
         .then(data => {
-            atualizarMetricas(data.metricas_atuais);
-            atualizarGraficos(data.series_temporais);
-            atualizarTabelaPerformers(data.performers);
-            mostrarLoading(false);
-        })
-        .catch(error => {
-            console.error('Erro ao carregar dados:', error);
-            mostrarLoading(false);
+            atualizarCardsKPI(data);
         });
 }
 
-// ===== ATUALIZAÇÃO DE MÉTRICAS =====
-function atualizarMetricas(metricas) {
-    // KPIs de Demanda
-    document.getElementById('wmape-atual').textContent =
-        metricas.wmape ? metricas.wmape.toFixed(1) + '%' : '-';
-    document.getElementById('bias-atual').textContent =
-        metricas.bias !== undefined ? (metricas.bias > 0 ? '+' : '') + metricas.bias.toFixed(2) : '-';
-    document.getElementById('previsoes-excelentes').textContent =
-        metricas.previsoes_excelentes || '-';
-    document.getElementById('total-skus').textContent =
-        metricas.total_skus || '-';
+function carregarEvolucao() {
+    const params = buildQueryParams();
 
-    // Tendências - Demanda
-    atualizarTendencia('wmape-trend', metricas.wmape_tendencia);
-    atualizarTendencia('bias-trend', metricas.bias_tendencia);
-    atualizarTendencia('excelentes-trend', metricas.excelentes_tendencia);
-
-    // KPIs de Reabastecimento
-    document.getElementById('taxa-ruptura').textContent =
-        metricas.taxa_ruptura ? metricas.taxa_ruptura.toFixed(1) + '%' : '-';
-    document.getElementById('cobertura-media').textContent =
-        metricas.cobertura_media ? metricas.cobertura_media.toFixed(1) + ' dias' : '-';
-    document.getElementById('nivel-servico').textContent =
-        metricas.nivel_servico ? metricas.nivel_servico.toFixed(1) + '%' : '-';
-    document.getElementById('skus-criticos').textContent =
-        metricas.skus_criticos || '-';
-
-    // Tendências - Reabastecimento
-    atualizarTendencia('ruptura-trend', metricas.ruptura_tendencia);
-    atualizarTendencia('cobertura-trend', metricas.cobertura_tendencia);
-    atualizarTendencia('servico-trend', metricas.servico_tendencia);
-    atualizarTendencia('criticos-trend', metricas.criticos_tendencia);
+    return fetch(`/api/kpis/evolucao?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            atualizarGraficos(data);
+        });
 }
 
-function atualizarTendencia(elementId, tendencia) {
-    const element = document.getElementById(elementId);
-    if (!tendencia) return;
+function carregarRanking() {
+    const params = buildQueryParams();
+    params.append('pagina', state.ranking.pagina);
+    params.append('por_pagina', state.ranking.porPagina);
+    params.append('ordenar_por', state.ranking.ordenarPor);
+    params.append('ordem', state.ranking.ordem);
 
-    element.className = 'metric-trend';
+    return fetch(`/api/kpis/ranking?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            atualizarTabelaRanking(data);
+        });
+}
 
-    if (tendencia.tipo === 'up') {
-        element.classList.add('trend-up');
-        element.textContent = `↑ ${tendencia.valor}`;
-    } else if (tendencia.tipo === 'down') {
-        element.classList.add('trend-down');
-        element.textContent = `↓ ${tendencia.valor}`;
+// ========================================
+// ATUALIZAÇÃO DOS CARDS KPI
+// ========================================
+function atualizarCardsKPI(data) {
+    // Ruptura
+    atualizarCardKPI('ruptura', data.ruptura, '%', getCorRuptura);
+
+    // Cobertura
+    atualizarCardKPI('cobertura', data.cobertura, ' dias', getCorCobertura);
+
+    // WMAPE
+    atualizarCardKPI('wmape', data.wmape, '%', getCorWMAPE);
+
+    // BIAS
+    atualizarCardKPI('bias', data.bias, '%', getCorBIAS);
+}
+
+function atualizarCardKPI(id, dados, sufixo, getCorFunc) {
+    if (!dados) return;
+
+    const valorEl = document.getElementById(`kpi-${id}-valor`);
+    const tendenciaEl = document.getElementById(`kpi-${id}-tendencia`);
+    const badgeEl = document.getElementById(`kpi-${id}-badge`);
+
+    if (valorEl) {
+        const valorFormatado = dados.valor !== null && dados.valor !== undefined
+            ? dados.valor.toFixed(1) + sufixo
+            : '-';
+        valorEl.textContent = valorFormatado;
+    }
+
+    if (tendenciaEl && dados.variacao !== undefined) {
+        const variacao = dados.variacao;
+        const sinal = variacao > 0 ? '+' : '';
+        tendenciaEl.textContent = `${sinal}${variacao.toFixed(1)}% vs período anterior`;
+        tendenciaEl.className = 'kpi-tendencia';
+
+        // Para ruptura e WMAPE, diminuir é bom
+        // Para cobertura, aumentar é bom
+        if (id === 'ruptura' || id === 'wmape') {
+            tendenciaEl.classList.add(variacao <= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
+        } else if (id === 'cobertura') {
+            tendenciaEl.classList.add(variacao >= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
+        } else {
+            // BIAS - quanto mais próximo de 0, melhor
+            tendenciaEl.classList.add(Math.abs(variacao) <= 5 ? 'tendencia-positiva' : 'tendencia-negativa');
+        }
+    }
+
+    if (badgeEl && getCorFunc) {
+        const cor = getCorFunc(dados.valor);
+        badgeEl.className = `kpi-badge badge-${cor}`;
+        badgeEl.textContent = getTextoStatus(cor);
+    }
+}
+
+function getCorRuptura(valor) {
+    if (valor === null || valor === undefined) return 'cinza';
+    if (valor < FAIXAS.ruptura.verde) return 'verde';
+    if (valor <= FAIXAS.ruptura.amarelo) return 'amarelo';
+    return 'vermelho';
+}
+
+function getCorCobertura(valor) {
+    if (valor === null || valor === undefined) return 'cinza';
+    if (valor >= FAIXAS.cobertura.meta) return 'verde';
+    if (valor >= FAIXAS.cobertura.meta * 0.7) return 'amarelo';
+    return 'vermelho';
+}
+
+function getCorWMAPE(valor) {
+    if (valor === null || valor === undefined) return 'cinza';
+    if (valor < FAIXAS.wmape.azul) return 'azul';
+    if (valor < FAIXAS.wmape.verde) return 'verde';
+    return 'vermelho';
+}
+
+function getCorBIAS(valor) {
+    if (valor === null || valor === undefined) return 'cinza';
+    const absValor = Math.abs(valor);
+    if (absValor < 10) return 'verde';
+    if (absValor < 25) return 'amarelo';
+    return 'vermelho';
+}
+
+function getTextoStatus(cor) {
+    const textos = {
+        'verde': 'Bom',
+        'amarelo': 'Atenção',
+        'vermelho': 'Crítico',
+        'azul': 'Excelente',
+        'cinza': '-'
+    };
+    return textos[cor] || '-';
+}
+
+// ========================================
+// ATUALIZAÇÃO DOS GRÁFICOS
+// ========================================
+function atualizarVisibilidadeGraficos() {
+    const containerGraficos = document.getElementById('graficos-container');
+    const containerItem = document.getElementById('graficos-item-container');
+
+    if (state.agregacao === 'item') {
+        // Para nível item, mostrar gráficos também (como solicitado)
+        if (containerGraficos) containerGraficos.style.display = 'grid';
+        if (containerItem) containerItem.style.display = 'block';
     } else {
-        element.classList.add('trend-stable');
-        element.textContent = `→ ${tendencia.valor}`;
+        if (containerGraficos) containerGraficos.style.display = 'grid';
+        if (containerItem) containerItem.style.display = 'none';
     }
 }
 
-// ===== ATUALIZAÇÃO DE GRÁFICOS =====
-function atualizarGraficos(series) {
-    if (currentView === 'mensal') {
-        criarGraficoWMAPEMensal(series.wmape_mensal || []);
-        criarGraficoBIASMensal(series.bias_mensal || []);
-        criarGraficoClassificacao(series.classificacao || []);
-        criarGraficoRupturaMensal(series.ruptura_mensal || []);
-        criarGraficoCoberturaMensal(series.cobertura_mensal || []);
-        criarGraficoServicoMensal(series.servico_mensal || []);
-    } else {
-        criarGraficoWMAPESemanal(series.wmape_semanal || []);
-        criarGraficoBIASSemanal(series.bias_semanal || []);
-        criarGraficoRupturaSemanal(series.ruptura_semanal || []);
-        criarGraficoCoberturaSemanal(series.cobertura_semanal || []);
-    }
-}
+function atualizarGraficos(data) {
+    if (!data) return;
 
-function criarGraficoWMAPEMensal(dados) {
-    const ctx = document.getElementById('chart-wmape-mensal');
-    if (!ctx) return;
-
-    if (charts['wmape-mensal']) {
-        charts['wmape-mensal'].destroy();
-    }
-
-    charts['wmape-mensal'] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: dados.map(d => d.mes),
-            datasets: [{
-                label: 'WMAPE (%)',
-                data: dados.map(d => d.wmape),
-                borderColor: '#667eea',
-                backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                borderWidth: 3,
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return 'WMAPE: ' + context.parsed.y.toFixed(2) + '%';
-                        }
-                    }
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    title: {
-                        display: true,
-                        text: 'WMAPE (%)'
-                    },
-                    grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
-                    }
-                },
-                x: {
-                    grid: {
-                        display: false
-                    }
-                }
-            }
+    // Destruir gráficos existentes
+    Object.keys(charts).forEach(key => {
+        if (charts[key]) {
+            charts[key].destroy();
         }
     });
+    charts = {};
+
+    // Criar novos gráficos
+    criarGraficoRuptura(data.ruptura || []);
+    criarGraficoCobertura(data.cobertura || []);
+    criarGraficoWMAPE(data.wmape || []);
+    criarGraficoBIAS(data.bias || []);
 }
 
-function criarGraficoBIASMensal(dados) {
-    const ctx = document.getElementById('chart-bias-mensal');
-    if (!ctx) return;
+function criarGraficoRuptura(dados) {
+    const ctx = document.getElementById('chart-ruptura');
+    if (!ctx || !dados.length) return;
 
-    if (charts['bias-mensal']) {
-        charts['bias-mensal'].destroy();
-    }
+    const labels = dados.map(d => d.periodo);
+    const valores = dados.map(d => d.valor);
+    const melhorHistorico = dados.map(d => d.melhor_historico);
 
-    charts['bias-mensal'] = new Chart(ctx, {
+    charts['ruptura'] = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: dados.map(d => d.mes),
-            datasets: [{
-                label: 'BIAS',
-                data: dados.map(d => d.bias),
-                borderColor: '#f59e0b',
-                backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                borderWidth: 3,
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const valor = context.parsed.y;
-                            return 'BIAS: ' + (valor > 0 ? '+' : '') + valor.toFixed(2);
-                        }
-                    }
-                }
-            },
-            scales: {
-                y: {
-                    title: {
-                        display: true,
-                        text: 'BIAS'
-                    },
-                    grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
-                    }
-                },
-                x: {
-                    grid: {
-                        display: false
-                    }
-                }
-            }
-        }
-    });
-}
-
-function criarGraficoClassificacao(dados) {
-    const ctx = document.getElementById('chart-classificacao-wmape');
-    if (!ctx) return;
-
-    if (charts['classificacao']) {
-        charts['classificacao'].destroy();
-    }
-
-    charts['classificacao'] = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: dados.map(d => d.mes),
+            labels: labels,
             datasets: [
                 {
-                    label: 'Excelente (<10%)',
-                    data: dados.map(d => d.excelente),
-                    backgroundColor: '#10b981',
-                    stack: 'stack1'
+                    label: 'Ruptura (%)',
+                    data: valores,
+                    borderColor: CORES.ruptura,
+                    backgroundColor: hexToRgba(CORES.ruptura, 0.1),
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 },
                 {
-                    label: 'Bom (10-20%)',
-                    data: dados.map(d => d.bom),
-                    backgroundColor: '#3b82f6',
-                    stack: 'stack1'
-                },
-                {
-                    label: 'Aceitável (20-30%)',
-                    data: dados.map(d => d.aceitavel),
-                    backgroundColor: '#f59e0b',
-                    stack: 'stack1'
-                },
-                {
-                    label: 'Fraca (>30%)',
-                    data: dados.map(d => d.fraca),
-                    backgroundColor: '#ef4444',
-                    stack: 'stack1'
+                    label: 'Melhor Histórico',
+                    data: melhorHistorico,
+                    borderColor: CORES.melhorHistorico,
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 0
                 }
             ]
         },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'top'
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return context.dataset.label + ': ' + context.parsed.y + ' SKUs';
-                        }
-                    }
-                }
-            },
-            scales: {
-                y: {
-                    stacked: true,
-                    title: {
-                        display: true,
-                        text: 'Quantidade de SKUs'
-                    },
-                    grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
-                    }
-                },
-                x: {
-                    stacked: true,
-                    grid: {
-                        display: false
-                    }
-                }
-            }
-        }
+        options: getOptionsGrafico('Taxa de Ruptura (%)', true)
     });
 }
 
-function criarGraficoRupturaMensal(dados) {
-    const ctx = document.getElementById('chart-ruptura-mensal');
-    if (!ctx) return;
+function criarGraficoCobertura(dados) {
+    const ctx = document.getElementById('chart-cobertura');
+    if (!ctx || !dados.length) return;
 
-    if (charts['ruptura-mensal']) {
-        charts['ruptura-mensal'].destroy();
-    }
+    const labels = dados.map(d => d.periodo);
+    const valores = dados.map(d => d.valor);
+    const melhorHistorico = dados.map(d => d.melhor_historico);
 
-    charts['ruptura-mensal'] = new Chart(ctx, {
+    // Adicionar linha de meta
+    const meta = dados.map(() => FAIXAS.cobertura.meta);
+
+    charts['cobertura'] = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: dados.map(d => d.mes),
-            datasets: [{
-                label: 'Taxa de Ruptura (%)',
-                data: dados.map(d => d.taxa_ruptura),
-                borderColor: '#ef4444',
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                borderWidth: 3,
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    title: {
-                        display: true,
-                        text: 'Taxa de Ruptura (%)'
-                    },
-                    grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
-                    }
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Cobertura (dias)',
+                    data: valores,
+                    borderColor: CORES.cobertura,
+                    backgroundColor: hexToRgba(CORES.cobertura, 0.1),
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 },
-                x: {
-                    grid: {
-                        display: false
-                    }
+                {
+                    label: 'Meta (90 dias)',
+                    data: meta,
+                    borderColor: '#6366f1',
+                    borderWidth: 2,
+                    borderDash: [10, 5],
+                    tension: 0,
+                    fill: false,
+                    pointRadius: 0
+                },
+                {
+                    label: 'Melhor Histórico',
+                    data: melhorHistorico,
+                    borderColor: CORES.melhorHistorico,
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 0
                 }
-            }
-        }
+            ]
+        },
+        options: getOptionsGrafico('Cobertura (dias)', true)
     });
 }
 
-function criarGraficoCoberturaMensal(dados) {
-    const ctx = document.getElementById('chart-cobertura-mensal');
-    if (!ctx) return;
+function criarGraficoWMAPE(dados) {
+    const ctx = document.getElementById('chart-wmape');
+    if (!ctx || !dados.length) return;
 
-    if (charts['cobertura-mensal']) {
-        charts['cobertura-mensal'].destroy();
-    }
+    const labels = dados.map(d => d.periodo);
+    const valores = dados.map(d => d.valor);
+    const melhorHistorico = dados.map(d => d.melhor_historico);
 
-    charts['cobertura-mensal'] = new Chart(ctx, {
+    charts['wmape'] = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: dados.map(d => d.mes),
-            datasets: [{
-                label: 'Cobertura Média (dias)',
-                data: dados.map(d => d.cobertura_media),
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                borderWidth: 3,
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    title: {
-                        display: true,
-                        text: 'Dias de Cobertura'
-                    },
-                    grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
-                    }
+            labels: labels,
+            datasets: [
+                {
+                    label: 'WMAPE (%)',
+                    data: valores,
+                    borderColor: CORES.wmape,
+                    backgroundColor: hexToRgba(CORES.wmape, 0.1),
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 },
-                x: {
-                    grid: {
-                        display: false
-                    }
+                {
+                    label: 'Melhor Histórico',
+                    data: melhorHistorico,
+                    borderColor: CORES.melhorHistorico,
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 0
                 }
-            }
-        }
+            ]
+        },
+        options: getOptionsGrafico('WMAPE (%)', true)
     });
 }
 
-function criarGraficoServicoMensal(dados) {
-    const ctx = document.getElementById('chart-servico-mensal');
-    if (!ctx) return;
+function criarGraficoBIAS(dados) {
+    const ctx = document.getElementById('chart-bias');
+    if (!ctx || !dados.length) return;
 
-    if (charts['servico-mensal']) {
-        charts['servico-mensal'].destroy();
-    }
+    const labels = dados.map(d => d.periodo);
+    const valores = dados.map(d => d.valor);
 
-    charts['servico-mensal'] = new Chart(ctx, {
+    // Linha de referência no zero
+    const zeroLine = dados.map(() => 0);
+
+    charts['bias'] = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: dados.map(d => d.mes),
-            datasets: [{
-                label: 'Nível de Serviço (%)',
-                data: dados.map(d => d.nivel_servico),
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                borderWidth: 3,
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    min: 80,
-                    max: 100,
-                    title: {
-                        display: true,
-                        text: 'Nível de Serviço (%)'
-                    },
-                    grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
-                    }
+            labels: labels,
+            datasets: [
+                {
+                    label: 'BIAS (%)',
+                    data: valores,
+                    borderColor: CORES.bias,
+                    backgroundColor: hexToRgba(CORES.bias, 0.1),
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 },
-                x: {
-                    grid: {
-                        display: false
-                    }
+                {
+                    label: 'Referência (0)',
+                    data: zeroLine,
+                    borderColor: CORES.melhorHistorico,
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0,
+                    fill: false,
+                    pointRadius: 0
                 }
-            }
-        }
+            ]
+        },
+        options: getOptionsGrafico('BIAS (%)', false)
     });
 }
 
-// Gráficos Semanais (similares aos mensais, mas com dados semanais)
-function criarGraficoWMAPESemanal(dados) {
-    const ctx = document.getElementById('chart-wmape-semanal');
-    if (!ctx) return;
-
-    if (charts['wmape-semanal']) {
-        charts['wmape-semanal'].destroy();
-    }
-
-    charts['wmape-semanal'] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: dados.map(d => d.semana),
-            datasets: [{
-                label: 'WMAPE (%)',
-                data: dados.map(d => d.wmape),
-                borderColor: '#667eea',
-                backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                borderWidth: 2,
-                tension: 0.4,
-                fill: true,
-                pointRadius: 2
-            }]
+function getOptionsGrafico(titulo, beginAtZero = true) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+            intersect: false,
+            mode: 'index'
         },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
+        plugins: {
+            legend: {
+                display: true,
+                position: 'top',
+                labels: {
+                    usePointStyle: true,
+                    padding: 15,
+                    font: {
+                        size: 11
+                    }
                 }
             },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    title: {
-                        display: true,
-                        text: 'WMAPE (%)'
-                    }
+            tooltip: {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                titleFont: { size: 13 },
+                bodyFont: { size: 12 },
+                padding: 12,
+                cornerRadius: 8
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: beginAtZero,
+                title: {
+                    display: true,
+                    text: titulo,
+                    font: { size: 12, weight: 'bold' }
                 },
-                x: {
-                    grid: {
-                        display: false
-                    }
+                grid: {
+                    color: 'rgba(0, 0, 0, 0.05)'
+                }
+            },
+            x: {
+                grid: {
+                    display: false
+                },
+                ticks: {
+                    maxRotation: 45,
+                    minRotation: 0
                 }
             }
         }
-    });
+    };
 }
 
-function criarGraficoBIASSemanal(dados) {
-    const ctx = document.getElementById('chart-bias-semanal');
-    if (!ctx) return;
+// ========================================
+// TABELA DE RANKING
+// ========================================
+function atualizarTabelaRanking(data) {
+    const tbody = document.getElementById('ranking-tbody');
+    const paginacaoInfo = document.getElementById('paginacao-info');
 
-    if (charts['bias-semanal']) {
-        charts['bias-semanal'].destroy();
-    }
+    if (!tbody) return;
 
-    charts['bias-semanal'] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: dados.map(d => d.semana),
-            datasets: [{
-                label: 'BIAS',
-                data: dados.map(d => d.bias),
-                borderColor: '#f59e0b',
-                backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                borderWidth: 2,
-                tension: 0.4,
-                fill: true,
-                pointRadius: 2
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    title: {
-                        display: true,
-                        text: 'BIAS'
-                    }
-                },
-                x: {
-                    grid: {
-                        display: false
-                    }
-                }
-            }
-        }
-    });
-}
-
-function criarGraficoRupturaSemanal(dados) {
-    const ctx = document.getElementById('chart-ruptura-semanal');
-    if (!ctx) return;
-
-    if (charts['ruptura-semanal']) {
-        charts['ruptura-semanal'].destroy();
-    }
-
-    charts['ruptura-semanal'] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: dados.map(d => d.semana),
-            datasets: [{
-                label: 'Taxa de Ruptura (%)',
-                data: dados.map(d => d.taxa_ruptura),
-                borderColor: '#ef4444',
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                borderWidth: 2,
-                tension: 0.4,
-                fill: true,
-                pointRadius: 2
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    title: {
-                        display: true,
-                        text: 'Taxa de Ruptura (%)'
-                    }
-                },
-                x: {
-                    grid: {
-                        display: false
-                    }
-                }
-            }
-        }
-    });
-}
-
-function criarGraficoCoberturaSemanal(dados) {
-    const ctx = document.getElementById('chart-cobertura-semanal');
-    if (!ctx) return;
-
-    if (charts['cobertura-semanal']) {
-        charts['cobertura-semanal'].destroy();
-    }
-
-    charts['cobertura-semanal'] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: dados.map(d => d.semana),
-            datasets: [{
-                label: 'Cobertura Média (dias)',
-                data: dados.map(d => d.cobertura_media),
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                borderWidth: 2,
-                tension: 0.4,
-                fill: true,
-                pointRadius: 2
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    title: {
-                        display: true,
-                        text: 'Dias de Cobertura'
-                    }
-                },
-                x: {
-                    grid: {
-                        display: false
-                    }
-                }
-            }
-        }
-    });
-}
-
-// ===== TABELA DE PERFORMERS =====
-function atualizarTabelaPerformers(performers) {
-    const tbody = document.getElementById('performers-table');
-    if (!performers || performers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #6c757d;">Nenhum dado disponível</td></tr>';
+    if (!data || !data.itens || data.itens.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-muted py-4">
+                    Nenhum dado encontrado para os filtros selecionados
+                </td>
+            </tr>
+        `;
+        if (paginacaoInfo) paginacaoInfo.textContent = '';
         return;
     }
 
     tbody.innerHTML = '';
 
-    performers.forEach(p => {
+    data.itens.forEach((item, index) => {
         const tr = document.createElement('tr');
 
-        // Determinar status
-        let statusClass = 'status-good';
-        let statusText = 'Bom';
-
-        if (p.wmape < 10 && p.taxa_ruptura < 5) {
-            statusClass = 'status-excellent';
-            statusText = 'Excelente';
-        } else if (p.wmape > 30 || p.taxa_ruptura > 20) {
-            statusClass = 'status-critical';
-            statusText = 'Crítico';
-        } else if (p.wmape > 20 || p.taxa_ruptura > 10) {
-            statusClass = 'status-warning';
-            statusText = 'Atenção';
-        }
+        // Determinar status baseado nos valores
+        const statusRuptura = getCorRuptura(item.ruptura);
+        const statusWMAPE = getCorWMAPE(item.wmape);
 
         tr.innerHTML = `
-            <td><strong>${p.sku}</strong></td>
-            <td>${p.descricao}</td>
-            <td>${p.loja}</td>
-            <td>${p.wmape ? p.wmape.toFixed(1) + '%' : '-'}</td>
-            <td>${p.bias !== undefined ? (p.bias > 0 ? '+' : '') + p.bias.toFixed(2) : '-'}</td>
-            <td>${p.taxa_ruptura ? p.taxa_ruptura.toFixed(1) + '%' : '-'}</td>
-            <td>${p.cobertura ? p.cobertura.toFixed(1) + ' dias' : '-'}</td>
-            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+            <td class="fw-medium">${item.identificador || '-'}</td>
+            <td>${item.descricao || '-'}</td>
+            <td>
+                <span class="badge badge-${statusRuptura}">${item.ruptura !== null ? item.ruptura.toFixed(1) + '%' : '-'}</span>
+            </td>
+            <td>${item.cobertura !== null ? item.cobertura.toFixed(1) : '-'}</td>
+            <td>
+                <span class="badge badge-${statusWMAPE}">${item.wmape !== null ? item.wmape.toFixed(1) + '%' : '-'}</span>
+            </td>
+            <td>${item.bias !== null ? (item.bias > 0 ? '+' : '') + item.bias.toFixed(1) + '%' : '-'}</td>
+            <td>${item.total_skus || '-'}</td>
+            <td>${item.skus_ruptura || '-'}</td>
         `;
 
         tbody.appendChild(tr);
     });
+
+    // Atualizar informações de paginação
+    if (paginacaoInfo) {
+        const inicio = (data.pagina - 1) * data.por_pagina + 1;
+        const fim = Math.min(data.pagina * data.por_pagina, data.total);
+        paginacaoInfo.textContent = `Mostrando ${inicio}-${fim} de ${data.total}`;
+    }
+
+    // Atualizar botões de paginação
+    atualizarBotoesPaginacao(data);
 }
 
-// ===== LOADING STATE =====
-function mostrarLoading(show) {
-    // Implementar indicador de loading se necessário
-    console.log('Loading:', show);
+function atualizarBotoesPaginacao(data) {
+    const btnAnterior = document.getElementById('btn-pagina-anterior');
+    const btnProxima = document.getElementById('btn-pagina-proxima');
+
+    if (btnAnterior) {
+        btnAnterior.disabled = data.pagina <= 1;
+    }
+
+    if (btnProxima) {
+        btnProxima.disabled = data.pagina >= data.total_paginas;
+    }
 }
+
+function paginaAnterior() {
+    if (state.ranking.pagina > 1) {
+        state.ranking.pagina--;
+        carregarRanking();
+    }
+}
+
+function proximaPagina() {
+    state.ranking.pagina++;
+    carregarRanking();
+}
+
+function atualizarIconesOrdenacao() {
+    document.querySelectorAll('.sortable').forEach(th => {
+        const icone = th.querySelector('.sort-icon');
+        if (icone) {
+            if (th.dataset.sort === state.ranking.ordenarPor) {
+                icone.textContent = state.ranking.ordem === 'asc' ? '↑' : '↓';
+                icone.style.opacity = '1';
+            } else {
+                icone.textContent = '↕';
+                icone.style.opacity = '0.3';
+            }
+        }
+    });
+}
+
+// ========================================
+// UTILITÁRIOS
+// ========================================
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function mostrarLoading(show) {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.style.display = show ? 'flex' : 'none';
+    }
+}
+
+function formatarNumero(valor, decimais = 1) {
+    if (valor === null || valor === undefined) return '-';
+    return valor.toLocaleString('pt-BR', {
+        minimumFractionDigits: decimais,
+        maximumFractionDigits: decimais
+    });
+}
+
+// ========================================
+// EXPORTAÇÃO
+// ========================================
+function exportarDados(formato) {
+    const params = buildQueryParams();
+    params.append('formato', formato);
+
+    window.location.href = `/api/kpis/exportar?${params}`;
+}
+
+// Expor funções globalmente para uso no HTML
+window.aplicarFiltros = aplicarFiltros;
+window.limparFiltros = limparFiltros;
+window.paginaAnterior = paginaAnterior;
+window.proximaPagina = proximaPagina;
+window.exportarDados = exportarDados;

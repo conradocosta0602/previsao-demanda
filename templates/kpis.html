@@ -7,96 +7,91 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-    <script src="{{ url_for('static', filename='js/multi-select.js') }}"></script>
     <style>
+        :root {
+            --cor-ruptura: #ef4444;
+            --cor-cobertura: #10b981;
+            --cor-wmape: #3b82f6;
+            --cor-bias: #f59e0b;
+            --cor-primaria: #667eea;
+            --cor-secundaria: #764ba2;
+        }
+
         .kpi-container {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
             padding: 20px;
         }
 
         .page-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--cor-primaria) 0%, var(--cor-secundaria) 100%);
             color: white;
-            padding: 30px;
+            padding: 25px 30px;
             border-radius: 12px;
-            margin-bottom: 30px;
+            margin-bottom: 25px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
 
         .page-header h1 {
-            margin: 0 0 10px 0;
-            font-size: 2em;
+            margin: 0 0 8px 0;
+            font-size: 1.8em;
         }
 
         .page-header p {
             margin: 0;
             opacity: 0.9;
+            font-size: 0.95em;
         }
 
         /* Filtros */
         .filters-section {
             background: white;
-            padding: 25px;
+            padding: 20px 25px;
             border-radius: 12px;
-            margin-bottom: 30px;
+            margin-bottom: 25px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
-        .filters-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
+        .filters-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: flex-end;
         }
 
         .filter-group {
             display: flex;
             flex-direction: column;
+            min-width: 200px;
+            flex: 1;
         }
 
         .filter-group label {
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             color: #333;
-            font-size: 0.9em;
+            font-size: 0.85em;
         }
 
-        .filter-group select,
-        .filter-group input {
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 0.95em;
-            background-color: #f8f9fa;
-        }
-
-        .filter-group select:focus,
-        .filter-group input:focus {
-            outline: none;
-            border-color: #667eea;
-            background-color: white;
-        }
-
-        .filter-actions {
+        .filter-buttons {
             display: flex;
             gap: 10px;
-            justify-content: flex-end;
+            margin-left: auto;
+            align-items: flex-end;
         }
 
         .btn {
-            padding: 10px 24px;
+            padding: 8px 16px;
             border: none;
             border-radius: 6px;
-            font-size: 0.95em;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
+            font-size: 0.9em;
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--cor-primaria) 0%, var(--cor-secundaria) 100%);
             color: white;
         }
 
@@ -106,111 +101,107 @@
         }
 
         .btn-secondary {
-            background: #e9ecef;
+            background: #f8f9fa;
             color: #495057;
+            border: 1px solid #ddd;
         }
 
         .btn-secondary:hover {
-            background: #dee2e6;
+            background: #e9ecef;
         }
 
-        /* Tabs de Visão Temporal */
-        .view-tabs {
+        /* Controles de Visao */
+        .view-controls {
             display: flex;
-            gap: 10px;
-            margin-bottom: 30px;
-            border-bottom: 2px solid #e9ecef;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e9ecef;
         }
 
-        .view-tab {
-            padding: 12px 24px;
-            background: none;
-            border: none;
-            border-bottom: 3px solid transparent;
-            font-size: 1em;
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-group > label {
             font-weight: 600;
-            color: #6c757d;
+            color: #555;
+            font-size: 0.85em;
+            white-space: nowrap;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .radio-group label {
+            padding: 6px 14px;
+            border: 1px solid #ddd;
+            background: #f8f9fa;
+            border-radius: 20px;
+            font-size: 0.85em;
             cursor: pointer;
             transition: all 0.2s;
         }
 
-        .view-tab:hover {
-            color: #495057;
-            background: #f8f9fa;
+        .radio-group input[type="radio"] {
+            display: none;
         }
 
-        .view-tab.active {
-            color: #667eea;
-            border-bottom-color: #667eea;
+        .radio-group input[type="radio"]:checked + label {
+            background: var(--cor-primaria);
+            color: white;
+            border-color: var(--cor-primaria);
         }
 
-        /* Seções de KPI */
-        .kpi-section {
-            background: white;
-            padding: 25px;
-            border-radius: 12px;
-            margin-bottom: 30px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        .radio-group label:hover {
+            background: #e9ecef;
         }
 
-        .kpi-section-header {
-            display: flex;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #e9ecef;
+        .radio-group input[type="radio"]:checked + label:hover {
+            background: var(--cor-secundaria);
         }
 
-        .kpi-section-icon {
-            font-size: 2em;
-            margin-right: 15px;
-        }
-
-        .kpi-section-title {
-            flex: 1;
-        }
-
-        .kpi-section-title h2 {
-            margin: 0 0 5px 0;
-            color: #333;
-            font-size: 1.5em;
-        }
-
-        .kpi-section-title p {
-            margin: 0;
-            color: #6c757d;
-            font-size: 0.9em;
-        }
-
-        /* Cards de Métricas Atuais */
-        .current-metrics {
+        /* Cards de KPI */
+        .kpi-cards {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
             gap: 20px;
-            margin-bottom: 30px;
+            margin-bottom: 25px;
         }
 
-        .metric-card {
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+        .kpi-card {
+            background: white;
             padding: 20px;
-            border-radius: 10px;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             border-left: 4px solid #667eea;
             transition: all 0.2s;
         }
 
-        .metric-card:hover {
+        .kpi-card:hover {
             transform: translateY(-4px);
             box-shadow: 0 8px 16px rgba(0,0,0,0.1);
         }
 
-        .metric-card-header {
+        .kpi-card.ruptura { border-left-color: var(--cor-ruptura); }
+        .kpi-card.cobertura { border-left-color: var(--cor-cobertura); }
+        .kpi-card.wmape { border-left-color: var(--cor-wmape); }
+        .kpi-card.bias { border-left-color: var(--cor-bias); }
+
+        .kpi-header {
             display: flex;
             justify-content: space-between;
             align-items: start;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
         }
 
-        .metric-label {
+        .kpi-label {
             font-size: 0.85em;
             color: #6c757d;
             font-weight: 600;
@@ -218,80 +209,206 @@
             letter-spacing: 0.5px;
         }
 
-        .metric-trend {
-            font-size: 0.85em;
+        .kpi-badge {
+            font-size: 0.75em;
             font-weight: 600;
-            padding: 4px 8px;
-            border-radius: 4px;
+            padding: 3px 10px;
+            border-radius: 12px;
         }
 
-        .trend-up {
-            background: #d4edda;
-            color: #155724;
-        }
+        .badge-verde { background: #d4edda; color: #155724; }
+        .badge-amarelo { background: #fff3cd; color: #856404; }
+        .badge-vermelho { background: #f8d7da; color: #721c24; }
+        .badge-azul { background: #cce5ff; color: #004085; }
+        .badge-cinza { background: #e9ecef; color: #6c757d; }
 
-        .trend-down {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        .trend-stable {
-            background: #d1ecf1;
-            color: #0c5460;
-        }
-
-        .metric-value {
-            font-size: 2.5em;
+        .kpi-valor {
+            font-size: 2.2em;
             font-weight: 700;
             color: #333;
             margin-bottom: 5px;
         }
 
-        .metric-subtitle {
-            font-size: 0.85em;
+        .kpi-tendencia {
+            font-size: 0.8em;
             color: #6c757d;
         }
 
-        /* Gráficos */
-        .chart-container {
-            position: relative;
-            height: 400px;
-            margin-bottom: 20px;
+        .tendencia-positiva { color: #28a745; }
+        .tendencia-negativa { color: #dc3545; }
+
+        /* Graficos */
+        .charts-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+            margin-bottom: 25px;
+        }
+
+        .chart-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
         .chart-title {
             font-weight: 600;
             color: #333;
             margin-bottom: 15px;
-            font-size: 1.1em;
+            font-size: 1em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
-        /* Grid de Gráficos */
-        .charts-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 30px;
+        .chart-title .icon {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
         }
 
-        .charts-grid-2col {
-            grid-template-columns: 1fr 1fr;
+        .chart-title .icon.ruptura { background: var(--cor-ruptura); }
+        .chart-title .icon.cobertura { background: var(--cor-cobertura); }
+        .chart-title .icon.wmape { background: var(--cor-wmape); }
+        .chart-title .icon.bias { background: var(--cor-bias); }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
         }
 
-        /* Loading State */
-        .loading {
-            text-align: center;
-            padding: 60px;
+        /* Ranking */
+        .ranking-section {
+            background: white;
+            padding: 20px 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .ranking-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .ranking-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .ranking-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+
+        .ranking-table th {
+            background: #f8f9fa;
+            padding: 12px 10px;
+            text-align: left;
+            font-weight: 600;
+            color: #495057;
+            border-bottom: 2px solid #dee2e6;
+            white-space: nowrap;
+        }
+
+        .ranking-table th.sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .ranking-table th.sortable:hover {
+            background: #e9ecef;
+        }
+
+        .sort-icon {
+            margin-left: 5px;
+            opacity: 0.4;
+        }
+
+        .ranking-table td {
+            padding: 10px;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .ranking-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .ranking-table .fw-medium {
+            font-weight: 600;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        /* Paginacao */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .pagination button {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background: var(--cor-primaria);
+            color: white;
+            border-color: var(--cor-primaria);
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #paginacao-info {
             color: #6c757d;
+            font-size: 0.9em;
+        }
+
+        /* Loading Overlay */
+        #loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
         }
 
         .loading-spinner {
             border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
+            border-top: 4px solid var(--cor-primaria);
             border-radius: 50%;
             width: 50px;
             height: 50px;
             animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
         }
 
         @keyframes spin {
@@ -299,86 +416,59 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* Tabela de Detalhamento */
-        .detail-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-            font-size: 0.9em;
+        /* Mensagens */
+        .text-center { text-align: center; }
+        .text-muted { color: #6c757d; }
+        .py-4 { padding: 2rem 0; }
+
+        /* Responsivo */
+        @media (max-width: 1200px) {
+            .kpi-cards {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .charts-section {
+                grid-template-columns: 1fr;
+            }
         }
 
-        .detail-table th {
-            background: #f8f9fa;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-            color: #495057;
-            border-bottom: 2px solid #dee2e6;
-        }
-
-        .detail-table td {
-            padding: 12px;
-            border-bottom: 1px solid #e9ecef;
-        }
-
-        .detail-table tr:hover {
-            background: #f8f9fa;
-        }
-
-        /* Badge de Status */
-        .status-badge {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            font-weight: 600;
-        }
-
-        .status-excellent { background: #d4edda; color: #155724; }
-        .status-good { background: #d1ecf1; color: #0c5460; }
-        .status-warning { background: #fff3cd; color: #856404; }
-        .status-critical { background: #f8d7da; color: #721c24; }
-
-        /* Visibilidade de Tabs */
-        .view-content {
-            display: none;
-        }
-
-        .view-content.active {
-            display: block;
-        }
-
-        /* Responsividade */
         @media (max-width: 768px) {
-            .charts-grid-2col {
+            .kpi-cards {
                 grid-template-columns: 1fr;
             }
-
-            .current-metrics {
-                grid-template-columns: 1fr;
+            .filters-row {
+                flex-direction: column;
             }
-
-            .filters-grid {
-                grid-template-columns: 1fr;
+            .filter-group {
+                width: 100%;
+            }
+            .view-controls {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .filter-buttons {
+                width: 100%;
+                justify-content: center;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Loading Overlay -->
+    <div id="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+
     <div class="kpi-container">
         <!-- Header -->
         <div class="page-header">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
                 <div>
-                    <h1>📊 Painel de KPIs</h1>
-                    <p>Acompanhamento evolutivo de Demanda e Reabastecimento</p>
+                    <h1>Painel de KPIs</h1>
+                    <p>Acompanhamento de Ruptura, Cobertura, WMAPE e BIAS</p>
                 </div>
                 <div style="display: flex; gap: 10px;">
-                    <a href="/menu" style="background: rgba(255,255,255,0.2); color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s; font-size: 0.9em;">
-                        🏠 Menu Principal
-                    </a>
-                    <a href="/" style="background: rgba(255,255,255,0.2); color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s; font-size: 0.9em;">
-                        📈 Demanda
+                    <a href="/menu" style="background: rgba(255,255,255,0.2); color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.9em;">
+                        Menu Principal
                     </a>
                 </div>
             </div>
@@ -386,263 +476,194 @@
 
         <!-- Filtros -->
         <div class="filters-section">
-            <div class="filters-grid">
-                <div class="filter-group">
-                    <label>Loja</label>
-                    <div class="multi-select-container" data-id="filter-loja"></div>
-                </div>
-
-                <div class="filter-group">
-                    <label>Produto</label>
-                    <div class="multi-select-container" data-id="filter-produto"></div>
-                </div>
-
-                <div class="filter-group">
-                    <label>Categoria</label>
-                    <div class="multi-select-container" data-id="filter-categoria"></div>
-                </div>
-
+            <div class="filters-row">
                 <div class="filter-group">
                     <label>Fornecedor</label>
-                    <div class="multi-select-container" data-id="filter-fornecedor"></div>
+                    <div id="filter-fornecedor"></div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Categoria (Linha 1)</label>
+                    <div id="filter-categoria"></div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Linha 3</label>
+                    <div id="filter-linha3"></div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Filial</label>
+                    <div id="filter-filial"></div>
+                </div>
+
+                <div class="filter-buttons">
+                    <button class="btn btn-secondary" onclick="limparFiltros()">Limpar</button>
+                    <button class="btn btn-primary" onclick="aplicarFiltros()">Aplicar Filtros</button>
                 </div>
             </div>
 
-            <div class="filter-actions">
-                <button class="btn btn-secondary" onclick="limparFiltros()">Limpar Filtros</button>
-                <button class="btn btn-primary" onclick="aplicarFiltros()">Aplicar Filtros</button>
-            </div>
-        </div>
+            <div class="view-controls">
+                <div class="control-group">
+                    <label>Visao Temporal:</label>
+                    <div class="radio-group">
+                        <input type="radio" name="visao-temporal" id="visao-mensal" value="mensal" checked>
+                        <label for="visao-mensal">Mensal (12m)</label>
 
-        <!-- Tabs de Visão Temporal -->
-        <div class="view-tabs">
-            <button class="view-tab active" onclick="mudarVisao('mensal')">📅 Visão Mensal (12-24 meses)</button>
-            <button class="view-tab" onclick="mudarVisao('semanal')">📆 Visão Semanal (6-12 meses)</button>
-        </div>
+                        <input type="radio" name="visao-temporal" id="visao-semanal" value="semanal">
+                        <label for="visao-semanal">Semanal (6m)</label>
 
-        <!-- SEÇÃO 1: KPIs de Demanda -->
-        <div class="kpi-section">
-            <div class="kpi-section-header">
-                <div class="kpi-section-icon">📈</div>
-                <div class="kpi-section-title">
-                    <h2>KPIs de Acurácia de Demanda</h2>
-                    <p>Métricas de precisão das previsões: WMAPE e BIAS</p>
-                </div>
-            </div>
-
-            <!-- Métricas Atuais - Demanda -->
-            <div class="current-metrics">
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span class="metric-label">WMAPE Médio</span>
-                        <span class="metric-trend trend-down" id="wmape-trend">↓ 2.3%</span>
-                    </div>
-                    <div class="metric-value" id="wmape-atual">-</div>
-                    <div class="metric-subtitle">Últimos 30 dias</div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span class="metric-label">BIAS Médio</span>
-                        <span class="metric-trend trend-stable" id="bias-trend">→ 0.1%</span>
-                    </div>
-                    <div class="metric-value" id="bias-atual">-</div>
-                    <div class="metric-subtitle">Últimos 30 dias</div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span class="metric-label">Previsões Excelentes</span>
-                        <span class="metric-trend trend-up" id="excelentes-trend">↑ 5.2%</span>
-                    </div>
-                    <div class="metric-value" id="previsoes-excelentes">-</div>
-                    <div class="metric-subtitle">WMAPE < 10%</div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span class="metric-label">SKUs Analisados</span>
-                        <span class="metric-trend trend-stable" id="skus-trend">→</span>
-                    </div>
-                    <div class="metric-value" id="total-skus">-</div>
-                    <div class="metric-subtitle">Período selecionado</div>
-                </div>
-            </div>
-
-            <!-- Gráficos - Demanda -->
-            <div id="demanda-mensal" class="view-content active">
-                <div class="charts-grid charts-grid-2col">
-                    <div>
-                        <h3 class="chart-title">Evolução WMAPE - Mensal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-wmape-mensal"></canvas>
-                        </div>
-                    </div>
-                    <div>
-                        <h3 class="chart-title">Evolução BIAS - Mensal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-bias-mensal"></canvas>
-                        </div>
+                        <input type="radio" name="visao-temporal" id="visao-diario" value="diario">
+                        <label for="visao-diario">Diario (30d)</label>
                     </div>
                 </div>
 
-                <div class="charts-grid">
-                    <div>
-                        <h3 class="chart-title">Distribuição de Classificação - WMAPE</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-classificacao-wmape"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                <div class="control-group">
+                    <label>Agregacao:</label>
+                    <div class="radio-group">
+                        <input type="radio" name="agregacao" id="agreg-geral" value="geral" checked>
+                        <label for="agreg-geral">Geral</label>
 
-            <div id="demanda-semanal" class="view-content">
-                <div class="charts-grid charts-grid-2col">
-                    <div>
-                        <h3 class="chart-title">Evolução WMAPE - Semanal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-wmape-semanal"></canvas>
-                        </div>
-                    </div>
-                    <div>
-                        <h3 class="chart-title">Evolução BIAS - Semanal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-bias-semanal"></canvas>
-                        </div>
+                        <input type="radio" name="agregacao" id="agreg-fornecedor" value="fornecedor">
+                        <label for="agreg-fornecedor">Fornecedor</label>
+
+                        <input type="radio" name="agregacao" id="agreg-linha" value="linha">
+                        <label for="agreg-linha">Linha</label>
+
+                        <input type="radio" name="agregacao" id="agreg-filial" value="filial">
+                        <label for="agreg-filial">Filial</label>
+
+                        <input type="radio" name="agregacao" id="agreg-item" value="item">
+                        <label for="agreg-item">Item</label>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- SEÇÃO 2: KPIs de Gestão de Reabastecimento -->
-        <div class="kpi-section">
-            <div class="kpi-section-header">
-                <div class="kpi-section-icon">📦</div>
-                <div class="kpi-section-title">
-                    <h2>KPIs de Gestão de Reabastecimento</h2>
-                    <p>Métricas operacionais: Rupturas e Cobertura de Estoque</p>
+        <!-- Cards de KPI -->
+        <div class="kpi-cards">
+            <div class="kpi-card ruptura">
+                <div class="kpi-header">
+                    <span class="kpi-label">Ruptura</span>
+                    <span class="kpi-badge badge-cinza" id="kpi-ruptura-badge">-</span>
+                </div>
+                <div class="kpi-valor" id="kpi-ruptura-valor">-</div>
+                <div class="kpi-tendencia" id="kpi-ruptura-tendencia">-</div>
+            </div>
+
+            <div class="kpi-card cobertura">
+                <div class="kpi-header">
+                    <span class="kpi-label">Cobertura</span>
+                    <span class="kpi-badge badge-cinza" id="kpi-cobertura-badge">Meta: 90d</span>
+                </div>
+                <div class="kpi-valor" id="kpi-cobertura-valor">-</div>
+                <div class="kpi-tendencia" id="kpi-cobertura-tendencia">-</div>
+            </div>
+
+            <div class="kpi-card wmape">
+                <div class="kpi-header">
+                    <span class="kpi-label">WMAPE</span>
+                    <span class="kpi-badge badge-cinza" id="kpi-wmape-badge">-</span>
+                </div>
+                <div class="kpi-valor" id="kpi-wmape-valor">-</div>
+                <div class="kpi-tendencia" id="kpi-wmape-tendencia">-</div>
+            </div>
+
+            <div class="kpi-card bias">
+                <div class="kpi-header">
+                    <span class="kpi-label">BIAS</span>
+                    <span class="kpi-badge badge-cinza" id="kpi-bias-badge">-</span>
+                </div>
+                <div class="kpi-valor" id="kpi-bias-valor">-</div>
+                <div class="kpi-tendencia" id="kpi-bias-tendencia">-</div>
+            </div>
+        </div>
+
+        <!-- Graficos -->
+        <div class="charts-section" id="graficos-container">
+            <div class="chart-card">
+                <div class="chart-title">
+                    <span class="icon ruptura"></span>
+                    Evolucao da Ruptura
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-ruptura"></canvas>
                 </div>
             </div>
 
-            <!-- Métricas Atuais - Reabastecimento -->
-            <div class="current-metrics">
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span class="metric-label">Taxa de Ruptura</span>
-                        <span class="metric-trend trend-down" id="ruptura-trend">↓ 1.2%</span>
-                    </div>
-                    <div class="metric-value" id="taxa-ruptura">-</div>
-                    <div class="metric-subtitle">Últimos 30 dias</div>
+            <div class="chart-card">
+                <div class="chart-title">
+                    <span class="icon cobertura"></span>
+                    Evolucao da Cobertura
                 </div>
-
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span class="metric-label">Cobertura Média</span>
-                        <span class="metric-trend trend-up" id="cobertura-trend">↑ 0.5 dias</span>
-                    </div>
-                    <div class="metric-value" id="cobertura-media">-</div>
-                    <div class="metric-subtitle">Dias de estoque</div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span class="metric-label">Nível de Serviço</span>
-                        <span class="metric-trend trend-up" id="servico-trend">↑ 2.1%</span>
-                    </div>
-                    <div class="metric-value" id="nivel-servico">-</div>
-                    <div class="metric-subtitle">% Atendimento</div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-card-header">
-                        <span class="metric-label">SKUs Críticos</span>
-                        <span class="metric-trend trend-down" id="criticos-trend">↓ 3 SKUs</span>
-                    </div>
-                    <div class="metric-value" id="skus-criticos">-</div>
-                    <div class="metric-subtitle">Ruptura > 20%</div>
+                <div class="chart-container">
+                    <canvas id="chart-cobertura"></canvas>
                 </div>
             </div>
 
-            <!-- Gráficos - Reabastecimento -->
-            <div id="reabastecimento-mensal" class="view-content active">
-                <div class="charts-grid charts-grid-2col">
-                    <div>
-                        <h3 class="chart-title">Taxa de Ruptura - Mensal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-ruptura-mensal"></canvas>
-                        </div>
-                    </div>
-                    <div>
-                        <h3 class="chart-title">Cobertura de Estoque - Mensal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-cobertura-mensal"></canvas>
-                        </div>
-                    </div>
+            <div class="chart-card">
+                <div class="chart-title">
+                    <span class="icon wmape"></span>
+                    Evolucao do WMAPE
                 </div>
-
-                <div class="charts-grid">
-                    <div>
-                        <h3 class="chart-title">Nível de Serviço - Mensal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-servico-mensal"></canvas>
-                        </div>
-                    </div>
+                <div class="chart-container">
+                    <canvas id="chart-wmape"></canvas>
                 </div>
             </div>
 
-            <div id="reabastecimento-semanal" class="view-content">
-                <div class="charts-grid charts-grid-2col">
-                    <div>
-                        <h3 class="chart-title">Taxa de Ruptura - Semanal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-ruptura-semanal"></canvas>
-                        </div>
-                    </div>
-                    <div>
-                        <h3 class="chart-title">Cobertura de Estoque - Semanal</h3>
-                        <div class="chart-container">
-                            <canvas id="chart-cobertura-semanal"></canvas>
-                        </div>
-                    </div>
+            <div class="chart-card">
+                <div class="chart-title">
+                    <span class="icon bias"></span>
+                    Evolucao do BIAS
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-bias"></canvas>
                 </div>
             </div>
         </div>
 
-        <!-- Tabela de Top/Bottom Performers -->
-        <div class="kpi-section">
-            <div class="kpi-section-header">
-                <div class="kpi-section-icon">🏆</div>
-                <div class="kpi-section-title">
-                    <h2>Top & Bottom Performers</h2>
-                    <p>Melhores e piores desempenhos por SKU</p>
-                </div>
+        <!-- Container para graficos de item (oculto por padrao) -->
+        <div id="graficos-item-container" style="display: none;">
+            <!-- Sera preenchido dinamicamente quando agregacao = item -->
+        </div>
+
+        <!-- Ranking -->
+        <div class="ranking-section">
+            <div class="ranking-header">
+                <div class="ranking-title">Ranking por Agregacao</div>
             </div>
 
-            <table class="detail-table">
+            <table class="ranking-table">
                 <thead>
                     <tr>
-                        <th>SKU</th>
-                        <th>Descrição</th>
-                        <th>Loja</th>
-                        <th>WMAPE</th>
-                        <th>BIAS</th>
-                        <th>Ruptura</th>
-                        <th>Cobertura</th>
-                        <th>Status</th>
+                        <th class="sortable" data-sort="identificador">Identificador <span class="sort-icon">&#8597;</span></th>
+                        <th>Descricao</th>
+                        <th class="sortable" data-sort="ruptura">Ruptura <span class="sort-icon">&#8597;</span></th>
+                        <th class="sortable" data-sort="cobertura">Cobertura (dias) <span class="sort-icon">&#8597;</span></th>
+                        <th class="sortable" data-sort="wmape">WMAPE <span class="sort-icon">&#8597;</span></th>
+                        <th class="sortable" data-sort="bias">BIAS <span class="sort-icon">&#8597;</span></th>
+                        <th>Total SKUs</th>
+                        <th>SKUs Ruptura</th>
                     </tr>
                 </thead>
-                <tbody id="performers-table">
+                <tbody id="ranking-tbody">
                     <tr>
-                        <td colspan="8" class="loading">
-                            <div class="loading-spinner"></div>
+                        <td colspan="8" class="text-center text-muted py-4">
                             Carregando dados...
                         </td>
                     </tr>
                 </tbody>
             </table>
+
+            <div class="pagination">
+                <button id="btn-pagina-anterior" onclick="paginaAnterior()" disabled>Anterior</button>
+                <span id="paginacao-info">-</span>
+                <button id="btn-pagina-proxima" onclick="proximaPagina()">Proximo</button>
+            </div>
         </div>
     </div>
 
+    <script src="{{ url_for('static', filename='js/multi-select.js') }}"></script>
     <script src="{{ url_for('static', filename='js/kpis.js') }}"></script>
 </body>
 </html>

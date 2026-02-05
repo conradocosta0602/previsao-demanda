@@ -1,8 +1,14 @@
-# Sistema de Demanda e Reabastecimento v5.3
+# Sistema de Demanda e Reabastecimento v5.6
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v5.3 - Revisao do Modelo de Calculo (Fev/2026):**
+**Novidades v5.6 - Demanda Pre-Calculada e Validacao (Fev/2026):**
+- **Demanda Pre-Calculada**: Cronjob diario (05:00) calcula demanda para todos os itens, garantindo integridade entre Tela de Demanda e Pedido Fornecedor
+- **Sistema de Validacao de Conformidade**: Checklist automatico verifica se calculos seguem a metodologia documentada
+- **22.656 registros** pre-calculados para 25 fornecedores ativos
+- **APIs de Gerenciamento**: Endpoints para recalculo manual, ajustes e consultas
+
+**Novidades v5.3 - Revisao do Modelo de Calculo:**
 - **Ativacao dos 6 Metodos Estatisticos**: SMA, WMA, EMA, Tendencia, Sazonal e TSB agora aplicados corretamente
 - **Sazonalidade como Multiplicador**: Fatores sazonais (0.5 a 2.0) aplicados na formula de previsao
 - **Deteccao de Tendencia para Demanda Intermitente**: TSB com analise de queda/crescimento
@@ -80,6 +86,8 @@ Novo modulo que integra previsao de demanda com calculo de pedidos:
 | **Padrao de Compra** | Centralizacao de pedidos por destino | **Novo v5.1** |
 | **Transferencias entre Lojas** | Balanceamento automatico de estoque | **Novo v5.0** |
 | **Parametros Fornecedor** | Lead Time, Ciclo, Faturamento Minimo | **Novo v5.0** |
+| **Demanda Pre-Calculada** | Cronjob diario para integridade entre telas | **Novo v5.6** |
+| **Validacao Conformidade** | Checklist automatico de metodologia | **Novo v5.6** |
 | Pedido Manual | Entrada manual de pedidos | Ativo |
 
 ---
@@ -195,6 +203,12 @@ Todas as telas do sistema estao disponiveis nas seguintes URLs (servidor rodando
 | `/api/demanda_validada/salvar` | POST | Salva demanda validada |
 | `/api/demanda_validada/listar` | GET | Lista demandas validadas |
 | `/api/pedido_planejado` | POST | Gera pedido planejado com demanda validada |
+| `/api/demanda_job/status` | GET | Status do job de calculo de demanda |
+| `/api/demanda_job/recalcular` | POST | Inicia recalculo de demanda |
+| `/api/demanda_job/ajustar` | POST | Registra ajuste manual de demanda |
+| `/api/demanda_job/consultar` | GET | Consulta demanda pre-calculada |
+| `/api/validacao/executar-checklist` | POST | Executa checklist de conformidade |
+| `/api/validacao/dashboard` | GET | Dashboard de metricas de conformidade |
 | `/api/fornecedores` | GET | Lista fornecedores cadastrados |
 | `/api/lojas` | GET | Lista lojas cadastradas |
 | `/api/linhas` | GET | Lista linhas de produtos |
@@ -489,14 +503,21 @@ previsao-demanda/
 |   |-- ml_selector.py                  # Machine Learning (Random Forest)
 |   |-- seasonality_detector.py         # Deteccao de sazonalidade
 |   |-- outlier_detector.py             # Deteccao de outliers
-|   |-- pedido_fornecedor_integrado.py  # NOVO - Calculo de pedidos ABC
+|   |-- pedido_fornecedor_integrado.py  # Calculo de pedidos ABC
+|   |-- demand_calculator.py            # Calculador de demanda unificado
+|   |-- validador_conformidade.py       # NOVO v5.6 - Validador de metodologia
 |   |-- auto_logger.py                  # Logging automatico
-|   |-- padrao_compra.py                # Logica de Padrao de Compra (centralizacao)
+|   |-- padrao_compra.py                # Logica de Padrao de Compra
 |   |-- smart_alerts.py                 # Alertas inteligentes
 |   |-- event_manager.py                # Gerenciador de eventos
 |   |-- scenario_simulator.py           # Simulador de cenarios
 |   |-- replenishment_calculator.py     # Calculos de reabastecimento
 |   +-- flow_processor.py               # Processador de fluxos
+|
+|-- jobs/                               # Jobs agendados
+|   |-- calcular_demanda_diaria.py      # NOVO v5.6 - Cronjob de demanda
+|   |-- checklist_diario.py             # NOVO v5.6 - Checklist de conformidade
+|   +-- configuracao_jobs.py            # Configuracao de agendamentos
 |
 |-- templates/                          # Templates HTML
 |   |-- menu.html                       # Menu principal
@@ -514,6 +535,8 @@ previsao-demanda/
 |
 |-- database/
 |   |-- migration_v7_padrao_compra.sql  # Tabelas do Padrao de Compra
+|   |-- migration_v10_auditoria.sql     # NOVO v5.6 - Tabelas de auditoria
+|   |-- migration_v12_demanda_pre.sql   # NOVO v5.6 - Demanda pre-calculada
 |   |-- importar_padrao_compra.py       # Importacao de dados de centralizacao
 |   +-- ...                             # Outras migrations e importadores
 |
@@ -593,7 +616,61 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v5.3 (Fevereiro 2026) - ATUAL
+### v5.6 (Fevereiro 2026) - ATUAL
+
+**Sistema de Demanda Pre-Calculada:**
+
+Esta versao resolve o problema de inconsistencia entre a Tela de Demanda e a Tela de Pedido Fornecedor, que utilizavam metodos de calculo diferentes.
+
+**1. Cronjob de Calculo Diario (05:00):**
+- Processa todos os itens de todos os fornecedores ativos
+- Aplica os 6 metodos estatisticos (SMA, WMA, EMA, Tendencia, Sazonal, TSB)
+- Aplica limitador V11 (-40% a +50% vs ano anterior)
+- Aplica fatores sazonais (0.5 a 2.0)
+- Salva na tabela `demanda_pre_calculada`
+- Processamento paralelo com ThreadPoolExecutor (4 workers)
+
+**2. Resultado da Primeira Execucao:**
+- 25 fornecedores processados
+- 2.696 itens calculados
+- 22.656 registros salvos (12 meses x item)
+- 0 erros
+- Tempo: 55 minutos
+
+**3. APIs de Gerenciamento:**
+- `/api/demanda_job/status` - Status e estatisticas
+- `/api/demanda_job/recalcular` - Recalculo manual (por fornecedor ou todos)
+- `/api/demanda_job/ajustar` - Ajustes manuais de demanda
+- `/api/demanda_job/consultar` - Consulta demanda pre-calculada
+
+**4. Sistema de Validacao de Conformidade:**
+- Checklist diario automatico (06:00)
+- 10 verificacoes de integridade da metodologia
+- Alertas por email em caso de desvios
+- Dashboard de metricas de qualidade
+- Auditoria completa de todas as execucoes
+
+**Arquivos Criados:**
+- `jobs/calcular_demanda_diaria.py` - Cronjob principal
+- `database/migration_v12_demanda_pre_calculada.sql` - Tabelas
+- `app/blueprints/demanda_job.py` - APIs de gerenciamento
+- `app/utils/demanda_pre_calculada.py` - Funcoes utilitarias
+- `core/validador_conformidade.py` - Validador de metodologia
+- `jobs/checklist_diario.py` - Checklist automatico
+
+**Tabelas Criadas:**
+- `demanda_pre_calculada` - Demanda pre-calculada por item/mes
+- `demanda_pre_calculada_historico` - Historico de calculos
+- `demanda_calculo_execucao` - Log de execucoes do job
+- `auditoria_conformidade` - Log de validacoes
+- `auditoria_calculos` - Auditoria de calculos individuais
+
+**Documentacao:**
+- [REVISAO_MODELO_PREVISAO_2026.md - Secao 15](REVISAO_MODELO_PREVISAO_2026.md)
+
+---
+
+### v5.3 (Fevereiro 2026)
 
 **Revisao Completa do Modelo de Calculo de Previsao:**
 
@@ -616,7 +693,7 @@ Esta versao corrige problemas fundamentais no calculo de previsao que causavam s
 - Resolve inflacao de previsao quando dados futuros ja existem no banco
 
 **5. Saneamento de Rupturas com Limiar de 50%:**
-- Se cobertura de dados de estoque >= 50%: usa RupturaSanitizer (exclui rupturas reais)
+- Se cobertura de dados de estoque >= 50%: saneamento de rupturas ativo (exclui rupturas reais)
 - Se cobertura < 50%: normaliza demanda pelo total de dias do periodo
 - Distingue corretamente entre "ruptura" (estoque=0, venda=0) e "demanda zero real" (estoque>0, venda=0)
 
@@ -868,7 +945,7 @@ Para duvidas ou problemas:
 
 ---
 
-**Versao:** 5.3
+**Versao:** 5.6
 **Status:** Em Producao
 **Ultima Atualizacao:** Fevereiro 2026
 
