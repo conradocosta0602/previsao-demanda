@@ -10,6 +10,128 @@ from typing import Dict, List, Optional, Tuple
 from psycopg2.extras import RealDictCursor
 
 
+def precarregar_demanda_em_lote(
+    conn,
+    cod_produtos: List[str],
+    cnpj_fornecedor: str,
+    cod_empresas: List[int] = None,
+    ano: int = None,
+    mes: int = None
+) -> Dict:
+    """
+    Pre-carrega demanda de multiplos produtos em uma unica query.
+
+    Otimizacao de performance: em vez de N queries individuais,
+    faz uma unica query para todos os produtos.
+
+    Args:
+        conn: Conexao com o banco de dados
+        cod_produtos: Lista de codigos de produtos
+        cnpj_fornecedor: CNPJ do fornecedor
+        cod_empresas: Lista de codigos de empresas/lojas (None = consolidado)
+        ano: Ano do periodo (default: ano atual)
+        mes: Mes do periodo (default: mes atual)
+
+    Returns:
+        Dicionario com chave (cod_produto, cod_empresa) -> dados da demanda
+        cod_empresa = None para dados consolidados
+    """
+    if not cod_produtos:
+        return {}
+
+    if ano is None:
+        ano = datetime.now().year
+    if mes is None:
+        mes = datetime.now().month
+
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Converter codigos para string
+    cod_produtos_str = [str(c) for c in cod_produtos]
+    placeholders = ','.join(['%s'] * len(cod_produtos_str))
+
+    # Query para buscar todos os produtos de uma vez
+    if cod_empresas:
+        # Buscar por lojas especificas + consolidado (NULL)
+        cod_empresas_query = cod_empresas + [None]
+        emp_placeholders = ','.join(['%s' if e is not None else 'NULL' for e in cod_empresas_query])
+
+        query = f"""
+            SELECT *
+            FROM vw_demanda_efetiva
+            WHERE cod_produto IN ({placeholders})
+              AND cnpj_fornecedor = %s
+              AND ano = %s
+              AND mes = %s
+              AND (cod_empresa IN ({emp_placeholders}) OR cod_empresa IS NULL)
+        """
+        params = cod_produtos_str + [cnpj_fornecedor, ano, mes] + [e for e in cod_empresas if e is not None]
+    else:
+        # Buscar apenas consolidado (cod_empresa IS NULL)
+        query = f"""
+            SELECT *
+            FROM vw_demanda_efetiva
+            WHERE cod_produto IN ({placeholders})
+              AND cnpj_fornecedor = %s
+              AND ano = %s
+              AND mes = %s
+              AND cod_empresa IS NULL
+        """
+        params = cod_produtos_str + [cnpj_fornecedor, ano, mes]
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    cursor.close()
+
+    # Montar cache: (cod_produto, cod_empresa) -> dados
+    cache = {}
+    for row in rows:
+        key = (str(row['cod_produto']), row.get('cod_empresa'))
+        cache[key] = dict(row)
+
+    return cache
+
+
+def obter_demanda_do_cache(
+    cache: Dict,
+    cod_produto: str,
+    cod_empresa: int = None
+) -> Tuple[float, float, Dict]:
+    """
+    Obtem demanda do cache pre-carregado.
+
+    Args:
+        cache: Cache retornado por precarregar_demanda_em_lote()
+        cod_produto: Codigo do produto
+        cod_empresa: Codigo da empresa/loja (None = consolidado)
+
+    Returns:
+        Tupla (demanda_diaria, desvio_padrao, metadata)
+    """
+    key = (str(cod_produto), cod_empresa)
+    demanda = cache.get(key)
+
+    if demanda:
+        return (
+            float(demanda.get('demanda_diaria_base', 0) or 0),
+            float(demanda.get('desvio_padrao', 0) or 0),
+            {
+                'fonte': 'pre_calculada',
+                'metodo_usado': demanda.get('metodo_usado', 'auto'),
+                'fator_sazonal': float(demanda.get('fator_sazonal', 1.0) or 1.0),
+                'fator_tendencia_yoy': float(demanda.get('fator_tendencia_yoy', 1.0) or 1.0),
+                'classificacao_tendencia': demanda.get('classificacao_tendencia', 'nao_calculado'),
+                'limitador_aplicado': demanda.get('limitador_aplicado', False),
+                'tem_ajuste_manual': demanda.get('tem_ajuste_manual', False),
+                'data_calculo': demanda.get('data_calculo'),
+                'demanda_mensal': float(demanda.get('demanda_efetiva', 0) or 0),
+                'variacao_vs_aa': demanda.get('variacao_vs_aa')
+            }
+        )
+
+    return (0, 0, {'fonte': 'sem_dados', 'metodo_usado': 'sem_historico'})
+
+
 def buscar_demanda_pre_calculada(
     conn,
     cod_produto: str,

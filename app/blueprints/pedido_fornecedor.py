@@ -12,7 +12,12 @@ import numpy as np
 from flask import Blueprint, render_template, request, jsonify, send_file, current_app
 
 from app.utils.db_connection import get_db_connection
-from app.utils.demanda_pre_calculada import obter_demanda_diaria_efetiva, verificar_dados_disponiveis
+from app.utils.demanda_pre_calculada import (
+    obter_demanda_diaria_efetiva,
+    verificar_dados_disponiveis,
+    precarregar_demanda_em_lote,
+    obter_demanda_do_cache
+)
 
 pedido_fornecedor_bp = Blueprint('pedido_fornecedor', __name__)
 
@@ -292,6 +297,22 @@ def api_pedido_fornecedor_integrado():
         processador.precarregar_historico_vendas(codigos_produtos, lojas_demanda)
         processador.precarregar_embalagens(codigos_produtos)
 
+        # PRE-CARREGAR DEMANDA EM LOTE (otimizacao: 1 query em vez de N queries)
+        # Agrupar produtos por CNPJ do fornecedor
+        cache_demanda_global = {}
+        cnpjs_unicos = df_produtos['codigo_fornecedor'].unique()
+        for cnpj_forn in cnpjs_unicos:
+            if cnpj_forn:
+                produtos_deste_fornecedor = df_produtos[df_produtos['codigo_fornecedor'] == cnpj_forn]['codigo'].tolist()
+                cache_demanda = precarregar_demanda_em_lote(
+                    conn,
+                    produtos_deste_fornecedor,
+                    cnpj_forn,
+                    cod_empresas=lojas_demanda if is_pedido_multiloja else None
+                )
+                cache_demanda_global.update(cache_demanda)
+        print(f"  [CACHE] Demanda pre-carregada: {len(cache_demanda_global)} registros")
+
         resultados = []
         itens_sem_historico = 0
         itens_sem_demanda = 0
@@ -311,12 +332,12 @@ def api_pedido_fornecedor_integrado():
                     for loja_cod in lojas_demanda:
                         loja_nome = mapa_nomes_lojas.get(loja_cod, f"Loja {loja_cod}")
 
-                        # PRIORIDADE 1: Usar demanda pre-calculada (garante integridade com Tela Demanda)
-                        demanda_diaria, desvio_padrao, metadata = obter_demanda_diaria_efetiva(
-                            conn, str(codigo), cnpj_forn, cod_empresa=loja_cod
+                        # PRIORIDADE 1: Usar demanda pre-calculada do CACHE (otimizado)
+                        demanda_diaria, desvio_padrao, metadata = obter_demanda_do_cache(
+                            cache_demanda_global, str(codigo), cod_empresa=loja_cod
                         )
 
-                        # FALLBACK: Se nao houver dados pre-calculados, calcular em tempo real
+                        # FALLBACK: Se nao houver no cache, calcular em tempo real
                         if metadata.get('fonte') == 'sem_dados':
                             historico_loja = processador.buscar_historico_vendas(codigo, loja_cod)
                             if historico_loja and len(historico_loja) >= 7:
@@ -378,13 +399,13 @@ def api_pedido_fornecedor_integrado():
 
                         resultados.append(resultado)
                 else:
-                    # PRIORIDADE 1: Usar demanda pre-calculada (garante integridade com Tela Demanda)
+                    # PRIORIDADE 1: Usar demanda pre-calculada do CACHE (otimizado)
                     # Para mono-loja, buscar consolidado (cod_empresa=None)
-                    demanda_diaria, desvio_padrao, metadata = obter_demanda_diaria_efetiva(
-                        conn, str(codigo), cnpj_forn, cod_empresa=None
+                    demanda_diaria, desvio_padrao, metadata = obter_demanda_do_cache(
+                        cache_demanda_global, str(codigo), cod_empresa=None
                     )
 
-                    # FALLBACK: Se nao houver dados pre-calculados, calcular em tempo real
+                    # FALLBACK: Se nao houver no cache, calcular em tempo real
                     if metadata.get('fonte') == 'sem_dados':
                         historico_total = []
                         for loja in lojas_demanda:
