@@ -74,12 +74,57 @@ def api_pedido_fornecedor_integrado():
         cod_empresa = dados.get('cod_empresa', 'TODAS')
         cobertura_dias = dados.get('cobertura_dias')
 
+        # Normalizar filtros de linha - converter array de 1 elemento para string
+        # IMPORTANTE: Trata casos onde JSON envia arrays onde esperamos string
+        def normalizar_filtro(filtro, valor_padrao='TODAS'):
+            # DEBUG: Mostrar o que está chegando
+            print(f"    [NORMALIZAR] Entrada: {filtro} (tipo={type(filtro).__name__})")
+
+            if filtro is None:
+                return valor_padrao
+
+            # Converter para string se for bytes
+            if isinstance(filtro, bytes):
+                filtro = filtro.decode('utf-8')
+
+            # Se for string, retornar como está
+            if isinstance(filtro, str):
+                return filtro
+
+            # Se for lista ou qualquer iterável (exceto string)
+            try:
+                # Forçar conversão para lista Python nativa
+                filtro_lista = list(filtro)
+                if len(filtro_lista) == 0:
+                    return valor_padrao
+                elif len(filtro_lista) == 1:
+                    # GARANTIR que é string, não outro tipo
+                    valor = filtro_lista[0]
+                    if valor is None:
+                        return valor_padrao
+                    return str(valor) if not isinstance(valor, str) else valor
+                else:
+                    # Converter cada elemento para string nativa Python
+                    return [str(v) if not isinstance(v, str) else v for v in filtro_lista]
+            except (TypeError, ValueError):
+                # Não é iterável, retornar como está
+                pass
+
+            return filtro
+
+        linha1_filtro = normalizar_filtro(linha1_filtro, 'TODAS')
+        linha3_filtro = normalizar_filtro(linha3_filtro, 'TODAS')
+
+        # DEBUG EXTRA: Verificar tipos APÓS normalização
+        print(f"    [POS-NORMALIZACAO] linha1_filtro: {linha1_filtro} (tipo={type(linha1_filtro).__name__})")
+        print(f"    [POS-NORMALIZACAO] linha3_filtro: {linha3_filtro} (tipo={type(linha3_filtro).__name__})")
+
         print(f"\n{'='*60}")
         print("PEDIDO FORNECEDOR INTEGRADO")
         print(f"{'='*60}")
         print(f"  Fornecedor: {fornecedor_filtro}")
-        print(f"  Linha 1: {linha1_filtro}")
-        print(f"  Linha 3: {linha3_filtro}")
+        print(f"  Linha 1: {linha1_filtro} (tipo: {type(linha1_filtro).__name__})")
+        print(f"  Linha 3: {linha3_filtro} (tipo: {type(linha3_filtro).__name__})")
         print(f"  Destino: {destino_tipo}")
         print(f"  Empresa: {cod_empresa}")
         print(f"  Cobertura: {'Automatica (ABC)' if cobertura_dias is None else f'{cobertura_dias} dias'}")
@@ -121,23 +166,31 @@ def api_pedido_fornecedor_integrado():
                 """
                 params_forn = []
 
+                # FILTRO LINHA1 para query de fornecedores
                 if linha1_filtro != 'TODAS':
-                    if isinstance(linha1_filtro, list):
+                    is_lista = isinstance(linha1_filtro, (list, tuple))
+                    if is_lista and len(linha1_filtro) > 1:
                         placeholders = ','.join(['%s'] * len(linha1_filtro))
                         query_fornecedores += f" AND categoria IN ({placeholders})"
-                        params_forn.extend(linha1_filtro)
+                        for v in linha1_filtro:
+                            params_forn.append(str(v) if not isinstance(v, str) else v)
                     else:
                         query_fornecedores += " AND categoria = %s"
-                        params_forn.append(linha1_filtro)
+                        valor = linha1_filtro[0] if is_lista else linha1_filtro
+                        params_forn.append(str(valor) if not isinstance(valor, str) else valor)
 
+                # FILTRO LINHA3 para query de fornecedores
                 if linha3_filtro != 'TODAS':
-                    if isinstance(linha3_filtro, list):
+                    is_lista = isinstance(linha3_filtro, (list, tuple))
+                    if is_lista and len(linha3_filtro) > 1:
                         placeholders = ','.join(['%s'] * len(linha3_filtro))
                         query_fornecedores += f" AND codigo_linha IN ({placeholders})"
-                        params_forn.extend(linha3_filtro)
+                        for v in linha3_filtro:
+                            params_forn.append(str(v) if not isinstance(v, str) else v)
                     else:
                         query_fornecedores += " AND codigo_linha = %s"
-                        params_forn.append(linha3_filtro)
+                        valor = linha3_filtro[0] if is_lista else linha3_filtro
+                        params_forn.append(str(valor) if not isinstance(valor, str) else valor)
 
                 query_fornecedores += " ORDER BY nome_fornecedor"
                 df_fornecedores = pd.read_sql(query_fornecedores, conn, params=params_forn if params_forn else None)
@@ -210,23 +263,42 @@ def api_pedido_fornecedor_integrado():
                 """
                 params = [nome_fornecedor]
 
+            # FILTRO LINHA1 (categoria) - com proteção contra arrays
             if linha1_filtro != 'TODAS':
-                if isinstance(linha1_filtro, list):
+                # DEBUG: mostrar estado do filtro antes de usar na query
+                is_lista = isinstance(linha1_filtro, (list, tuple))
+                print(f"      [QUERY] linha1_filtro: {linha1_filtro}, is_lista={is_lista}")
+
+                if is_lista and len(linha1_filtro) > 1:
+                    # Múltiplos valores: usar IN
                     placeholders = ','.join(['%s'] * len(linha1_filtro))
                     query_produtos += f" AND p.categoria IN ({placeholders})"
-                    params.extend(linha1_filtro)
+                    # Garantir que cada valor é string
+                    for v in linha1_filtro:
+                        params.append(str(v) if not isinstance(v, str) else v)
                 else:
+                    # Valor único: usar = com string simples
                     query_produtos += " AND p.categoria = %s"
-                    params.append(linha1_filtro)
+                    valor = linha1_filtro[0] if is_lista else linha1_filtro
+                    # GARANTIR que é string Python pura
+                    params.append(str(valor) if not isinstance(valor, str) else valor)
+                    print(f"      [QUERY] Adicionado param categoria: {params[-1]} (tipo={type(params[-1]).__name__})")
 
+            # FILTRO LINHA3 (codigo_linha) - com proteção contra arrays
             if linha3_filtro != 'TODAS':
-                if isinstance(linha3_filtro, list):
+                is_lista = isinstance(linha3_filtro, (list, tuple))
+                print(f"      [QUERY] linha3_filtro: {linha3_filtro}, is_lista={is_lista}")
+
+                if is_lista and len(linha3_filtro) > 1:
                     placeholders = ','.join(['%s'] * len(linha3_filtro))
                     query_produtos += f" AND p.codigo_linha IN ({placeholders})"
-                    params.extend(linha3_filtro)
+                    for v in linha3_filtro:
+                        params.append(str(v) if not isinstance(v, str) else v)
                 else:
                     query_produtos += " AND p.codigo_linha = %s"
-                    params.append(linha3_filtro)
+                    valor = linha3_filtro[0] if is_lista else linha3_filtro
+                    params.append(str(valor) if not isinstance(valor, str) else valor)
+                    print(f"      [QUERY] Adicionado param codigo_linha: {params[-1]} (tipo={type(params[-1]).__name__})")
 
             query_produtos += " ORDER BY p.cod_produto"
             df_forn = pd.read_sql(query_produtos, conn, params=params)

@@ -12,8 +12,30 @@ from flask import Blueprint, request, jsonify, send_file
 from psycopg2.extras import RealDictCursor
 
 from app.utils.db_connection import get_db_connection
+from app.utils.demanda_pre_calculada import calcular_proporcoes_vendas_por_loja
+from decimal import Decimal
 
 pedido_planejado_bp = Blueprint('pedido_planejado', __name__)
+
+
+def to_float(value, default=0.0):
+    """Converte qualquer valor numerico (incluindo Decimal) para float."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def to_int(value, default=0):
+    """Converte qualquer valor numerico (incluindo Decimal) para int."""
+    if value is None:
+        return default
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
 
 
 @pedido_planejado_bp.route('/api/pedido_planejado', methods=['POST'])
@@ -41,6 +63,28 @@ def api_pedido_planejado():
         linha3_filtro = dados.get('linha3', 'TODAS')
         destino_tipo = dados.get('destino_tipo', 'LOJA')
         cod_empresa = dados.get('cod_empresa', 'TODAS')
+
+        # Normalizar filtros - converter arrays de 1 elemento para string
+        def normalizar_filtro(filtro, valor_padrao='TODAS'):
+            if filtro is None:
+                return valor_padrao
+            if isinstance(filtro, str):
+                return filtro
+            try:
+                filtro_lista = list(filtro)
+                if len(filtro_lista) == 0:
+                    return valor_padrao
+                elif len(filtro_lista) == 1:
+                    valor = filtro_lista[0]
+                    return str(valor) if valor is not None else valor_padrao
+                else:
+                    return [str(v) for v in filtro_lista]
+            except (TypeError, ValueError):
+                pass
+            return filtro
+
+        linha1_filtro = normalizar_filtro(linha1_filtro, 'TODAS')
+        linha3_filtro = normalizar_filtro(linha3_filtro, 'TODAS')
 
         # Parametros especificos do pedido planejado
         periodo_inicio = dados.get('periodo_inicio')
@@ -92,6 +136,45 @@ def api_pedido_planejado():
         print(f"  Lojas: {lojas_selecionadas}")
         print(f"  Dias do periodo: {dias_periodo}")
 
+        # =================================================================
+        # PRE-CALCULAR PROPORCOES DE VENDAS POR LOJA (RATEIO PROPORCIONAL)
+        # =================================================================
+        # Buscar todos os produtos para calcular proporcoes
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        query_todos_produtos = """
+            SELECT DISTINCT p.cod_produto as codigo
+            FROM cadastro_produtos_completo p
+            WHERE p.ativo = TRUE
+        """
+        params_produtos = []
+
+        if fornecedor_filtro != 'TODOS':
+            if isinstance(fornecedor_filtro, list):
+                placeholders = ','.join(['%s'] * len(fornecedor_filtro))
+                query_todos_produtos += f" AND p.nome_fornecedor IN ({placeholders})"
+                params_produtos.extend(fornecedor_filtro)
+            else:
+                query_todos_produtos += " AND p.nome_fornecedor = %s"
+                params_produtos.append(fornecedor_filtro)
+
+        cursor.execute(query_todos_produtos, params_produtos if params_produtos else None)
+        todos_produtos = [str(r['codigo']) for r in cursor.fetchall()]
+        cursor.close()
+
+        # Calcular proporcoes de vendas para cada produto/loja
+        proporcoes_vendas = {}
+        if len(lojas_selecionadas) > 1 and todos_produtos:
+            print(f"  Calculando proporcoes de vendas para {len(todos_produtos)} produtos...")
+            proporcoes_vendas = calcular_proporcoes_vendas_por_loja(
+                conn,
+                todos_produtos,
+                lojas_selecionadas,
+                dias_historico=365
+            )
+            print(f"  Proporcoes calculadas: {len(proporcoes_vendas)} combinacoes produto/loja")
+
+        num_lojas = len(lojas_selecionadas)
+
         # Processar por loja
         processador = PedidoFornecedorIntegrado(conn)
         resultados = []
@@ -121,8 +204,8 @@ def api_pedido_planejado():
 
                     for r in cursor.fetchall():
                         demanda_validada[str(r['cod_produto'])] = {
-                            'demanda_diaria': float(r['demanda_diaria'] or 0),
-                            'demanda_total_periodo': float(r['demanda_total_periodo'] or 0)
+                            'demanda_diaria': to_float(r['demanda_diaria']),
+                            'demanda_total_periodo': to_float(r['demanda_total_periodo'])
                         }
                 cursor.close()
 
@@ -155,12 +238,26 @@ def api_pedido_planejado():
                     params.append(fornecedor_filtro)
 
             if linha1_filtro != 'TODAS':
-                query_produtos += " AND p.categoria = %s"
-                params.append(linha1_filtro)
+                is_lista = isinstance(linha1_filtro, (list, tuple))
+                if is_lista and len(linha1_filtro) > 1:
+                    placeholders = ','.join(['%s'] * len(linha1_filtro))
+                    query_produtos += f" AND p.categoria IN ({placeholders})"
+                    params.extend([str(v) for v in linha1_filtro])
+                else:
+                    query_produtos += " AND p.categoria = %s"
+                    valor = linha1_filtro[0] if is_lista else linha1_filtro
+                    params.append(str(valor) if not isinstance(valor, str) else valor)
 
             if linha3_filtro != 'TODAS':
-                query_produtos += " AND p.codigo_linha = %s"
-                params.append(linha3_filtro)
+                is_lista = isinstance(linha3_filtro, (list, tuple))
+                if is_lista and len(linha3_filtro) > 1:
+                    placeholders = ','.join(['%s'] * len(linha3_filtro))
+                    query_produtos += f" AND p.codigo_linha IN ({placeholders})"
+                    params.extend([str(v) for v in linha3_filtro])
+                else:
+                    query_produtos += " AND p.codigo_linha = %s"
+                    valor = linha3_filtro[0] if is_lista else linha3_filtro
+                    params.append(str(valor) if not isinstance(valor, str) else valor)
 
             df_produtos = pd.read_sql(query_produtos, conn, params=params)
 
@@ -173,19 +270,70 @@ def api_pedido_planejado():
 
             for _, row in df_produtos.iterrows():
                 codigo = str(row['codigo'])
-                lead_time = int(row.get('lead_time_dias', 15))
+                lead_time = to_int(row.get('lead_time_dias', 15), default=15)
 
                 # Verificar se tem demanda validada
                 origem_demanda = 'previsao'
+                demanda_diaria = 0
+                demanda_periodo = 0
+                proporcao_loja = 1.0  # Default: 100% se loja unica
+
                 if codigo in demanda_validada:
-                    demanda_diaria = demanda_validada[codigo]['demanda_diaria']
-                    demanda_periodo = demanda_validada[codigo]['demanda_total_periodo']
+                    demanda_diaria = to_float(demanda_validada[codigo]['demanda_diaria'])
+                    demanda_periodo = to_float(demanda_validada[codigo]['demanda_total_periodo'])
                     origem_demanda = 'validada'
                     itens_com_demanda_validada += 1
-                else:
-                    # Usar historico como fallback
-                    demanda_diaria = 0
-                    demanda_periodo = 0
+
+                # FALLBACK: Usar demanda pre-calculada se nao houver validada
+                if demanda_diaria <= 0:
+                    cursor = conn.cursor(cursor_factory=RealDictCursor)
+                    cursor.execute("""
+                        SELECT demanda_diaria_base
+                        FROM demanda_pre_calculada
+                        WHERE cod_produto = %s
+                          AND cnpj_fornecedor = %s
+                        ORDER BY data_calculo DESC
+                        LIMIT 1
+                    """, [codigo, row.get('cnpj_fornecedor', '')])
+                    demanda_pre = cursor.fetchone()
+                    cursor.close()
+
+                    if demanda_pre:
+                        demanda_diaria_consolidada = to_float(demanda_pre['demanda_diaria_base'])
+
+                        # =================================================================
+                        # APLICAR RATEIO PROPORCIONAL: Distribuir demanda por loja
+                        # =================================================================
+                        # Se ha multiplas lojas, aplicar proporcao baseada no historico de vendas
+                        if num_lojas > 1:
+                            # Obter proporcao da loja (fallback: divisao uniforme)
+                            proporcao_loja = proporcoes_vendas.get((codigo, cod_loja), 1.0 / num_lojas)
+                            demanda_diaria = demanda_diaria_consolidada * proporcao_loja
+                            origem_demanda = f'pre_calculada_rateio_{proporcao_loja:.2%}'
+                        else:
+                            # Loja unica: usa demanda completa
+                            demanda_diaria = demanda_diaria_consolidada
+                            origem_demanda = 'pre_calculada'
+
+                        demanda_periodo = demanda_diaria * dias_periodo
+
+                # FALLBACK 2: Usar historico de vendas como ultimo recurso
+                if demanda_diaria <= 0:
+                    cursor = conn.cursor(cursor_factory=RealDictCursor)
+                    cursor.execute("""
+                        SELECT COALESCE(SUM(qtd_venda), 0) / NULLIF(COUNT(DISTINCT data), 0) as media_diaria
+                        FROM historico_vendas_diario
+                        WHERE codigo = %s
+                          AND cod_empresa = %s
+                          AND data >= CURRENT_DATE - INTERVAL '90 days'
+                    """, [int(codigo), cod_loja])
+                    hist = cursor.fetchone()
+                    cursor.close()
+
+                    if hist and hist['media_diaria']:
+                        demanda_diaria = to_float(hist['media_diaria'])
+                        demanda_periodo = demanda_diaria * dias_periodo
+                        origem_demanda = 'historico'
 
                 if demanda_diaria <= 0 and demanda_periodo <= 0:
                     continue
@@ -200,26 +348,30 @@ def api_pedido_planejado():
                 # Buscar estoque atual e CUE
                 cursor = conn.cursor(cursor_factory=RealDictCursor)
                 cursor.execute("""
-                    SELECT estoque_disponivel, estoque_transito, preco_custo, cue
-                    FROM estoque_atual
+                    SELECT
+                        COALESCE(estoque, 0) as estoque_disponivel,
+                        COALESCE(qtd_pendente, 0) + COALESCE(qtd_pend_transf, 0) as estoque_transito,
+                        COALESCE(cue, 0) as cue
+                    FROM estoque_posicao_atual
                     WHERE codigo = %s AND cod_empresa = %s
                 """, [int(codigo), cod_loja])
                 estoque_info = cursor.fetchone()
                 cursor.close()
 
-                estoque_atual = estoque_info['estoque_disponivel'] if estoque_info else 0
-                estoque_transito = estoque_info['estoque_transito'] if estoque_info else 0
-                cue = estoque_info['cue'] if estoque_info and estoque_info['cue'] else (estoque_info['preco_custo'] if estoque_info else 0)
+                # Converter todos os valores para float/int para evitar erros com Decimal
+                estoque_atual = to_float(estoque_info['estoque_disponivel']) if estoque_info else 0.0
+                estoque_transito = to_float(estoque_info['estoque_transito']) if estoque_info else 0.0
+                cue = to_float(estoque_info['cue']) if estoque_info else 0.0
 
                 # Calcular quantidade do pedido
-                quantidade_pedido = int(demanda_periodo)
+                quantidade_pedido = to_int(demanda_periodo)
 
                 # Calcular valor
-                valor_pedido = quantidade_pedido * (cue or 0)
+                valor_pedido = quantidade_pedido * cue
 
-                # Calcular cobertura
-                cobertura_atual = (estoque_atual / demanda_diaria) if demanda_diaria > 0 else 999
-                cobertura_com_transito = ((estoque_atual + estoque_transito) / demanda_diaria) if demanda_diaria > 0 else 999
+                # Calcular cobertura (demanda_diaria ja e float apos to_float)
+                cobertura_atual = (estoque_atual / demanda_diaria) if demanda_diaria > 0 else 999.0
+                cobertura_com_transito = ((estoque_atual + estoque_transito) / demanda_diaria) if demanda_diaria > 0 else 999.0
 
                 resultados.append({
                     'codigo': codigo,
@@ -227,21 +379,26 @@ def api_pedido_planejado():
                     'cod_loja': cod_loja,
                     'nome_loja': nome_loja,
                     'cnpj_fornecedor': row['cnpj_fornecedor'],
+                    'codigo_fornecedor': row.get('cnpj_fornecedor', ''),
                     'nome_fornecedor': row['nome_fornecedor'],
                     'demanda_diaria': round(demanda_diaria, 2),
                     'demanda_periodo': round(demanda_periodo, 0),
                     'quantidade_pedido': quantidade_pedido,
-                    'cue': float(cue or 0),
+                    'numero_caixas': quantidade_pedido,  # Alias para agregar_por_fornecedor
+                    'cue': cue,
                     'valor_pedido': round(valor_pedido, 2),
-                    'estoque_atual': int(estoque_atual or 0),
-                    'estoque_transito': int(estoque_transito or 0),
+                    'estoque_atual': to_int(estoque_atual),
+                    'estoque_transito': to_int(estoque_transito),
                     'cobertura_atual_dias': round(cobertura_atual, 1),
                     'cobertura_com_transito_dias': round(cobertura_com_transito, 1),
                     'lead_time_dias': lead_time,
                     'data_emissao_sugerida': data_emissao.strftime('%Y-%m-%d'),
                     'periodo_inicio': periodo_inicio,
                     'periodo_fim': periodo_fim,
-                    'origem_demanda': origem_demanda
+                    'origem_demanda': origem_demanda,
+                    'proporcao_loja': round(proporcao_loja, 4),  # Proporcao usada no rateio
+                    'deve_pedir': quantidade_pedido > 0,
+                    'bloqueado': False
                 })
 
         conn.close()

@@ -122,7 +122,7 @@ qtd_transferivel = excesso_em_dias × demanda_diaria
 
 ### 6. Rateio Proporcional de Demanda (V14)
 
-**Arquivos**: `app/utils/demanda_pre_calculada.py`, `app/blueprints/pedido_fornecedor.py`
+**Arquivos**: `app/utils/demanda_pre_calculada.py`, `app/blueprints/pedido_fornecedor.py`, `app/blueprints/pedido_planejado.py`
 
 Quando demanda e calculada de forma consolidada e precisa ser distribuida entre lojas, o sistema usa **rateio proporcional** baseado no historico de vendas de cada loja.
 
