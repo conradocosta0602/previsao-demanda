@@ -5,9 +5,93 @@ Garante que tanto a Tela de Demanda quanto a Tela de Pedido Fornecedor
 usem os mesmos valores de demanda, mantendo INTEGRIDADE TOTAL.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from psycopg2.extras import RealDictCursor
+
+
+def calcular_proporcoes_vendas_por_loja(
+    conn,
+    cod_produtos: List[str],
+    cod_empresas: List[int],
+    dias_historico: int = 365
+) -> Dict:
+    """
+    Calcula a proporcao de vendas de cada loja para cada produto.
+
+    Esta funcao e usada para ratear a demanda consolidada de forma proporcional
+    as vendas historicas de cada loja, em vez de dividir uniformemente.
+
+    Args:
+        conn: Conexao com o banco de dados
+        cod_produtos: Lista de codigos de produtos
+        cod_empresas: Lista de codigos de empresas/lojas
+        dias_historico: Numero de dias de historico para calcular proporcao (default: 365)
+
+    Returns:
+        Dicionario com chave (cod_produto, cod_empresa) -> proporcao (0.0 a 1.0)
+        A soma das proporcoes de todas as lojas para um produto = 1.0
+    """
+    if not cod_produtos or not cod_empresas:
+        return {}
+
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Converter codigos para int
+    cod_produtos_int = [int(c) for c in cod_produtos]
+    placeholders_prod = ','.join(['%s'] * len(cod_produtos_int))
+    placeholders_emp = ','.join(['%s'] * len(cod_empresas))
+
+    data_inicio = datetime.now().date() - timedelta(days=dias_historico)
+
+    # Query para somar vendas por produto/loja
+    query = f"""
+        SELECT
+            codigo,
+            cod_empresa,
+            SUM(qtd_venda) as total_vendas
+        FROM historico_vendas_diario
+        WHERE codigo IN ({placeholders_prod})
+          AND cod_empresa IN ({placeholders_emp})
+          AND data >= %s
+        GROUP BY codigo, cod_empresa
+    """
+    params = cod_produtos_int + list(cod_empresas) + [data_inicio]
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    cursor.close()
+
+    # Calcular total de vendas por produto (todas as lojas)
+    totais_por_produto = {}
+    vendas_por_produto_loja = {}
+
+    for row in rows:
+        cod_produto = str(row['codigo'])
+        cod_empresa = row['cod_empresa']
+        total_vendas = float(row['total_vendas'] or 0)
+
+        # Acumular total do produto
+        if cod_produto not in totais_por_produto:
+            totais_por_produto[cod_produto] = 0
+        totais_por_produto[cod_produto] += total_vendas
+
+        # Guardar venda por produto/loja
+        vendas_por_produto_loja[(cod_produto, cod_empresa)] = total_vendas
+
+    # Calcular proporcoes
+    proporcoes = {}
+    for (cod_produto, cod_empresa), vendas in vendas_por_produto_loja.items():
+        total_produto = totais_por_produto.get(cod_produto, 0)
+        if total_produto > 0:
+            proporcao = vendas / total_produto
+        else:
+            # Se nao houver vendas, distribui uniformemente
+            proporcao = 1.0 / len(cod_empresas)
+
+        proporcoes[(cod_produto, cod_empresa)] = proporcao
+
+    return proporcoes
 
 
 def precarregar_demanda_em_lote(
@@ -96,7 +180,8 @@ def obter_demanda_do_cache(
     cache: Dict,
     cod_produto: str,
     cod_empresa: int = None,
-    num_lojas: int = 1
+    num_lojas: int = 1,
+    proporcao_loja: float = None
 ) -> Tuple[float, float, Dict]:
     """
     Obtem demanda do cache pre-carregado.
@@ -106,6 +191,8 @@ def obter_demanda_do_cache(
         cod_produto: Codigo do produto
         cod_empresa: Codigo da empresa/loja (None = consolidado)
         num_lojas: Numero de lojas para dividir demanda consolidada (default=1)
+        proporcao_loja: Proporcao de vendas desta loja (0.0 a 1.0). Se informado,
+                        usa rateio proporcional em vez de divisao uniforme.
 
     Returns:
         Tupla (demanda_diaria, desvio_padrao, metadata)
@@ -113,28 +200,37 @@ def obter_demanda_do_cache(
     key = (str(cod_produto), cod_empresa)
     demanda = cache.get(key)
 
-    # FALLBACK: Se nao encontrou por loja especifica, usar consolidado e dividir
-    usar_consolidado_dividido = False
+    # FALLBACK: Se nao encontrou por loja especifica, usar consolidado e ratear
+    usar_consolidado_rateado = False
+    metodo_rateio = None
     if not demanda and cod_empresa is not None:
         key_consolidado = (str(cod_produto), None)
         demanda = cache.get(key_consolidado)
         if demanda:
-            usar_consolidado_dividido = True
+            usar_consolidado_rateado = True
 
     if demanda:
         demanda_diaria = float(demanda.get('demanda_diaria_base', 0) or 0)
         desvio = float(demanda.get('desvio_padrao', 0) or 0)
 
-        # Se usando consolidado para loja especifica, dividir pelo numero de lojas
-        if usar_consolidado_dividido and num_lojas > 1:
-            demanda_diaria = demanda_diaria / num_lojas
-            desvio = desvio / num_lojas
+        # Se usando consolidado para loja especifica, aplicar rateio
+        if usar_consolidado_rateado:
+            if proporcao_loja is not None and proporcao_loja > 0:
+                # RATEIO PROPORCIONAL: usa proporcao baseada em vendas historicas
+                demanda_diaria = demanda_diaria * proporcao_loja
+                desvio = desvio * proporcao_loja
+                metodo_rateio = 'proporcional'
+            elif num_lojas > 1:
+                # RATEIO UNIFORME (fallback): divide igualmente
+                demanda_diaria = demanda_diaria / num_lojas
+                desvio = desvio / num_lojas
+                metodo_rateio = 'uniforme'
 
         return (
             demanda_diaria,
             desvio,
             {
-                'fonte': 'pre_calculada_consolidada' if usar_consolidado_dividido else 'pre_calculada',
+                'fonte': 'pre_calculada_consolidada' if usar_consolidado_rateado else 'pre_calculada',
                 'metodo_usado': demanda.get('metodo_usado', 'auto'),
                 'fator_sazonal': float(demanda.get('fator_sazonal', 1.0) or 1.0),
                 'fator_tendencia_yoy': float(demanda.get('fator_tendencia_yoy', 1.0) or 1.0),
@@ -144,7 +240,8 @@ def obter_demanda_do_cache(
                 'data_calculo': demanda.get('data_calculo'),
                 'demanda_mensal': float(demanda.get('demanda_efetiva', 0) or 0),
                 'variacao_vs_aa': demanda.get('variacao_vs_aa'),
-                'dividido_por_lojas': num_lojas if usar_consolidado_dividido else 1
+                'metodo_rateio': metodo_rateio,
+                'proporcao_loja': proporcao_loja if usar_consolidado_rateado else None
             }
         )
 

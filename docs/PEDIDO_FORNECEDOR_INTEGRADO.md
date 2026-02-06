@@ -138,6 +138,68 @@ cobertura_alvo_item = cobertura_dias if cobertura_dias else item['cobertura_nece
 | MEDIA | 4-7 dias | Amarelo |
 | BAIXA | > 7 dias | Verde |
 
+## Rateio Proporcional de Demanda (v5.9+)
+
+### O Problema
+
+Quando a demanda e calculada de forma **consolidada** (todas as lojas somadas) e precisa ser distribuida entre lojas, o rateio uniforme (dividir igualmente) pode gerar distorcoes:
+
+```
+Demanda Total: 90 un/mes
+Lojas: 3
+Rateio Uniforme: 30 un/mes cada
+
+Problema: Loja 1 vende 50%, Loja 2 vende 35%, Loja 3 vende 15%
+          Mas todas recebem a mesma demanda (30 un)
+```
+
+### A Solucao: Rateio Proporcional
+
+O sistema agora calcula a **proporcao de vendas historicas** de cada loja e aplica no rateio:
+
+```python
+# Calcula proporcao baseada no ultimo ano de vendas
+proporcao_loja = vendas_loja / vendas_total
+
+# Aplica no rateio da demanda consolidada
+demanda_loja = demanda_consolidada * proporcao_loja
+```
+
+### Exemplo Pratico
+
+**Cenario:** Produto com demanda consolidada de 90 un/mes, 3 lojas
+
+| Loja | Vendas Historicas | Proporcao | Demanda Rateada |
+|------|-------------------|-----------|-----------------|
+| Loja 1 | 450 un | 50.0% | 45 un/mes |
+| Loja 2 | 315 un | 35.0% | 31.5 un/mes |
+| Loja 3 | 135 un | 15.0% | 13.5 un/mes |
+| **Total** | **900 un** | **100%** | **90 un/mes** |
+
+### Metodos de Rateio
+
+| Metodo | Quando Usado | Comportamento |
+|--------|--------------|---------------|
+| **Proporcional** | Quando ha historico de vendas | Demanda × proporcao da loja |
+| **Uniforme** | Fallback quando nao ha historico | Demanda ÷ numero de lojas |
+
+### Visualizacao na Interface
+
+O tooltip de detalhamento por loja agora exibe a proporcao:
+
+```
+Loja 1: 50 un (est: 100, dem.mensal: 45.00 [50.0%])
+Loja 2: 35 un (est: 80, dem.mensal: 31.50 [35.0%])
+Loja 3: 15 un (est: 60, dem.mensal: 13.50 [15.0%])
+```
+
+### Beneficios
+
+1. **Precisao**: Demanda reflete o perfil real de vendas de cada loja
+2. **Otimizacao de Estoque**: Evita excesso em lojas de baixo giro
+3. **Reducao de Rupturas**: Lojas de alto giro recebem mais estoque
+4. **Transparencia**: Proporcao visivel no tooltip
+
 ## Parametros de Fornecedor
 
 O sistema considera parametros especificos por fornecedor:

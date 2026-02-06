@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v5.8** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v5.9** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -89,9 +89,10 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**13 verificacoes** de conformidade com a metodologia documentada:
+**14 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
+- V14: Rateio Proporcional de Demanda Multi-Loja
 
 ### 5. Transferencias entre Lojas (V13)
 
@@ -118,6 +119,32 @@ qtd_transferivel = excesso_em_dias × demanda_diaria
 - **BAIXA**: demais casos
 
 **Restricao**: Mesma loja nao pode ser doadora e receptora do mesmo item.
+
+### 6. Rateio Proporcional de Demanda (V14)
+
+**Arquivos**: `app/utils/demanda_pre_calculada.py`, `app/blueprints/pedido_fornecedor.py`
+
+Quando demanda e calculada de forma consolidada e precisa ser distribuida entre lojas, o sistema usa **rateio proporcional** baseado no historico de vendas de cada loja.
+
+**Formula**:
+```
+proporcao_loja = vendas_loja / vendas_total
+demanda_loja = demanda_consolidada × proporcao_loja
+```
+
+**Funcao principal**: `calcular_proporcoes_vendas_por_loja()`
+
+**Metodos de Rateio**:
+- **Proporcional**: Quando ha historico de vendas (usa ultimos 365 dias)
+- **Uniforme**: Fallback quando nao ha historico (demanda / num_lojas)
+
+**Beneficios**:
+- Demanda reflete perfil real de vendas de cada loja
+- Evita excesso em lojas de baixo giro
+- Reducao de rupturas em lojas de alto giro
+- Proporcao visivel no tooltip da interface
+
+**Verificacao V14**: Valida calculo de proporcoes, soma = 1.0, e preservacao do total.
 
 ## APIs Importantes
 
@@ -186,6 +213,8 @@ DB_PORT=5432
 
 5. **Fator YoY**: Corrige subestimacao em fornecedores com crescimento historico
 
+6. **Rateio proporcional**: Em pedidos multi-loja, demanda e distribuida proporcional ao historico de vendas
+
 ## Fluxo de Trabalho Tipico
 
 ```
@@ -228,6 +257,7 @@ DB_PORT=5432
 - Sistema de Validacao de Conformidade (v5.6)
 - Fator de Tendencia YoY (v5.7)
 - V13: Logica Hibrida de Transferencias (v5.8)
+- V14: Rateio Proporcional de Demanda Multi-Loja (v5.9)
 
 ## Documentacao Complementar
 
@@ -243,4 +273,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v5.8)
+**Ultima atualizacao**: Fevereiro 2026 (v5.9)

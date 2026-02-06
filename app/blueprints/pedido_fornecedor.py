@@ -16,7 +16,8 @@ from app.utils.demanda_pre_calculada import (
     obter_demanda_diaria_efetiva,
     verificar_dados_disponiveis,
     precarregar_demanda_em_lote,
-    obter_demanda_do_cache
+    obter_demanda_do_cache,
+    calcular_proporcoes_vendas_por_loja
 )
 
 pedido_fornecedor_bp = Blueprint('pedido_fornecedor', __name__)
@@ -314,6 +315,18 @@ def api_pedido_fornecedor_integrado():
                 cache_demanda_global.update(cache_demanda)
         print(f"  [CACHE] Demanda pre-carregada: {len(cache_demanda_global)} registros")
 
+        # PRE-CALCULAR PROPORCOES DE VENDAS POR LOJA (para rateio proporcional)
+        # Em vez de dividir uniformemente, rateia pela participacao de vendas de cada loja
+        cache_proporcoes = {}
+        if is_pedido_multiloja:
+            cache_proporcoes = calcular_proporcoes_vendas_por_loja(
+                conn,
+                codigos_produtos,
+                lojas_demanda,
+                dias_historico=365  # Usa ultimo ano para proporcao
+            )
+            print(f"  [CACHE] Proporcoes por loja calculadas: {len(cache_proporcoes)} registros")
+
         resultados = []
         itens_sem_historico = 0
         itens_sem_demanda = 0
@@ -334,10 +347,14 @@ def api_pedido_fornecedor_integrado():
                     for loja_cod in lojas_demanda:
                         loja_nome = mapa_nomes_lojas.get(loja_cod, f"Loja {loja_cod}")
 
+                        # Buscar proporcao de vendas desta loja para este produto
+                        proporcao_loja = cache_proporcoes.get((str(codigo), loja_cod))
+
                         # PRIORIDADE 1: Usar demanda pre-calculada do CACHE (otimizado)
-                        # Se nao encontrar por loja, usa consolidado dividido pelo numero de lojas
+                        # Se nao encontrar por loja, usa consolidado rateado PROPORCIONALMENTE
                         demanda_diaria, desvio_padrao, metadata = obter_demanda_do_cache(
-                            cache_demanda_global, str(codigo), cod_empresa=loja_cod, num_lojas=num_lojas
+                            cache_demanda_global, str(codigo), cod_empresa=loja_cod,
+                            num_lojas=num_lojas, proporcao_loja=proporcao_loja
                         )
 
                         # FALLBACK: Se nao houver no cache, calcular em tempo real
@@ -389,6 +406,8 @@ def api_pedido_fornecedor_integrado():
                         resultado['codigo_fornecedor'] = row.get('codigo_fornecedor', '')
                         resultado['metodo_previsao'] = metadata.get('metodo_usado', 'auto')
                         resultado['fonte_demanda'] = metadata.get('fonte', 'tempo_real')  # pre_calculada ou tempo_real
+                        resultado['metodo_rateio'] = metadata.get('metodo_rateio')  # proporcional ou uniforme
+                        resultado['proporcao_loja'] = metadata.get('proporcao_loja')  # 0.0 a 1.0
                         resultado['lojas_consideradas'] = 1
                         resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
                         resultado['lead_time_usado'] = lead_time_forn

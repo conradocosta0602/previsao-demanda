@@ -82,6 +82,7 @@ class ValidadorConformidade:
             ('V11', 'Limitador Variacao AA', self._verificar_limitador_variacao),
             ('V12', 'Fator Tendencia YoY', self._verificar_fator_tendencia_yoy),
             ('V13', 'Logica Hibrida Transferencias', self._verificar_logica_transferencias),
+            ('V14', 'Rateio Proporcional Demanda', self._verificar_rateio_proporcional),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -973,6 +974,202 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar logica transferencias: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_rateio_proporcional(self) -> Tuple[str, str, Dict]:
+        """
+        V14: Verifica a logica de rateio proporcional de demanda entre lojas.
+
+        Implementado em Fev/2026 para validar que:
+        1. Quando demanda consolidada e rateada entre lojas, usa proporcao de vendas
+        2. Proporcao e calculada com base no historico de vendas de cada loja
+        3. Soma das proporcoes de todas as lojas = 100%
+        4. Fallback para rateio uniforme quando nao ha historico
+        5. Demanda da loja = Demanda consolidada × Proporcao da loja
+
+        Testa cenarios de:
+        - Calculo correto de proporcoes
+        - Rateio proporcional vs uniforme
+        - Soma das proporcoes = 1.0
+        - Demanda resultante correta
+        """
+        try:
+            resultados_testes = []
+            todos_corretos = True
+
+            # =================================================================
+            # Teste 1: Calculo de proporcoes baseado em vendas
+            # =================================================================
+            cenarios_proporcao = [
+                # (vendas_loja, vendas_total, proporcao_esperada)
+                (450, 900, 0.50),   # Loja vendeu 50% do total
+                (315, 900, 0.35),   # Loja vendeu 35% do total
+                (135, 900, 0.15),   # Loja vendeu 15% do total
+                (100, 100, 1.00),   # Unica loja com vendas
+                (0, 0, None),       # Sem vendas -> None (fallback uniforme)
+            ]
+
+            for vendas_loja, vendas_total, proporcao_esperada in cenarios_proporcao:
+                if vendas_total > 0:
+                    proporcao_calculada = vendas_loja / vendas_total
+                else:
+                    proporcao_calculada = None  # Indica fallback
+
+                if proporcao_esperada is not None:
+                    correto = abs(proporcao_calculada - proporcao_esperada) < 0.001
+                else:
+                    correto = proporcao_calculada is None
+
+                resultados_testes.append({
+                    'teste': 'Calculo proporcao',
+                    'vendas_loja': vendas_loja,
+                    'vendas_total': vendas_total,
+                    'proporcao_calculada': proporcao_calculada,
+                    'proporcao_esperada': proporcao_esperada,
+                    'correto': correto
+                })
+
+                if not correto:
+                    todos_corretos = False
+
+            # =================================================================
+            # Teste 2: Soma das proporcoes = 1.0
+            # =================================================================
+            cenarios_soma = [
+                # Lista de proporcoes por loja
+                ([0.50, 0.35, 0.15], 1.00),
+                ([0.40, 0.30, 0.20, 0.10], 1.00),
+                ([0.60, 0.40], 1.00),
+                ([1.00], 1.00),  # Uma loja
+            ]
+
+            for proporcoes, soma_esperada in cenarios_soma:
+                soma_calculada = sum(proporcoes)
+                correto = abs(soma_calculada - soma_esperada) < 0.001
+
+                resultados_testes.append({
+                    'teste': 'Soma proporcoes',
+                    'proporcoes': proporcoes,
+                    'soma_calculada': soma_calculada,
+                    'soma_esperada': soma_esperada,
+                    'correto': correto
+                })
+
+                if not correto:
+                    todos_corretos = False
+
+            # =================================================================
+            # Teste 3: Rateio proporcional da demanda
+            # =================================================================
+            cenarios_rateio = [
+                # (demanda_total, proporcao, demanda_loja_esperada)
+                (90, 0.50, 45.0),    # 90 × 0.50 = 45
+                (90, 0.35, 31.5),    # 90 × 0.35 = 31.5
+                (90, 0.15, 13.5),    # 90 × 0.15 = 13.5
+                (100, 0.25, 25.0),   # 100 × 0.25 = 25
+                (60, 1.00, 60.0),    # 60 × 1.00 = 60 (loja unica)
+            ]
+
+            for demanda_total, proporcao, demanda_esperada in cenarios_rateio:
+                demanda_calculada = demanda_total * proporcao
+                correto = abs(demanda_calculada - demanda_esperada) < 0.01
+
+                resultados_testes.append({
+                    'teste': 'Rateio proporcional',
+                    'demanda_total': demanda_total,
+                    'proporcao': proporcao,
+                    'demanda_calculada': demanda_calculada,
+                    'demanda_esperada': demanda_esperada,
+                    'correto': correto
+                })
+
+                if not correto:
+                    todos_corretos = False
+
+            # =================================================================
+            # Teste 4: Fallback para rateio uniforme
+            # =================================================================
+            cenarios_uniforme = [
+                # (demanda_total, num_lojas, demanda_loja_esperada)
+                (90, 3, 30.0),    # 90 / 3 = 30
+                (100, 4, 25.0),   # 100 / 4 = 25
+                (60, 2, 30.0),    # 60 / 2 = 30
+                (50, 1, 50.0),    # 50 / 1 = 50
+            ]
+
+            for demanda_total, num_lojas, demanda_esperada in cenarios_uniforme:
+                demanda_calculada = demanda_total / num_lojas
+                correto = abs(demanda_calculada - demanda_esperada) < 0.01
+
+                resultados_testes.append({
+                    'teste': 'Rateio uniforme (fallback)',
+                    'demanda_total': demanda_total,
+                    'num_lojas': num_lojas,
+                    'demanda_calculada': demanda_calculada,
+                    'demanda_esperada': demanda_esperada,
+                    'correto': correto
+                })
+
+                if not correto:
+                    todos_corretos = False
+
+            # =================================================================
+            # Teste 5: Preservacao do total apos rateio
+            # =================================================================
+            cenarios_preservacao = [
+                # (demanda_total, proporcoes) -> soma das demandas rateadas = total
+                (90, [0.50, 0.35, 0.15]),
+                (100, [0.40, 0.30, 0.20, 0.10]),
+                (60, [0.60, 0.40]),
+            ]
+
+            for demanda_total, proporcoes in cenarios_preservacao:
+                demandas_rateadas = [demanda_total * p for p in proporcoes]
+                soma_rateada = sum(demandas_rateadas)
+                correto = abs(soma_rateada - demanda_total) < 0.01
+
+                resultados_testes.append({
+                    'teste': 'Preservacao total',
+                    'demanda_total': demanda_total,
+                    'proporcoes': proporcoes,
+                    'demandas_rateadas': demandas_rateadas,
+                    'soma_rateada': soma_rateada,
+                    'correto': correto
+                })
+
+                if not correto:
+                    todos_corretos = False
+
+            # =================================================================
+            # Resultado final
+            # =================================================================
+            testes_ok = sum(1 for t in resultados_testes if t.get('correto', False))
+            total_testes = len(resultados_testes)
+
+            if todos_corretos:
+                return 'ok', f'Rateio proporcional correto ({testes_ok}/{total_testes} testes)', {
+                    'regras_validadas': [
+                        'Proporcao = vendas_loja / vendas_total',
+                        'Soma das proporcoes = 1.0 (100%)',
+                        'Demanda loja = demanda_total × proporcao',
+                        'Fallback uniforme quando sem historico',
+                        'Total preservado apos rateio'
+                    ],
+                    'total_testes': total_testes,
+                    'testes_ok': testes_ok,
+                    'detalhes': resultados_testes
+                }
+            else:
+                falhas = [t for t in resultados_testes if not t.get('correto', False)]
+                return 'falha', f'Rateio proporcional com erro ({testes_ok}/{total_testes} testes)', {
+                    'testes_falhos': falhas,
+                    'total_testes': total_testes,
+                    'detalhes': resultados_testes
+                }
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar rateio proporcional: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

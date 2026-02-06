@@ -1561,7 +1561,7 @@
                         <td class="col-num"><span class="${estClass}">${est.toLocaleString('pt-BR')}</span></td>
                         <td class="col-num">${trans > 0 ? trans.toLocaleString('pt-BR') : '-'}</td>
                         <td><span class="cobertura-info"><span class="atual">${cobAtual}d</span><span class="seta">→</span><span class="pos">${cobPos}d</span></span></td>
-                        <td class="col-num">${dem.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                        <td class="col-num">${(dem * 30).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                         <td class="col-num">${pedidoCell}</td>
                         <td class="col-valor">${valorPedido > 0 ? 'R$ ' + valorPedido.toLocaleString('pt-BR', {minimumFractionDigits: 0}) : '-'}</td>
                     </tr>
@@ -1580,7 +1580,7 @@
                             <th class="col-num">Estoque</th>
                             <th class="col-num">Transito</th>
                             <th style="width: 100px;">Cobertura</th>
-                            <th class="col-num">Demanda Media</th>
+                            <th class="col-num">Demanda Mensal</th>
                             <th class="col-num">Pedido</th>
                             <th class="col-valor">Valor</th>
                         </tr>
@@ -1915,7 +1915,8 @@
                     loja: lojaVenda,
                     qtd: item.quantidade_pedido || 0,
                     estoque: item.estoque_atual || item.estoque_efetivo || 0,
-                    demanda: item.demanda_prevista_diaria || item.demanda_diaria || 0
+                    demanda: item.demanda_prevista_diaria || item.demanda_diaria || 0,
+                    proporcao: item.proporcao_loja || null  // Proporcao de vendas da loja (0.0 a 1.0)
                 });
 
                 // Contar itens sem padrao
@@ -2142,7 +2143,7 @@
                                             <th style="width: 50px; text-align: center;">ABC</th>
                                             <th style="width: 120px; text-align: center;">Lojas Origem</th>
                                             <th class="col-num">Estoque Total</th>
-                                            <th class="col-num">Demanda Total</th>
+                                            <th class="col-num" title="Demanda mensal media por loja">Dem. Mensal/Loja</th>
                                             <th class="col-num">Qtd Pedido</th>
                                             <th class="col-valor">Valor</th>
                                         </tr>
@@ -2176,9 +2177,11 @@
         // Gerar linha da tabela para visualizacao Padrao de Compra AGREGADO
         function gerarLinhaTabelaPadraoCompraAgregado(item) {
             // Tooltip com detalhes por loja
-            let tooltipDetalhes = item.detalhes_lojas.map(d =>
-                `Loja ${d.loja}: ${d.qtd} un (est: ${d.estoque}, dem: ${d.demanda.toFixed(2)})`
-            ).join('\n');
+            let tooltipDetalhes = item.detalhes_lojas.map(d => {
+                const demandaMensal = (d.demanda * 30).toFixed(2);
+                const proporcaoStr = d.proporcao ? ` [${(d.proporcao * 100).toFixed(1)}%]` : '';
+                return `Loja ${d.loja}: ${d.qtd} un (est: ${d.estoque}, dem.mensal: ${demandaMensal}${proporcaoStr})`;
+            }).join('\n');
 
             // Badge de lojas origem
             const lojasOrigemStr = item.lojas_origem.sort((a,b) => a-b).join(', ');
@@ -2225,7 +2228,7 @@
                     <td style="text-align: center;"><span class="badge badge-${item.curva_abc.toLowerCase()}">${item.curva_abc}</span></td>
                     <td style="text-align: center;">${badgeLojas}</td>
                     <td class="col-num">${item.estoque_total.toLocaleString('pt-BR')}</td>
-                    <td class="col-num">${item.demanda_total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td class="col-num" title="Media mensal por loja (${item.lojas_origem.length} lojas). Hover nas lojas para ver demanda de cada uma.">${((item.demanda_total / item.lojas_origem.length) * 30).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                     <td class="col-num">${item._status === 'ok' || item._status === 'bloqueado' ? '-' : qtdCell}</td>
                     <td class="col-valor">${item._status === 'ok' || item._status === 'bloqueado' ? '-' : `R$ ${item.valor_pedido.toLocaleString('pt-BR', {minimumFractionDigits: 0})}`}</td>
                 </tr>
