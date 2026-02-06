@@ -5641,3 +5641,56 @@ function atualizarBotaoSalvarDemanda() {
         btn.title = 'Gere uma previsão primeiro para salvar a demanda';
     }
 }
+
+/**
+ * Verifica se há jobs em processamento ao carregar a página.
+ * Se houver, retoma o polling para mostrar status atualizado.
+ */
+async function verificarJobsEmProcessamento() {
+    try {
+        const response = await fetch('/api/demanda_job/status');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (!data.success || !data.ultimas_execucoes) return;
+
+        // Procurar execuções com status 'iniciado' ou 'processando' nos últimos 15 minutos
+        const agora = new Date();
+        const quinzeMinutosAtras = new Date(agora.getTime() - 15 * 60 * 1000);
+
+        for (const exec of data.ultimas_execucoes) {
+            const dataExec = new Date(exec.data_execucao);
+            const status = exec.status;
+            const fornecedor = exec.cnpj_fornecedor_filtro;
+
+            // Se está processando E é recente
+            if ((status === 'iniciado' || status === 'processando') && dataExec > quinzeMinutosAtras) {
+                console.log('[VerificarJobs] Encontrado job em processamento:', fornecedor);
+
+                // Atualizar botão para estado de processamento
+                const btn = document.getElementById('salvarDemandaBtn');
+                if (btn) {
+                    btn.innerHTML = '⏳ Processando...';
+                    btn.disabled = true;
+                    btn.style.opacity = '0.7';
+                }
+
+                // Mostrar notificação e iniciar polling
+                mostrarStatusCalculo('processando', fornecedor, exec.total_itens_processados || 0, 0);
+                iniciarPollingStatus(fornecedor, fornecedor, exec.total_itens_processados || 0);
+
+                // Só monitora um job por vez
+                break;
+            }
+        }
+    } catch (error) {
+        console.warn('[VerificarJobs] Erro ao verificar jobs:', error);
+    }
+}
+
+// Executar verificação ao carregar a página (após um pequeno delay)
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(verificarJobsEmProcessamento, 1000));
+} else {
+    setTimeout(verificarJobsEmProcessamento, 1000);
+}

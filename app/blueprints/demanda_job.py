@@ -135,9 +135,11 @@ def api_demanda_job_status_fornecedor(cnpj_fornecedor):
         conn.close()
 
         # Determinar se o calculo esta completo
-        is_concluido = execucao.get('status') == 'concluido'
-        is_erro = execucao.get('status') == 'erro'
-        is_processando = execucao.get('status') in ('iniciado', 'processando')
+        # Aceitar 'concluido', 'sucesso' ou 'parcial' como estados de conclusao
+        status = execucao.get('status', '')
+        is_concluido = status in ('concluido', 'sucesso', 'parcial')
+        is_erro = status == 'erro'
+        is_processando = status in ('iniciado', 'processando')
 
         return jsonify({
             'success': True,
