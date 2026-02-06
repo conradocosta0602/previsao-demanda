@@ -451,18 +451,29 @@
                 }
 
                 fornecedorAtual = data.fornecedor;
+                // Normalizar campos do fornecedor
+                fornecedorAtual.cnpj_fornecedor = fornecedorAtual.cnpj || fornecedorAtual.cnpj_fornecedor;
+                fornecedorAtual.nome_fornecedor = fornecedorAtual.nome || fornecedorAtual.nome_fornecedor;
+
                 produtosCarregados = data.produtos || [];
 
-                // Agora buscar parametros por loja
-                const cnpjFornecedor = fornecedorAtual.cnpj_fornecedor;
-                const responseParams = await fetch(`/api/parametros-fornecedor/${cnpjFornecedor}/lojas`);
-                const dataParams = await responseParams.json();
+                // Usar parametros e lojas ja retornados pela API
+                const parametrosExistentes = data.parametros || [];
+                const lojasDisponiveis = data.lojas || [];
 
-                if (dataParams.success) {
-                    parametrosLojas = dataParams.parametros;
-                    fornecedorAtual.nome_fornecedor = dataParams.nome || fornecedorAtual.nome_fornecedor;
-                    fornecedorAtual.resumo = dataParams.resumo;
-                }
+                // Criar lista completa de parametros por loja (preenchendo lojas sem cadastro)
+                parametrosLojas = lojasDisponiveis.map(loja => {
+                    const paramExistente = parametrosExistentes.find(p => p.cod_empresa == loja.cod_empresa);
+                    return {
+                        cod_empresa: loja.cod_empresa,
+                        nome_loja: loja.nome_loja,
+                        tipo_destino: paramExistente?.tipo_destino || 'LOJA',
+                        lead_time_dias: paramExistente?.lead_time_dias || 15,
+                        ciclo_pedido_dias: paramExistente?.ciclo_pedido_dias || 7,
+                        pedido_minimo_valor: paramExistente?.pedido_minimo_valor || 0,
+                        cadastrado: !!paramExistente
+                    };
+                });
 
                 renderizarResultados();
 
@@ -720,12 +731,13 @@
                     return;
                 }
 
-                const response = await fetch(`/api/parametros-fornecedor/${fornecedorAtual.cnpj_fornecedor}/salvar-lote`, {
+                const response = await fetch('/api/central-parametros/salvar', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        parametros: parametros,
-                        nome_fornecedor: fornecedorAtual.nome_fornecedor
+                        cnpj_fornecedor: fornecedorAtual.cnpj_fornecedor,
+                        nome_fornecedor: fornecedorAtual.nome_fornecedor,
+                        parametros: parametros
                     })
                 });
 
