@@ -253,6 +253,18 @@ class PedidoFornecedorIntegrado:
         self._cache_produtos = None
         # Cache de embalagem de arredondamento: codigo -> qtd_embalagem
         self._cache_embalagem = None
+        # Event Manager reutilizável (evita instanciar a cada item)
+        self._event_manager = None
+
+    def obter_event_manager(self):
+        """Retorna EventManager reutilizável (lazy loading)."""
+        if self._event_manager is None:
+            try:
+                from core.event_manager_v2 import EventManagerV2
+                self._event_manager = EventManagerV2()
+            except Exception:
+                self._event_manager = None
+        return self._event_manager
 
     def carregar_regras_sit_compra(self) -> Dict:
         """
@@ -485,6 +497,56 @@ class PedidoFornecedorIntegrado:
             print(f"  [CACHE] Erro ao pré-carregar embalagem (tabela pode não existir): {e}")
             self._cache_embalagem = {}
 
+    def precarregar_produtos(self, codigos: List[int]) -> None:
+        """
+        Pré-carrega dados de produtos em lote para evitar queries individuais.
+
+        Args:
+            codigos: Lista de códigos de produtos
+        """
+        if not codigos:
+            self._cache_produtos = {}
+            return
+
+        try:
+            # Converter para strings (cod_produto é VARCHAR)
+            codigos_str = [str(c) for c in codigos]
+            placeholders = ','.join(['%s'] * len(codigos_str))
+
+            query = f"""
+                SELECT
+                    cod_produto as codigo,
+                    descricao,
+                    categoria,
+                    codigo_linha as linha3,
+                    descricao_linha as subcategoria,
+                    'B' as curva_abc,
+                    'UN' as und_venda,
+                    cnpj_fornecedor as codigo_fornecedor,
+                    nome_fornecedor,
+                    15 as lead_time_dias,
+                    0 as pedido_minimo
+                FROM cadastro_produtos_completo
+                WHERE cod_produto IN ({placeholders}) AND ativo = TRUE
+            """
+
+            df = pd.read_sql(query, self.conn, params=codigos_str)
+
+            # Montar cache: codigo (int) -> dict
+            self._cache_produtos = {}
+            for _, row in df.iterrows():
+                try:
+                    codigo_int = int(row['codigo'])
+                    self._cache_produtos[codigo_int] = row.to_dict()
+                except (ValueError, TypeError):
+                    continue
+
+            print(f"  [CACHE] Produtos pré-carregados: {len(self._cache_produtos)} produtos")
+
+        except Exception as e:
+            print(f"  [CACHE] Erro ao pré-carregar produtos: {e}")
+            self._cache_produtos = {}
+
     def buscar_embalagem(self, codigo) -> Dict:
         """
         Busca dados de embalagem de arredondamento do produto.
@@ -610,7 +672,20 @@ class PedidoFornecedorIntegrado:
         Returns:
             Dicionário com dados do produto ou None
         """
-        # cod_produto em cadastro_produtos_completo é VARCHAR
+        # Converter codigo para int para busca no cache
+        try:
+            codigo_int = int(codigo)
+        except (ValueError, TypeError):
+            return None
+
+        # Usar cache se disponível (muito mais rápido)
+        if self._cache_produtos is not None:
+            cached = self._cache_produtos.get(codigo_int)
+            if cached:
+                return cached
+            return None
+
+        # Fallback: query individual (mais lento)
         codigo_str = str(codigo)
 
         query = """
@@ -1032,28 +1107,29 @@ class PedidoFornecedorIntegrado:
         fator_eventos = 1.0
         eventos_aplicados = []
         try:
-            from core.event_manager_v2 import EventManagerV2
-            event_manager = EventManagerV2()
+            # Usar EventManager reutilizável (evita instanciar a cada item)
+            event_manager = self.obter_event_manager()
 
-            # Calcular período de cobertura
-            from datetime import timedelta
-            data_base = datetime.now().date()
-            data_entrega = data_base + timedelta(days=lead_time)
-            data_fim_cobertura = data_entrega + timedelta(days=cobertura_dias)
+            if event_manager:
+                # Calcular período de cobertura
+                from datetime import timedelta
+                data_base = datetime.now().date()
+                data_entrega = data_base + timedelta(days=lead_time)
+                data_fim_cobertura = data_entrega + timedelta(days=cobertura_dias)
 
-            # Buscar fator de eventos para o item no período
-            resultado_eventos = event_manager.calcular_fator_eventos(
-                codigo=codigo,
-                cod_empresa=cod_empresa,
-                cod_fornecedor=produto.get('codigo_fornecedor'),
-                linha1=produto.get('linha1'),
-                linha3=produto.get('linha3'),
-                data_inicio=data_entrega,
-                data_fim=data_fim_cobertura
-            )
+                # Buscar fator de eventos para o item no período
+                resultado_eventos = event_manager.calcular_fator_eventos(
+                    codigo=codigo,
+                    cod_empresa=cod_empresa,
+                    cod_fornecedor=produto.get('codigo_fornecedor'),
+                    linha1=produto.get('linha1'),
+                    linha3=produto.get('linha3'),
+                    data_inicio=data_entrega,
+                    data_fim=data_fim_cobertura
+                )
 
-            fator_eventos = resultado_eventos['fator_total']
-            eventos_aplicados = resultado_eventos['eventos_aplicados']
+                fator_eventos = resultado_eventos['fator_total']
+                eventos_aplicados = resultado_eventos['eventos_aplicados']
 
         except Exception as e:
             # Se falhar, continua sem aplicar eventos

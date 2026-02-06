@@ -296,6 +296,7 @@ def api_pedido_fornecedor_integrado():
         processador.precarregar_estoque(codigos_produtos, lojas_demanda)
         processador.precarregar_historico_vendas(codigos_produtos, lojas_demanda)
         processador.precarregar_embalagens(codigos_produtos)
+        processador.precarregar_produtos(codigos_produtos)
 
         # PRE-CARREGAR DEMANDA EM LOTE (otimizacao: 1 query em vez de N queries)
         # Agrupar produtos por CNPJ do fornecedor
