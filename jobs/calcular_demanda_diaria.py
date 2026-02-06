@@ -160,10 +160,96 @@ def buscar_itens_fornecedor(conn, cnpj_fornecedor: str) -> List[Dict]:
     return cursor.fetchall()
 
 
+def precarregar_historico_lote(conn, cod_produtos: List[int], cnpj_fornecedor: str) -> Dict[int, Tuple[List[float], Dict]]:
+    """
+    Pre-carrega historico de vendas de TODOS os itens de uma vez.
+    OTIMIZACAO: 1 query em vez de N queries.
+
+    Args:
+        conn: Conexao com o banco
+        cod_produtos: Lista de codigos de produtos
+        cnpj_fornecedor: CNPJ do fornecedor
+
+    Returns:
+        Dict {cod_produto: (serie, metadata)}
+    """
+    if not cod_produtos:
+        return {}
+
+    from psycopg2.extras import RealDictCursor
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Query unica para todos os produtos
+    placeholders = ','.join(['%s'] * len(cod_produtos))
+    cursor.execute(f"""
+        SELECT
+            h.codigo,
+            h.data,
+            SUM(h.qtd_venda) as qtd_venda
+        FROM historico_vendas_diario h
+        WHERE h.codigo IN ({placeholders})
+          AND h.data >= CURRENT_DATE - INTERVAL '{DIAS_HISTORICO} days'
+          AND h.data < CURRENT_DATE
+        GROUP BY h.codigo, h.data
+        ORDER BY h.codigo, h.data
+    """, cod_produtos)
+
+    # Agrupar por produto
+    vendas_por_produto = {}
+    for row in cursor.fetchall():
+        cod = int(row['codigo'])
+        if cod not in vendas_por_produto:
+            vendas_por_produto[cod] = {}
+        vendas_por_produto[cod][row['data']] = float(row['qtd_venda'])
+
+    # Processar cada produto
+    resultado = {}
+    for cod_produto in cod_produtos:
+        vendas_por_data = vendas_por_produto.get(cod_produto, {})
+
+        if vendas_por_data:
+            data_min = min(vendas_por_data.keys())
+            data_max = max(vendas_por_data.keys())
+            dias_total = (data_max - data_min).days + 1
+
+            serie = []
+            data_atual = data_min
+            while data_atual <= data_max:
+                serie.append(vendas_por_data.get(data_atual, 0))
+                data_atual += timedelta(days=1)
+
+            # Calcular vendas por mes
+            vendas_por_mes = {}
+            for data, qtd in vendas_por_data.items():
+                chave = (data.year, data.month)
+                vendas_por_mes[chave] = vendas_por_mes.get(chave, 0) + qtd
+
+            metadata = {
+                'dias_historico': dias_total,
+                'dias_com_venda': len(vendas_por_data),
+                'total_vendido': sum(vendas_por_data.values()),
+                'vendas_por_mes': vendas_por_mes
+            }
+        else:
+            serie = []
+            metadata = {
+                'dias_historico': 0,
+                'dias_com_venda': 0,
+                'total_vendido': 0,
+                'vendas_por_mes': {}
+            }
+
+        resultado[cod_produto] = (serie, metadata)
+
+    return resultado
+
+
 def buscar_historico_item(conn, cod_produto: int, cnpj_fornecedor: str) -> Tuple[List[float], Dict]:
     """
     Busca historico de vendas diarias de um item.
     Retorna serie temporal e metadata.
+
+    NOTA: Funcao mantida para compatibilidade, mas preferir precarregar_historico_lote()
     """
     from psycopg2.extras import RealDictCursor
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -397,6 +483,7 @@ def calcular_demanda_item(
 def salvar_demanda_batch(conn, registros: List[Dict]):
     """
     Salva batch de registros de demanda no banco.
+    OTIMIZADO: Usa execute_values para INSERT em lote (muito mais rapido).
 
     ATUALIZADO v5.7 (Fev/2026):
     - Adicionado fator_tendencia_yoy (captura crescimento/queda YoY)
@@ -405,44 +492,13 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
     if not registros:
         return 0
 
+    from psycopg2.extras import execute_values
+
     cursor = conn.cursor()
 
-    # Usar UPSERT para atualizar ou inserir
-    for reg in registros:
-        cursor.execute("""
-            INSERT INTO demanda_pre_calculada (
-                cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
-                demanda_prevista, demanda_diaria_base, desvio_padrao,
-                fator_sazonal, fator_tendencia_yoy, classificacao_tendencia,
-                valor_ano_anterior, variacao_vs_aa,
-                limitador_aplicado, metodo_usado, categoria_serie,
-                dias_historico, total_vendido_historico, data_calculo
-            ) VALUES (
-                %s, %s, %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s,
-                %s, %s,
-                %s, %s, %s,
-                %s, %s, NOW()
-            )
-            ON CONFLICT (cod_produto, cnpj_fornecedor, cod_empresa, ano, mes)
-            DO UPDATE SET
-                demanda_prevista = EXCLUDED.demanda_prevista,
-                demanda_diaria_base = EXCLUDED.demanda_diaria_base,
-                desvio_padrao = EXCLUDED.desvio_padrao,
-                fator_sazonal = EXCLUDED.fator_sazonal,
-                fator_tendencia_yoy = EXCLUDED.fator_tendencia_yoy,
-                classificacao_tendencia = EXCLUDED.classificacao_tendencia,
-                valor_ano_anterior = EXCLUDED.valor_ano_anterior,
-                variacao_vs_aa = EXCLUDED.variacao_vs_aa,
-                limitador_aplicado = EXCLUDED.limitador_aplicado,
-                metodo_usado = EXCLUDED.metodo_usado,
-                categoria_serie = EXCLUDED.categoria_serie,
-                dias_historico = EXCLUDED.dias_historico,
-                total_vendido_historico = EXCLUDED.total_vendido_historico,
-                data_calculo = NOW()
-            WHERE demanda_pre_calculada.ajuste_manual IS NULL
-        """, (
+    # Preparar dados para insert em lote
+    valores = [
+        (
             reg['cod_produto'], reg['cnpj_fornecedor'], reg['cod_empresa'],
             reg['ano'], reg['mes'],
             reg['demanda_prevista'], reg['demanda_diaria_base'], reg['desvio_padrao'],
@@ -450,16 +506,149 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             reg['valor_ano_anterior'], reg['variacao_vs_aa'],
             reg['limitador_aplicado'], reg['metodo_usado'], reg['categoria_serie'],
             reg['dias_historico'], reg['total_vendido_historico']
-        ))
+        )
+        for reg in registros
+    ]
+
+    # Usar execute_values para INSERT em lote (muito mais rapido)
+    execute_values(cursor, """
+        INSERT INTO demanda_pre_calculada (
+            cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
+            demanda_prevista, demanda_diaria_base, desvio_padrao,
+            fator_sazonal, fator_tendencia_yoy, classificacao_tendencia,
+            valor_ano_anterior, variacao_vs_aa,
+            limitador_aplicado, metodo_usado, categoria_serie,
+            dias_historico, total_vendido_historico, data_calculo
+        ) VALUES %s
+        ON CONFLICT (cod_produto, cnpj_fornecedor, cod_empresa, ano, mes)
+        DO UPDATE SET
+            demanda_prevista = EXCLUDED.demanda_prevista,
+            demanda_diaria_base = EXCLUDED.demanda_diaria_base,
+            desvio_padrao = EXCLUDED.desvio_padrao,
+            fator_sazonal = EXCLUDED.fator_sazonal,
+            fator_tendencia_yoy = EXCLUDED.fator_tendencia_yoy,
+            classificacao_tendencia = EXCLUDED.classificacao_tendencia,
+            valor_ano_anterior = EXCLUDED.valor_ano_anterior,
+            variacao_vs_aa = EXCLUDED.variacao_vs_aa,
+            limitador_aplicado = EXCLUDED.limitador_aplicado,
+            metodo_usado = EXCLUDED.metodo_usado,
+            categoria_serie = EXCLUDED.categoria_serie,
+            dias_historico = EXCLUDED.dias_historico,
+            total_vendido_historico = EXCLUDED.total_vendido_historico,
+            data_calculo = NOW()
+        WHERE demanda_pre_calculada.ajuste_manual IS NULL
+    """, valores, template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())")
 
     conn.commit()
     return len(registros)
 
 
+def calcular_demanda_item_com_cache(
+    cod_produto: int,
+    cnpj_fornecedor: str,
+    serie: List[float],
+    meta_hist: Dict,
+    ano_base: int
+) -> List[Dict]:
+    """
+    Calcula demanda para um item usando historico pre-carregado.
+    OTIMIZADO: Nao faz query no banco, usa dados do cache.
+    """
+    if not serie or len(serie) < 7:
+        return []
+
+    # Calcular demanda usando DemandCalculator
+    demanda_total, desvio_total, meta_calc = DemandCalculator.calcular_demanda_diaria_unificada(
+        vendas_diarias=serie,
+        dias_periodo=30,
+        granularidade_exibicao='mensal'
+    )
+
+    demanda_diaria_base = meta_calc.get('demanda_diaria_base', 0)
+    if demanda_diaria_base <= 0:
+        return []
+
+    # Calcular fatores sazonais
+    fatores_sazonais = calcular_fatores_sazonais(meta_hist.get('vendas_por_mes', {}))
+
+    # Calcular fator de tendencia YoY
+    vendas_por_mes = meta_hist.get('vendas_por_mes', {})
+    fator_tendencia_yoy = 1.0
+    classificacao_tendencia = 'nao_calculado'
+
+    if vendas_por_mes:
+        fator_tendencia_yoy, classificacao_tendencia, _ = calcular_fator_tendencia_yoy(
+            vendas_por_mes, min_anos=2, fator_amortecimento=0.7
+        )
+
+    # Gerar registros para os proximos 12 meses
+    registros = []
+    mes_atual = datetime.now().month
+    ano_atual = datetime.now().year
+
+    for i in range(MESES_PREVISAO):
+        mes = ((mes_atual - 1 + i) % 12) + 1
+        ano = ano_atual + ((mes_atual - 1 + i) // 12)
+
+        # Dias no mes
+        if mes in [1, 3, 5, 7, 8, 10, 12]:
+            dias_mes = 31
+        elif mes in [4, 6, 9, 11]:
+            dias_mes = 30
+        else:
+            dias_mes = 29 if ano % 4 == 0 else 28
+
+        fator_sazonal = fatores_sazonais.get(mes, 1.0)
+        demanda_prevista = demanda_diaria_base * fator_sazonal * fator_tendencia_yoy * dias_mes
+
+        # Valor ano anterior
+        ano_anterior = ano - 1
+        valor_aa = meta_hist.get('vendas_por_mes', {}).get((ano_anterior, mes), 0)
+
+        # Aplicar limitador V11
+        limitador_aplicado = False
+        if valor_aa > 0:
+            variacao = demanda_prevista / valor_aa
+            if fator_tendencia_yoy > 1.05 and variacao < 1.0:
+                demanda_prevista = valor_aa * min(fator_tendencia_yoy, 1.4)
+                limitador_aplicado = True
+            elif variacao > 1.5:
+                demanda_prevista = valor_aa * 1.5
+                limitador_aplicado = True
+            elif variacao < 0.6:
+                demanda_prevista = valor_aa * 0.6
+                limitador_aplicado = True
+
+        variacao_vs_aa = (demanda_prevista / valor_aa) if valor_aa > 0 else None
+
+        registros.append({
+            'cod_produto': str(cod_produto),
+            'cnpj_fornecedor': cnpj_fornecedor,
+            'cod_empresa': None,
+            'ano': ano,
+            'mes': mes,
+            'demanda_prevista': round(demanda_prevista, 2),
+            'demanda_diaria_base': round(demanda_diaria_base, 4),
+            'desvio_padrao': round(meta_calc.get('desvio_diario_base', 0), 4),
+            'fator_sazonal': round(fator_sazonal, 4),
+            'fator_tendencia_yoy': round(fator_tendencia_yoy, 4),
+            'classificacao_tendencia': classificacao_tendencia,
+            'valor_ano_anterior': round(valor_aa, 2) if valor_aa else None,
+            'variacao_vs_aa': round(variacao_vs_aa, 4) if variacao_vs_aa else None,
+            'limitador_aplicado': limitador_aplicado,
+            'metodo_usado': meta_calc.get('metodo_usado', 'auto'),
+            'categoria_serie': meta_calc.get('categoria_serie', 'media'),
+            'dias_historico': meta_hist.get('dias_historico', 0),
+            'total_vendido_historico': round(meta_hist.get('total_vendido', 0), 2)
+        })
+
+    return registros
+
+
 def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
     """
     Processa todos os itens de um fornecedor.
-    Executado em thread separada.
+    OTIMIZADO: Pre-carrega historico em lote e salva em batch.
     """
     conn = None
     try:
@@ -468,23 +657,47 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
 
         # Buscar itens do fornecedor
         itens = buscar_itens_fornecedor(conn, cnpj_fornecedor)
+        if not itens:
+            return {
+                'cnpj': cnpj_fornecedor,
+                'nome': nome_fornecedor,
+                'itens': 0,
+                'registros': 0,
+                'erros': 0,
+                'sucesso': True
+            }
 
-        total_registros = 0
+        cod_produtos = [item['cod_produto'] for item in itens]
+
+        # PRE-CARREGAR HISTORICO EM LOTE (1 query para todos os itens)
+        logger.debug(f"  Pre-carregando historico de {len(cod_produtos)} itens...")
+        cache_historico = precarregar_historico_lote(conn, cod_produtos, cnpj_fornecedor)
+
+        # Processar itens usando cache
+        todos_registros = []
         total_erros = 0
 
         for item in itens:
             try:
-                registros = calcular_demanda_item(
-                    conn,
-                    item['cod_produto'],
+                cod_produto = item['cod_produto']
+                serie, meta_hist = cache_historico.get(cod_produto, ([], {}))
+
+                registros = calcular_demanda_item_com_cache(
+                    cod_produto,
                     cnpj_fornecedor,
+                    serie,
+                    meta_hist,
                     ano_base
                 )
-                if registros:
-                    total_registros += salvar_demanda_batch(conn, registros)
+                todos_registros.extend(registros)
             except Exception as e:
                 total_erros += 1
                 logger.debug(f"Erro item {item['cod_produto']}: {e}")
+
+        # SALVAR TODOS OS REGISTROS EM UM UNICO BATCH
+        total_registros = 0
+        if todos_registros:
+            total_registros = salvar_demanda_batch(conn, todos_registros)
 
         return {
             'cnpj': cnpj_fornecedor,
@@ -497,6 +710,8 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
 
     except Exception as e:
         logger.error(f"Erro processando fornecedor {cnpj_fornecedor}: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             'cnpj': cnpj_fornecedor,
             'nome': nome_fornecedor,

@@ -26,8 +26,10 @@ Lojas sao organizadas em grupos regionais que podem trocar estoque entre si. Cad
 
 | Tipo | Criterio | Acao |
 |------|----------|------|
-| Doadora | Cobertura > alvo + 7 dias | Pode enviar estoque |
-| Receptora | Cobertura < alvo | Precisa receber estoque |
+| Doadora | Cobertura > cobertura_alvo_item | Pode enviar estoque excedente |
+| Receptora | quantidade_pedido > 0 | Precisa receber estoque |
+
+**Nota:** A cobertura alvo e determinada por item (ver secao "Logica Hibrida de Cobertura").
 
 ### Cobertura de Estoque
 
@@ -114,14 +116,50 @@ Colunas disponiveis:
 
 ## Regras de Calculo
 
+### Logica Hibrida de Cobertura (v5.7+)
+
+O sistema usa uma **logica hibrida** para determinar a cobertura alvo de cada item:
+
+```python
+# Para cada item/loja:
+cobertura_alvo_item = cobertura_dias if cobertura_dias else item['cobertura_necessaria_dias']
+```
+
+#### Cenario 1: Cobertura Fixa (informada no filtro)
+
+Quando o usuario define uma cobertura especifica (ex: 90 dias):
+- **Todos os itens** usam a mesma cobertura alvo
+- Independente da curva ABC do produto
+
+```
+Filtro: Cobertura = 90 dias
+→ Item A (curva A): alvo = 90 dias
+→ Item B (curva B): alvo = 90 dias
+→ Item C (curva C): alvo = 90 dias
+```
+
+#### Cenario 2: Cobertura ABC (automatica)
+
+Quando nao e informada cobertura (ou seleciona "ABC"):
+- **Cada item usa sua propria cobertura** calculada
+- Formula: `Lead Time + Ciclo (7d) + Seguranca ABC`
+
+```
+Filtro: Cobertura = ABC
+→ Item A (LT=15): alvo = 15 + 7 + 2 = 24 dias
+→ Item B (LT=15): alvo = 15 + 7 + 4 = 26 dias
+→ Item C (LT=20): alvo = 20 + 7 + 6 = 33 dias
+```
+
 ### Quantidade de Transferencia
 
 ```python
-# Excesso do doador (apos manter cobertura minima)
-excesso_doador = estoque_doador - (demanda_doador * COBERTURA_MINIMA_DOADOR)
+# Para cada item em cada loja:
+cobertura_alvo = cobertura_dias if cobertura_dias else item['cobertura_necessaria_dias']
 
-# Necessidade do receptor (para atingir cobertura alvo)
-necessidade_receptor = (demanda_receptor * COBERTURA_ALVO) - estoque_receptor
+# Excesso do doador (apos manter cobertura alvo)
+estoque_minimo = cobertura_alvo * demanda_diaria
+excesso_doador = estoque_atual - estoque_minimo
 
 # Quantidade a transferir
 qtd_transferir = min(excesso_doador, necessidade_receptor)
@@ -129,11 +167,12 @@ qtd_transferir = min(excesso_doador, necessidade_receptor)
 
 ### Parametros Configurados
 
-| Parametro | Valor Padrao | Descricao |
-|-----------|--------------|-----------|
-| COBERTURA_MINIMA_DOADOR | 10 dias | Minimo que doador mantem |
-| MARGEM_EXCESSO_DIAS | 7 dias | Dias acima do alvo para considerar excesso |
-| COBERTURA_ALVO_PADRAO | 21 dias | Cobertura alvo padrao |
+| Parametro | Valor | Descricao |
+|-----------|-------|-----------|
+| MARGEM_EXCESSO | 0 | Qualquer excesso acima do alvo pode ser doado |
+| COBERTURA_MINIMA_DOADOR | cobertura_alvo | Doador mantem exatamente a cobertura alvo |
+
+**Nota:** A margem de excesso foi removida (MARGEM_EXCESSO = 0) para permitir transferencias mais agressivas, especialmente em coberturas altas (60+ dias).
 
 ### Restricoes
 

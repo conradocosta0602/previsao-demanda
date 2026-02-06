@@ -96,15 +96,36 @@ Fornecedor X
 
 ### Como Funciona
 
-1. Sistema identifica lojas com **excesso de estoque** (cobertura > alvo + margem)
-2. Identifica lojas com **falta de estoque** (cobertura < alvo)
+1. Sistema identifica lojas com **excesso de estoque** (cobertura > cobertura_alvo_item)
+2. Identifica lojas com **falta de estoque** (quantidade_pedido > 0)
 3. Sugere transferencias entre lojas do **mesmo grupo regional**
 4. Prioriza por urgencia (CRITICA > ALTA > MEDIA > BAIXA)
 
+### Logica Hibrida de Cobertura (v5.7+)
+
+O sistema usa uma **logica hibrida** para determinar a cobertura alvo:
+
+```python
+cobertura_alvo_item = cobertura_dias if cobertura_dias else item['cobertura_necessaria_dias']
+```
+
+| Filtro de Cobertura | Comportamento |
+|---------------------|---------------|
+| **Fixa (ex: 90 dias)** | Todos os itens usam 90 dias como alvo |
+| **ABC (automatica)** | Cada item usa sua propria cobertura calculada |
+
+**Exemplo com Cobertura ABC:**
+- Item curva A (LT=15): alvo = 15 + 7 + 2 = **24 dias**
+- Item curva C (LT=15): alvo = 15 + 7 + 6 = **28 dias**
+
+**Exemplo com Cobertura Fixa (90 dias):**
+- Item curva A (LT=15): alvo = **90 dias**
+- Item curva C (LT=15): alvo = **90 dias**
+
 ### Regras de Transferencia
 
-- Loja doadora mantem minimo de 10 dias de cobertura apos doacao
-- Margem de excesso: 7 dias acima da cobertura alvo
+- **Margem de excesso: 0** - Qualquer excesso acima do alvo pode ser doado
+- **Cobertura minima do doador**: Doador mantem exatamente a cobertura alvo apos doacao
 - Transferencia nao pode deixar doadora em situacao de ruptura
 - Mesma loja NAO pode enviar e receber o mesmo produto
 

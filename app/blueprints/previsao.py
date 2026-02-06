@@ -176,13 +176,17 @@ def _api_gerar_previsao_banco_v2_interno():
         def add_filter(field, value, exclude_value, convert_int=False):
             if value and value != exclude_value:
                 if isinstance(value, list):
-                    if len(value) == 1:
+                    # Filtrar valores de exclusao da lista
+                    filtered = [v for v in value if v != exclude_value]
+                    if not filtered:
+                        return  # Todos os valores eram de exclusao
+                    if len(filtered) == 1:
                         where_conditions.append(f"{field} = %s")
-                        params.append(int(value[0]) if convert_int else value[0])
-                    elif len(value) > 1:
-                        placeholders = ', '.join(['%s'] * len(value))
+                        params.append(int(filtered[0]) if convert_int else filtered[0])
+                    elif len(filtered) > 1:
+                        placeholders = ', '.join(['%s'] * len(filtered))
                         where_conditions.append(f"{field} IN ({placeholders})")
-                        params.extend([int(v) if convert_int else v for v in value])
+                        params.extend([int(v) if convert_int else v for v in filtered])
                 else:
                     where_conditions.append(f"{field} = %s")
                     params.append(int(value) if convert_int else value)

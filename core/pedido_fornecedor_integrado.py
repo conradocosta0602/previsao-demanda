@@ -1071,6 +1071,10 @@ class PedidoFornecedorIntegrado:
             multiplo_caixa=parametros['multiplo_caixa']
         )
 
+        # DEBUG: Logar calculos de cobertura para itens com pedido
+        if pedido_info['quantidade_pedido'] > 0 and cobertura_dias and cobertura_dias >= 60:
+            print(f"    [DEBUG CALC] Item {codigo} Emp {cod_empresa}: prev_diaria={previsao_diaria:.3f}, cobertura_dias={cobertura_dias}, demanda_periodo={demanda_periodo:.1f}, ES={es_info['estoque_seguranca']:.1f}, estoque={estoque['estoque_efetivo']:.1f}, necessidade={pedido_info['necessidade_bruta']:.1f}, qtd_pedido={pedido_info['quantidade_pedido']}")
+
         # 10. Calcular valor do pedido (antes de calcular coberturas para usar CUE)
         valor_pedido = pedido_info['quantidade_pedido'] * preco_custo
 

@@ -75,6 +75,90 @@ def api_demanda_job_status():
         }), 500
 
 
+@demanda_job_bp.route('/api/demanda_job/status/<cnpj_fornecedor>', methods=['GET'])
+def api_demanda_job_status_fornecedor(cnpj_fornecedor):
+    """
+    Retorna status do calculo de demanda para um fornecedor especifico.
+
+    Usado para polling do frontend apos iniciar calculo em background.
+
+    Args:
+        cnpj_fornecedor: CNPJ do fornecedor
+
+    Returns:
+        JSON com status atual do calculo
+    """
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Buscar ultima execucao deste fornecedor
+        cursor.execute("""
+            SELECT
+                id, data_execucao, tipo, status,
+                total_itens_processados, total_itens_erro,
+                total_fornecedores, tempo_execucao_ms,
+                cnpj_fornecedor_filtro
+            FROM demanda_calculo_execucao
+            WHERE cnpj_fornecedor_filtro = %s
+            ORDER BY data_execucao DESC
+            LIMIT 1
+        """, (cnpj_fornecedor,))
+        execucao = cursor.fetchone()
+
+        if not execucao:
+            cursor.close()
+            conn.close()
+            return jsonify({
+                'success': True,
+                'status': 'sem_execucao',
+                'mensagem': 'Nenhuma execucao encontrada para este fornecedor'
+            })
+
+        execucao = dict(execucao)
+
+        # Converter datetime para string
+        if execucao.get('data_execucao'):
+            execucao['data_execucao'] = execucao['data_execucao'].isoformat()
+
+        # Contar registros atuais para este fornecedor
+        cursor.execute("""
+            SELECT COUNT(*) as total_registros,
+                   COUNT(DISTINCT cod_produto) as total_produtos
+            FROM demanda_pre_calculada
+            WHERE cnpj_fornecedor = %s
+        """, (cnpj_fornecedor,))
+        contagem = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        # Determinar se o calculo esta completo
+        is_concluido = execucao.get('status') == 'concluido'
+        is_erro = execucao.get('status') == 'erro'
+        is_processando = execucao.get('status') in ('iniciado', 'processando')
+
+        return jsonify({
+            'success': True,
+            'status': execucao.get('status', 'desconhecido'),
+            'is_concluido': is_concluido,
+            'is_erro': is_erro,
+            'is_processando': is_processando,
+            'execucao': execucao,
+            'dados_atuais': {
+                'total_registros': contagem['total_registros'] if contagem else 0,
+                'total_produtos': contagem['total_produtos'] if contagem else 0
+            }
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'erro': str(e)
+        }), 500
+
+
 @demanda_job_bp.route('/api/demanda_job/recalcular', methods=['POST'])
 def api_demanda_job_recalcular():
     """

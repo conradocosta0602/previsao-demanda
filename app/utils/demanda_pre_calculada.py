@@ -95,7 +95,8 @@ def precarregar_demanda_em_lote(
 def obter_demanda_do_cache(
     cache: Dict,
     cod_produto: str,
-    cod_empresa: int = None
+    cod_empresa: int = None,
+    num_lojas: int = 1
 ) -> Tuple[float, float, Dict]:
     """
     Obtem demanda do cache pre-carregado.
@@ -104,6 +105,7 @@ def obter_demanda_do_cache(
         cache: Cache retornado por precarregar_demanda_em_lote()
         cod_produto: Codigo do produto
         cod_empresa: Codigo da empresa/loja (None = consolidado)
+        num_lojas: Numero de lojas para dividir demanda consolidada (default=1)
 
     Returns:
         Tupla (demanda_diaria, desvio_padrao, metadata)
@@ -111,12 +113,28 @@ def obter_demanda_do_cache(
     key = (str(cod_produto), cod_empresa)
     demanda = cache.get(key)
 
+    # FALLBACK: Se nao encontrou por loja especifica, usar consolidado e dividir
+    usar_consolidado_dividido = False
+    if not demanda and cod_empresa is not None:
+        key_consolidado = (str(cod_produto), None)
+        demanda = cache.get(key_consolidado)
+        if demanda:
+            usar_consolidado_dividido = True
+
     if demanda:
+        demanda_diaria = float(demanda.get('demanda_diaria_base', 0) or 0)
+        desvio = float(demanda.get('desvio_padrao', 0) or 0)
+
+        # Se usando consolidado para loja especifica, dividir pelo numero de lojas
+        if usar_consolidado_dividido and num_lojas > 1:
+            demanda_diaria = demanda_diaria / num_lojas
+            desvio = desvio / num_lojas
+
         return (
-            float(demanda.get('demanda_diaria_base', 0) or 0),
-            float(demanda.get('desvio_padrao', 0) or 0),
+            demanda_diaria,
+            desvio,
             {
-                'fonte': 'pre_calculada',
+                'fonte': 'pre_calculada_consolidada' if usar_consolidado_dividido else 'pre_calculada',
                 'metodo_usado': demanda.get('metodo_usado', 'auto'),
                 'fator_sazonal': float(demanda.get('fator_sazonal', 1.0) or 1.0),
                 'fator_tendencia_yoy': float(demanda.get('fator_tendencia_yoy', 1.0) or 1.0),
@@ -125,7 +143,8 @@ def obter_demanda_do_cache(
                 'tem_ajuste_manual': demanda.get('tem_ajuste_manual', False),
                 'data_calculo': demanda.get('data_calculo'),
                 'demanda_mensal': float(demanda.get('demanda_efetiva', 0) or 0),
-                'variacao_vs_aa': demanda.get('variacao_vs_aa')
+                'variacao_vs_aa': demanda.get('variacao_vs_aa'),
+                'dividido_por_lojas': num_lojas if usar_consolidado_dividido else 1
             }
         )
 

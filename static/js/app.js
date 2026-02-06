@@ -3546,7 +3546,7 @@ function verificarFornecedorUnico() {
 
     if (!fornecedores || fornecedores.length === 0) {
         console.log('[Validacao] Nenhum fornecedor selecionado');
-        return { valido: false, fornecedor: null };
+        return { valido: false, fornecedor: null, cnpj: null };
     }
 
     // Válido apenas se houver exatamente um fornecedor selecionado
@@ -3554,7 +3554,21 @@ function verificarFornecedorUnico() {
     const valor = fornecedores[0];
     const valido = fornecedores.length === 1 && valor && valor !== 'TODOS' && valor !== 'Carregando...';
     console.log('[Validacao] Fornecedor verificado:', valor, '- Valido:', valido, '- Total selecionados:', fornecedores.length);
-    return { valido: valido, fornecedor: valido ? valor : null };
+
+    // Tentar extrair CNPJ do fornecedor (se estiver no formato "NOME - CNPJ" ou se for só CNPJ)
+    let cnpj = null;
+    if (valido && valor) {
+        // Verificar se o valor é um CNPJ puro (só números)
+        const cnpjMatch = valor.match(/(\d{14})/);
+        if (cnpjMatch) {
+            cnpj = cnpjMatch[1];
+        } else {
+            // Se não encontrou, usar o próprio valor (pode ser nome do fornecedor)
+            cnpj = valor;
+        }
+    }
+
+    return { valido: valido, fornecedor: valido ? valor : null, cnpj: cnpj };
 }
 
 // Função para verificar se a granularidade permite validação
@@ -5321,6 +5335,10 @@ async function exportarRelatorioItens() {
 // SALVAR DEMANDA PRE-CALCULADA (v5.7)
 // =====================================================
 
+// Variável global para armazenar o intervalo de polling
+let _pollingInterval = null;
+let _cnpjEmProcessamento = null;
+
 /**
  * Salva a demanda calculada na tabela demanda_pre_calculada para uso no Pedido Fornecedor.
  * Chama a API /api/demanda_job/recalcular que executa o job de cálculo.
@@ -5330,7 +5348,7 @@ async function salvarDemandaPreCalculada() {
     if (!btn) return;
 
     // Verificar se há fornecedor selecionado
-    const { valido: fornecedorUnico, fornecedor } = verificarFornecedorUnico();
+    const { valido: fornecedorUnico, fornecedor, cnpj } = verificarFornecedorUnico();
 
     if (!fornecedorUnico || !fornecedor) {
         alert('Selecione um fornecedor específico para salvar a demanda.\n\nA demanda será recalculada e salva para todos os itens deste fornecedor.');
@@ -5352,7 +5370,6 @@ async function salvarDemandaPreCalculada() {
     if (!confirmar) return;
 
     // Atualizar botão para estado de carregamento
-    const textoOriginal = btn.innerHTML;
     btn.innerHTML = '⏳ Iniciando...';
     btn.disabled = true;
     btn.style.opacity = '0.7';
@@ -5381,14 +5398,16 @@ async function salvarDemandaPreCalculada() {
         const isAsync = resultado.async;
 
         if (isAsync) {
-            alert(
-                `✅ Cálculo iniciado em background!\n\n` +
-                `Fornecedor: ${fornecedor}\n` +
-                `Itens a processar: ${stats.total_itens || 'calculando...'}\n` +
-                `Registros estimados: ${stats.total_registros || 'calculando...'}\n\n` +
-                `O processo está sendo executado em segundo plano.\n` +
-                `Os valores estarão disponíveis na Tela de Pedido Fornecedor em alguns minutos.`
-            );
+            // Armazenar CNPJ para polling (usar o fornecedor como identificador)
+            _cnpjEmProcessamento = cnpj || fornecedor;
+
+            // Mostrar mensagem inicial
+            mostrarStatusCalculo('processando', fornecedor, stats.total_itens, 0);
+
+            // Iniciar polling para verificar status
+            iniciarPollingStatus(_cnpjEmProcessamento, fornecedor, stats.total_itens);
+
+            console.log('[SalvarDemanda] Cálculo iniciado, polling ativado para:', _cnpjEmProcessamento);
         } else {
             alert(
                 `✅ Demanda salva com sucesso!\n\n` +
@@ -5397,6 +5416,10 @@ async function salvarDemandaPreCalculada() {
                 `Tempo de execução: ${((stats.tempo_ms || 0) / 1000).toFixed(1)}s\n\n` +
                 `Os valores agora estão disponíveis na Tela de Pedido Fornecedor.`
             );
+            // Restaurar botão
+            btn.innerHTML = '💾 Salvar Demanda';
+            btn.disabled = false;
+            btn.style.opacity = '1';
         }
 
         console.log('[SalvarDemanda] Demanda salva com sucesso:', resultado);
@@ -5404,11 +5427,190 @@ async function salvarDemandaPreCalculada() {
     } catch (error) {
         console.error('[SalvarDemanda] Erro ao salvar demanda:', error);
         alert(`❌ Erro ao salvar demanda:\n\n${error.message}`);
-    } finally {
         // Restaurar botão
-        btn.innerHTML = textoOriginal;
+        btn.innerHTML = '💾 Salvar Demanda';
         btn.disabled = false;
         btn.style.opacity = '1';
+    }
+}
+
+/**
+ * Inicia o polling para verificar o status do cálculo em background.
+ */
+function iniciarPollingStatus(cnpj, nomeFornecedor, totalItensEstimado) {
+    // Parar polling anterior se existir
+    if (_pollingInterval) {
+        clearInterval(_pollingInterval);
+    }
+
+    let tentativas = 0;
+    const maxTentativas = 120; // 10 minutos (5s x 120)
+
+    _pollingInterval = setInterval(async () => {
+        tentativas++;
+
+        try {
+            const response = await fetch(`/api/demanda_job/status/${encodeURIComponent(cnpj)}`);
+            const data = await response.json();
+
+            if (!data.success) {
+                console.warn('[Polling] Erro na resposta:', data.erro);
+                return;
+            }
+
+            const btn = document.getElementById('salvarDemandaBtn');
+
+            if (data.is_concluido) {
+                // Cálculo concluído com sucesso
+                clearInterval(_pollingInterval);
+                _pollingInterval = null;
+                _cnpjEmProcessamento = null;
+
+                const execucao = data.execucao || {};
+                const dadosAtuais = data.dados_atuais || {};
+
+                mostrarStatusCalculo('concluido', nomeFornecedor, dadosAtuais.total_produtos, execucao.tempo_execucao_ms);
+
+                // Restaurar botão
+                if (btn) {
+                    btn.innerHTML = '💾 Salvar Demanda';
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                }
+
+                console.log('[Polling] Cálculo concluído:', data);
+
+            } else if (data.is_erro) {
+                // Cálculo falhou
+                clearInterval(_pollingInterval);
+                _pollingInterval = null;
+                _cnpjEmProcessamento = null;
+
+                mostrarStatusCalculo('erro', nomeFornecedor, 0, 0);
+
+                // Restaurar botão
+                if (btn) {
+                    btn.innerHTML = '💾 Salvar Demanda';
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                }
+
+                console.error('[Polling] Cálculo com erro:', data);
+
+            } else if (data.is_processando) {
+                // Ainda processando - atualizar status visual
+                const dadosAtuais = data.dados_atuais || {};
+                if (btn) {
+                    btn.innerHTML = `⏳ Processando... (${dadosAtuais.total_produtos || 0} itens)`;
+                }
+                console.log('[Polling] Ainda processando:', dadosAtuais);
+
+            } else if (tentativas >= maxTentativas) {
+                // Timeout
+                clearInterval(_pollingInterval);
+                _pollingInterval = null;
+                _cnpjEmProcessamento = null;
+
+                mostrarStatusCalculo('timeout', nomeFornecedor, 0, 0);
+
+                // Restaurar botão
+                if (btn) {
+                    btn.innerHTML = '💾 Salvar Demanda';
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                }
+
+                console.warn('[Polling] Timeout após', tentativas, 'tentativas');
+            }
+
+        } catch (error) {
+            console.error('[Polling] Erro ao verificar status:', error);
+        }
+
+    }, 5000); // Verificar a cada 5 segundos
+}
+
+/**
+ * Mostra uma notificação visual do status do cálculo.
+ */
+function mostrarStatusCalculo(status, fornecedor, totalItens, tempoMs) {
+    // Remover notificação anterior se existir
+    const notifAnterior = document.getElementById('notif-calculo-demanda');
+    if (notifAnterior) notifAnterior.remove();
+
+    const cores = {
+        processando: { bg: '#dbeafe', border: '#3b82f6', icon: '⏳', iconColor: '#2563eb' },
+        concluido: { bg: '#d1fae5', border: '#10b981', icon: '✓', iconColor: '#059669' },
+        erro: { bg: '#fee2e2', border: '#ef4444', icon: '✕', iconColor: '#dc2626' },
+        timeout: { bg: '#fef3c7', border: '#f59e0b', icon: '⚠', iconColor: '#d97706' }
+    };
+
+    const mensagens = {
+        processando: `Calculando demanda para ${fornecedor}...\nItens estimados: ${totalItens || '...'}`,
+        concluido: `Demanda salva com sucesso!\nFornecedor: ${fornecedor}\nItens processados: ${totalItens}\nTempo: ${((tempoMs || 0) / 1000).toFixed(1)}s`,
+        erro: `Erro ao calcular demanda para ${fornecedor}.\nVerifique os logs do servidor.`,
+        timeout: `Tempo limite excedido.\nO cálculo pode ainda estar em andamento.\nVerifique o status manualmente.`
+    };
+
+    const cor = cores[status] || cores.processando;
+    const mensagem = mensagens[status] || 'Status desconhecido';
+
+    const notif = document.createElement('div');
+    notif.id = 'notif-calculo-demanda';
+    notif.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${cor.bg};
+        border: 2px solid ${cor.border};
+        border-radius: 8px;
+        padding: 16px 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 10000;
+        max-width: 350px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        animation: slideIn 0.3s ease-out;
+    `;
+
+    notif.innerHTML = `
+        <style>
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+        </style>
+        <div style="display: flex; align-items: flex-start; gap: 12px;">
+            <div style="font-size: 24px; color: ${cor.iconColor};">${cor.icon}</div>
+            <div style="flex: 1;">
+                <div style="font-weight: 600; color: #1f2937; margin-bottom: 4px;">
+                    ${status === 'processando' ? 'Processando...' : status === 'concluido' ? 'Concluído!' : status === 'erro' ? 'Erro!' : 'Timeout'}
+                </div>
+                <div style="font-size: 13px; color: #4b5563; white-space: pre-line;">
+                    ${mensagem}
+                </div>
+            </div>
+            <button onclick="this.parentElement.parentElement.remove()" style="
+                background: none;
+                border: none;
+                font-size: 18px;
+                color: #9ca3af;
+                cursor: pointer;
+                padding: 0;
+                line-height: 1;
+            ">&times;</button>
+        </div>
+    `;
+
+    document.body.appendChild(notif);
+
+    // Auto-remover após alguns segundos (exceto se processando)
+    if (status !== 'processando') {
+        setTimeout(() => {
+            if (notif.parentElement) {
+                notif.style.animation = 'slideIn 0.3s ease-out reverse';
+                setTimeout(() => notif.remove(), 300);
+            }
+        }, status === 'concluido' ? 8000 : 10000);
     }
 }
 

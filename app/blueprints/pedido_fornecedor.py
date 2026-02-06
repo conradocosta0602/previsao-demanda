@@ -329,12 +329,14 @@ def api_pedido_fornecedor_integrado():
                 cnpj_forn = row.get('codigo_fornecedor', '')
 
                 if is_pedido_multiloja:
+                    num_lojas = len(lojas_demanda)
                     for loja_cod in lojas_demanda:
                         loja_nome = mapa_nomes_lojas.get(loja_cod, f"Loja {loja_cod}")
 
                         # PRIORIDADE 1: Usar demanda pre-calculada do CACHE (otimizado)
+                        # Se nao encontrar por loja, usa consolidado dividido pelo numero de lojas
                         demanda_diaria, desvio_padrao, metadata = obter_demanda_do_cache(
-                            cache_demanda_global, str(codigo), cod_empresa=loja_cod
+                            cache_demanda_global, str(codigo), cod_empresa=loja_cod, num_lojas=num_lojas
                         )
 
                         # FALLBACK: Se nao houver no cache, calcular em tempo real
@@ -393,9 +395,11 @@ def api_pedido_fornecedor_integrado():
                         resultado['pedido_minimo_fornecedor'] = pedido_min_forn
                         resultado['sem_demanda_loja'] = demanda_diaria <= 0
 
-                        # DEBUG: Item 468618
-                        if codigo == 468618:
-                            print(f"  [DEBUG 468618] Loja {loja_cod}: estoque={resultado.get('estoque_atual',0)}, transito={resultado.get('estoque_transito',0)}, demanda_dia={demanda_diaria:.2f}, cobertura_atual={resultado.get('cobertura_atual_dias',0):.1f}d, qtd_pedido={resultado.get('quantidade_pedido',0)}, deve_pedir={resultado.get('deve_pedir')}")
+                        # DEBUG: Qualquer item com cobertura insuficiente
+                        cobertura_alvo_debug = cobertura_dias if cobertura_dias else 21
+                        cobertura_pos = resultado.get('cobertura_pos_pedido_dias', 999)
+                        if cobertura_pos < cobertura_alvo_debug and resultado.get('quantidade_pedido', 0) > 0:
+                            print(f"  [DEBUG COBERTURA] Item {codigo} Loja {loja_cod}: demanda_dia={demanda_diaria:.3f}, estoque={resultado.get('estoque_atual',0)}, ES={resultado.get('estoque_seguranca',0)}, demanda_periodo={resultado.get('demanda_prevista',0)}, qtd_pedido={resultado.get('quantidade_pedido',0)}, cobertura_alvo={cobertura_alvo_debug}d, cobertura_pos={cobertura_pos:.1f}d, fonte={metadata.get('fonte', 'N/A')}")
 
                         resultados.append(resultado)
                 else:
@@ -537,8 +541,8 @@ def api_pedido_fornecedor_integrado():
                     itens_por_codigo[codigo].append(item)
 
                 # Parametros de transferencia
-                COBERTURA_MINIMA_DOADOR = 10  # Dias minimos que doador deve manter
-                MARGEM_EXCESSO = 7  # Dias acima da cobertura alvo para considerar excesso
+                # MARGEM_EXCESSO = 0 significa que qualquer excesso acima do alvo pode ser doado
+                MARGEM_EXCESSO = 0
 
                 produtos_analisados = 0
                 for codigo, itens_loja in itens_por_codigo.items():
@@ -551,8 +555,6 @@ def api_pedido_fornecedor_integrado():
                     lojas_com_excesso = []
                     lojas_com_falta = []
 
-                    cobertura_alvo = cobertura_dias if cobertura_dias else 21
-
                     for item in itens_loja:
                         cobertura_atual = item.get('cobertura_atual_dias', 0) or 0
                         demanda_diaria = item.get('demanda_prevista_diaria', 0) or 0
@@ -562,12 +564,17 @@ def api_pedido_fornecedor_integrado():
                         qtd_pedido = item.get('quantidade_pedido', 0) or 0
                         cue = item.get('cue', 0) or item.get('preco_custo', 0) or 0
 
-                        # Loja com EXCESSO: cobertura > alvo + margem
-                        if cobertura_atual > cobertura_alvo + MARGEM_EXCESSO and demanda_diaria > 0:
-                            excesso_dias = cobertura_atual - cobertura_alvo
+                        # IMPORTANTE: Usar cobertura necessaria do PROPRIO ITEM
+                        # Quando cobertura_dias e informada no filtro, usa ela
+                        # Quando e ABC (None), usa a cobertura calculada para este item especifico
+                        cobertura_alvo_item = cobertura_dias if cobertura_dias else item.get('cobertura_necessaria_dias', 21)
+
+                        # Loja com EXCESSO: cobertura > alvo (pode doar)
+                        if cobertura_atual > cobertura_alvo_item + MARGEM_EXCESSO and demanda_diaria > 0:
+                            excesso_dias = cobertura_atual - cobertura_alvo_item
                             excesso_unidades = int(excesso_dias * demanda_diaria)
-                            # Garantir que doador mantenha cobertura minima
-                            estoque_minimo = COBERTURA_MINIMA_DOADOR * demanda_diaria
+                            # Doador deve manter pelo menos a cobertura alvo do item
+                            estoque_minimo = cobertura_alvo_item * demanda_diaria
                             disponivel_doar = max(0, int(estoque_atual - estoque_minimo))
                             if disponivel_doar > 0:
                                 lojas_com_excesso.append({
@@ -575,6 +582,7 @@ def api_pedido_fornecedor_integrado():
                                     'nome_loja': nome_loja,
                                     'estoque': estoque_atual,
                                     'cobertura_dias': cobertura_atual,
+                                    'cobertura_alvo': cobertura_alvo_item,  # Guardar para debug
                                     'demanda_diaria': demanda_diaria,
                                     'excesso_unidades': min(excesso_unidades, disponivel_doar),
                                     'disponivel_doar': disponivel_doar,
@@ -588,6 +596,7 @@ def api_pedido_fornecedor_integrado():
                                 'nome_loja': nome_loja,
                                 'estoque': estoque_atual,
                                 'cobertura_dias': cobertura_atual,
+                                'cobertura_alvo': cobertura_alvo_item,  # Guardar para debug
                                 'demanda_diaria': demanda_diaria,
                                 'necessidade': qtd_pedido,
                                 'item_ref': item,
@@ -595,7 +604,16 @@ def api_pedido_fornecedor_integrado():
                             })
 
                     # Debug: mostrar produtos com potencial de transferencia
-                    if lojas_com_excesso or lojas_com_falta:
+                    if lojas_com_falta and not lojas_com_excesso:
+                        # Mostrar por que nao ha doadoras
+                        coberturas_lojas = [(item.get('cod_loja'), item.get('cobertura_atual_dias', 0), item.get('cobertura_necessaria_dias', 21)) for item in itens_loja]
+                        max_cobertura = max([c[1] for c in coberturas_lojas]) if coberturas_lojas else 0
+                        # Pegar cobertura alvo media para o debug (pode variar por item em ABC)
+                        cobertura_alvo_media = sum([c[2] for c in coberturas_lojas]) / len(coberturas_lojas) if coberturas_lojas else 21
+                        if max_cobertura > 0:
+                            modo_cobertura = "fixa" if cobertura_dias else "ABC"
+                            print(f"    Produto {codigo}: SEM DOADORAS - cobertura alvo={cobertura_alvo_media:.0f}d ({modo_cobertura}), max_existente={max_cobertura:.1f}d, {len(lojas_com_falta)} lojas precisam")
+                    elif lojas_com_excesso or lojas_com_falta:
                         print(f"    Produto {codigo}: {len(lojas_com_excesso)} lojas com excesso, {len(lojas_com_falta)} lojas com falta")
 
                     # Se ha lojas com excesso E lojas com falta, calcular transferencias
