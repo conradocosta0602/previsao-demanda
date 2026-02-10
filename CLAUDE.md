@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v5.9** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.0** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -146,6 +146,31 @@ demanda_loja = demanda_consolidada × proporcao_loja
 
 **Verificacao V14**: Valida calculo de proporcoes, soma = 1.0, e preservacao do total.
 
+### 7. Dashboard de KPIs (V15)
+
+**Arquivos**: `app/blueprints/kpis.py`, `static/js/kpis.js`, `templates/kpis.html`
+
+Dashboard para monitoramento de indicadores de performance do sistema.
+
+**KPIs Disponiveis**:
+- **Ruptura**: % de pontos de abastecimento sem estoque (meta: < 5%)
+- **Cobertura Ponderada**: Dias de cobertura de estoque (meta: 30 dias)
+- **WMAPE**: Erro percentual ponderado da previsao (meta: < 20%)
+
+**Definicoes**:
+- **Item Ativo**: NAO esta em NC, FL, CO, EN ou FF na situacao de compra
+- **Ponto de Abastecimento**: Item ativo × Loja × Dia
+- **Ruptura**: Pontos sem estoque / Total pontos × 100
+
+**Filtros**:
+- Por filial, fornecedor, categoria e linha
+- Periodo configuravel
+- Granularidade: diaria, semanal ou mensal
+
+**Graficos**:
+- Evolucao temporal de Ruptura e Cobertura
+- Linha de meta para referencia
+
 ## APIs Importantes
 
 | Endpoint | Metodo | Descricao |
@@ -155,6 +180,9 @@ demanda_loja = demanda_consolidada × proporcao_loja
 | `/api/demanda_job/recalcular` | POST | Recalcula demanda |
 | `/api/demanda_job/status/<cnpj>` | GET | Status do job |
 | `/api/validacao/executar-checklist` | POST | Executa validacao |
+| `/api/kpis/dashboard` | GET | Dashboard de KPIs |
+| `/api/kpis/evolucao` | GET | Evolucao temporal dos KPIs |
+| `/api/kpis/ranking` | GET | Ranking de itens por ruptura |
 
 ## Tabelas Principais
 
@@ -252,12 +280,15 @@ DB_PORT=5432
 
 ## Commits Recentes Relevantes
 
+- `51ab4e4` - feat(database): migrations para KPIs e indices de ruptura
+- `9c0c1ff` - perf(kpis): otimizar queries de ruptura com filtro de itens abastecidos
+- `79d174f` - feat(demanda): suporte a multiplos fornecedores no Salvar Demanda + timeout 10min
 - `e7d55ec` - perf: cache de produtos e EventManager reutilizavel
-- `71e15ec` - fix: deteccao de conclusao do job Salvar Demanda
 - Sistema de Validacao de Conformidade (v5.6)
 - Fator de Tendencia YoY (v5.7)
 - V13: Logica Hibrida de Transferencias (v5.8)
 - V14: Rateio Proporcional de Demanda Multi-Loja (v5.9)
+- V15: Dashboard de KPIs (Ruptura, Cobertura, WMAPE) (v6.0)
 
 ## Documentacao Complementar
 
@@ -273,4 +304,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v5.9)
+**Ultima atualizacao**: Fevereiro 2026 (v6.0)
