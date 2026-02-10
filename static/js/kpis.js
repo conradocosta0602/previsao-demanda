@@ -45,7 +45,7 @@ const FAIXAS = {
         verde: 50      // 20-50%, >= 50% = vermelho
     },
     cobertura: {
-        meta: 90       // Meta de 90 dias
+        meta: 30       // Meta de 30 dias de cobertura
     }
 };
 
@@ -330,21 +330,34 @@ function atualizarCardKPI(id, dados, sufixo, getCorFunc) {
         valorEl.textContent = valorFormatado;
     }
 
-    if (tendenciaEl && dados.variacao !== undefined) {
-        const variacao = dados.variacao;
-        const sinal = variacao > 0 ? '+' : '';
-        tendenciaEl.textContent = `${sinal}${variacao.toFixed(1)}% vs período anterior`;
+    if (tendenciaEl) {
+        // Mostrar periodo de referencia e variacao
+        let textoTendencia = '';
+
+        if (dados.periodo) {
+            textoTendencia = dados.periodo;
+        }
+
+        if (dados.variacao !== undefined && dados.variacao !== 0) {
+            const variacao = dados.variacao;
+            const sinal = variacao > 0 ? '+' : '';
+            textoTendencia += ` | ${sinal}${variacao.toFixed(1)}% vs anterior`;
+        }
+
+        tendenciaEl.textContent = textoTendencia;
         tendenciaEl.className = 'kpi-tendencia';
 
         // Para ruptura e WMAPE, diminuir é bom
         // Para cobertura, aumentar é bom
-        if (id === 'ruptura' || id === 'wmape') {
-            tendenciaEl.classList.add(variacao <= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
-        } else if (id === 'cobertura') {
-            tendenciaEl.classList.add(variacao >= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
-        } else {
-            // BIAS - quanto mais próximo de 0, melhor
-            tendenciaEl.classList.add(Math.abs(variacao) <= 5 ? 'tendencia-positiva' : 'tendencia-negativa');
+        if (dados.variacao !== undefined && dados.variacao !== 0) {
+            if (id === 'ruptura' || id === 'wmape') {
+                tendenciaEl.classList.add(dados.variacao <= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
+            } else if (id === 'cobertura') {
+                tendenciaEl.classList.add(dados.variacao >= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
+            } else {
+                // BIAS - quanto mais próximo de 0, melhor
+                tendenciaEl.classList.add(Math.abs(dados.variacao) <= 5 ? 'tendencia-positiva' : 'tendencia-negativa');
+            }
         }
     }
 
@@ -498,7 +511,7 @@ function criarGraficoCobertura(dados) {
                     pointHoverRadius: 6
                 },
                 {
-                    label: 'Meta (90 dias)',
+                    label: 'Meta (30 dias)',
                     data: meta,
                     borderColor: '#6366f1',
                     borderWidth: 2,
