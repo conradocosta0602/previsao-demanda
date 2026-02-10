@@ -2905,9 +2905,9 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
         console.log('Dados completos:', JSON.stringify(dados, null, 2));
 
         // Enviar requisição (Bottom-Up com sazonalidade, tendência e limitadores)
-        // Timeout de 5 minutos para permitir processamento de grandes volumes
+        // Timeout de 10 minutos para permitir processamento de grandes volumes
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutos
+        const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minutos
 
         let response;
         try {
@@ -2922,7 +2922,7 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
         } catch (fetchError) {
             clearTimeout(timeoutId);
             if (fetchError.name === 'AbortError') {
-                throw new Error('Tempo limite excedido (5 min). Tente filtrar menos itens.');
+                throw new Error('Tempo limite excedido (10 min). Tente filtrar menos itens.');
             }
             throw fetchError;
         }
@@ -5095,6 +5095,9 @@ async function salvarAjustesItem() {
             mostrarMensagemValidacao('sucesso', 'Ajustes Salvos',
                 `${ajustesParaSalvar.length} ajuste(s) salvos com sucesso para o item ${codProduto}`);
 
+            // Habilitar botão "Salvar Demanda" após ajuste de item
+            atualizarBotaoSalvarDemanda();
+
             // Desselecionar item
             desselecionarItemDrillDown();
         } else {
@@ -5342,25 +5345,30 @@ let _cnpjEmProcessamento = null;
 /**
  * Salva a demanda calculada na tabela demanda_pre_calculada para uso no Pedido Fornecedor.
  * Chama a API /api/demanda_job/recalcular que executa o job de cálculo.
+ * Suporta múltiplos fornecedores - processa um por vez sequencialmente.
  */
 async function salvarDemandaPreCalculada() {
     const btn = document.getElementById('salvarDemandaBtn');
     if (!btn) return;
 
-    // Verificar se há fornecedor selecionado
-    const { valido: fornecedorUnico, fornecedor, cnpj } = verificarFornecedorUnico();
+    // Verificar se há fornecedor(es) selecionado(s)
+    const { valido, fornecedores, quantidade } = verificarFornecedoresSelecionados();
 
-    if (!fornecedorUnico || !fornecedor) {
-        alert('Selecione um fornecedor específico para salvar a demanda.\n\nA demanda será recalculada e salva para todos os itens deste fornecedor.');
+    if (!valido || fornecedores.length === 0) {
+        alert('Selecione pelo menos um fornecedor para salvar a demanda.\n\nA demanda será recalculada e salva para todos os itens do(s) fornecedor(es).');
         return;
     }
 
     // Confirmar ação
+    const mensagemFornecedores = quantidade === 1
+        ? `Fornecedor: ${fornecedores[0]}`
+        : `Fornecedores (${quantidade}):\n${fornecedores.slice(0, 5).map(f => `• ${f}`).join('\n')}${quantidade > 5 ? `\n... e mais ${quantidade - 5}` : ''}`;
+
     const confirmar = confirm(
-        `Deseja salvar a demanda pré-calculada para o fornecedor selecionado?\n\n` +
-        `Fornecedor: ${fornecedor}\n\n` +
+        `Deseja salvar a demanda pré-calculada para ${quantidade === 1 ? 'o fornecedor selecionado' : `os ${quantidade} fornecedores selecionados`}?\n\n` +
+        `${mensagemFornecedores}\n\n` +
         `Esta ação irá:\n` +
-        `• Recalcular a demanda de todos os itens do fornecedor\n` +
+        `• Recalcular a demanda de todos os itens ${quantidade === 1 ? 'do fornecedor' : 'dos fornecedores'}\n` +
         `• Salvar os valores na tabela demanda_pre_calculada\n` +
         `• Os valores serão usados na Tela de Pedido Fornecedor\n\n` +
         `O processo será executado em background e pode levar alguns minutos.\n\n` +
@@ -5370,67 +5378,79 @@ async function salvarDemandaPreCalculada() {
     if (!confirmar) return;
 
     // Atualizar botão para estado de carregamento
-    btn.innerHTML = '⏳ Iniciando...';
+    btn.innerHTML = `⏳ Iniciando (0/${quantidade})...`;
     btn.disabled = true;
     btn.style.opacity = '0.7';
 
-    try {
-        // Chamar API de recálculo (async por padrão)
-        const response = await fetch('/api/demanda_job/recalcular', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                cnpj_fornecedor: fornecedor,
-                async: true
-            })
-        });
+    let processados = 0;
+    let erros = [];
+    let totalItensProcessados = 0;
+    let totalRegistrosSalvos = 0;
 
-        const resultado = await response.json();
+    // Processar fornecedores sequencialmente
+    for (const fornecedor of fornecedores) {
+        try {
+            btn.innerHTML = `⏳ Processando (${processados + 1}/${quantidade})...`;
 
-        if (!response.ok || !resultado.success) {
-            throw new Error(resultado.erro || 'Erro ao iniciar cálculo');
+            // Chamar API de recálculo
+            const response = await fetch('/api/demanda_job/recalcular', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    cnpj_fornecedor: fornecedor,
+                    async: false  // Síncrono para processar sequencialmente
+                })
+            });
+
+            const resultado = await response.json();
+
+            if (!response.ok || !resultado.success) {
+                erros.push(`${fornecedor}: ${resultado.erro || 'Erro desconhecido'}`);
+            } else {
+                const stats = resultado.resultado || {};
+                totalItensProcessados += stats.total_itens || 0;
+                totalRegistrosSalvos += stats.total_registros || 0;
+                processados++;
+            }
+
+            console.log(`[SalvarDemanda] Fornecedor ${fornecedor} processado:`, resultado);
+
+        } catch (error) {
+            console.error(`[SalvarDemanda] Erro ao processar ${fornecedor}:`, error);
+            erros.push(`${fornecedor}: ${error.message}`);
         }
+    }
 
-        // Mostrar resultado
-        const stats = resultado.resultado || {};
-        const isAsync = resultado.async;
+    // Restaurar botão
+    btn.innerHTML = '💾 Salvar Demanda';
+    btn.disabled = false;
+    btn.style.opacity = '1';
 
-        if (isAsync) {
-            // Armazenar CNPJ para polling (usar o fornecedor como identificador)
-            _cnpjEmProcessamento = cnpj || fornecedor;
-
-            // Mostrar mensagem inicial
-            mostrarStatusCalculo('processando', fornecedor, stats.total_itens, 0);
-
-            // Iniciar polling para verificar status
-            iniciarPollingStatus(_cnpjEmProcessamento, fornecedor, stats.total_itens);
-
-            console.log('[SalvarDemanda] Cálculo iniciado, polling ativado para:', _cnpjEmProcessamento);
-        } else {
-            alert(
-                `✅ Demanda salva com sucesso!\n\n` +
-                `Itens processados: ${stats.total_itens || 0}\n` +
-                `Registros salvos: ${stats.total_registros || 0}\n` +
-                `Tempo de execução: ${((stats.tempo_ms || 0) / 1000).toFixed(1)}s\n\n` +
-                `Os valores agora estão disponíveis na Tela de Pedido Fornecedor.`
-            );
-            // Restaurar botão
-            btn.innerHTML = '💾 Salvar Demanda';
-            btn.disabled = false;
-            btn.style.opacity = '1';
-        }
-
-        console.log('[SalvarDemanda] Demanda salva com sucesso:', resultado);
-
-    } catch (error) {
-        console.error('[SalvarDemanda] Erro ao salvar demanda:', error);
-        alert(`❌ Erro ao salvar demanda:\n\n${error.message}`);
-        // Restaurar botão
-        btn.innerHTML = '💾 Salvar Demanda';
-        btn.disabled = false;
-        btn.style.opacity = '1';
+    // Mostrar resultado final
+    if (erros.length === 0) {
+        alert(
+            `✅ Demanda salva com sucesso!\n\n` +
+            `Fornecedores processados: ${processados}/${quantidade}\n` +
+            `Total de itens: ${totalItensProcessados}\n` +
+            `Total de registros: ${totalRegistrosSalvos}\n\n` +
+            `Os valores agora estão disponíveis na Tela de Pedido Fornecedor.`
+        );
+    } else if (processados > 0) {
+        alert(
+            `⚠️ Demanda salva parcialmente!\n\n` +
+            `Fornecedores processados: ${processados}/${quantidade}\n` +
+            `Total de itens: ${totalItensProcessados}\n` +
+            `Total de registros: ${totalRegistrosSalvos}\n\n` +
+            `Erros encontrados:\n${erros.slice(0, 3).join('\n')}${erros.length > 3 ? `\n... e mais ${erros.length - 3} erros` : ''}`
+        );
+    } else {
+        alert(
+            `❌ Erro ao salvar demanda!\n\n` +
+            `Nenhum fornecedor foi processado.\n\n` +
+            `Erros:\n${erros.slice(0, 5).join('\n')}`
+        );
     }
 }
 
@@ -5614,26 +5634,46 @@ function mostrarStatusCalculo(status, fornecedor, totalItens, tempoMs) {
     }
 }
 
+// Função para verificar fornecedores selecionados (suporta múltiplos)
+function verificarFornecedoresSelecionados() {
+    const fornecedores = MultiSelect.getSelected('fornecedor_banco');
+
+    if (!fornecedores || fornecedores.length === 0) {
+        return { valido: false, fornecedores: [], quantidade: 0 };
+    }
+
+    // Filtrar valores inválidos
+    const fornecedoresValidos = fornecedores.filter(f => f && f !== 'TODOS' && f !== 'Carregando...');
+
+    return {
+        valido: fornecedoresValidos.length > 0,
+        fornecedores: fornecedoresValidos,
+        quantidade: fornecedoresValidos.length
+    };
+}
+
 // Função para habilitar/desabilitar botão de salvar demanda
 function atualizarBotaoSalvarDemanda() {
     const btn = document.getElementById('salvarDemandaBtn');
     if (!btn) return;
 
-    const { valido: fornecedorUnico } = verificarFornecedorUnico();
+    const { valido, quantidade } = verificarFornecedoresSelecionados();
 
-    // Habilitar botão se houver fornecedor selecionado e resultados na tela
+    // Habilitar botão se houver fornecedor(es) selecionado(s) e resultados na tela
     const temResultados = document.getElementById('results')?.style.display !== 'none';
 
-    if (fornecedorUnico && temResultados) {
+    if (valido && temResultados) {
         btn.disabled = false;
         btn.style.opacity = '1';
         btn.style.cursor = 'pointer';
-        btn.title = 'Salvar demanda pré-calculada para o fornecedor selecionado';
-    } else if (!fornecedorUnico) {
+        btn.title = quantidade === 1
+            ? 'Salvar demanda pré-calculada para o fornecedor selecionado'
+            : `Salvar demanda pré-calculada para ${quantidade} fornecedores selecionados`;
+    } else if (!valido) {
         btn.disabled = true;
         btn.style.opacity = '0.5';
         btn.style.cursor = 'not-allowed';
-        btn.title = 'Selecione um único fornecedor para salvar a demanda';
+        btn.title = 'Selecione pelo menos um fornecedor para salvar a demanda';
     } else {
         btn.disabled = true;
         btn.style.opacity = '0.5';
