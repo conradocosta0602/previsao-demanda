@@ -351,6 +351,8 @@ DB_PORT=5432
 
 ## Commits Recentes Relevantes
 
+- `e2d9886` - fix(pedido): permitir pedido automatico para itens FF (v6.3)
+- `4de6895` - fix(kpis): incluir itens FF na medicao de ruptura (v6.3)
 - `f4a59da` - feat(demanda): filtrar itens EN/FL do calculo de demanda (v6.2)
 - `51ab4e4` - feat(database): migrations para KPIs e indices de ruptura
 - `9c0c1ff` - perf(kpis): otimizar queries de ruptura com filtro de itens abastecidos
@@ -363,6 +365,7 @@ DB_PORT=5432
 - V15: Dashboard de KPIs (Ruptura, Cobertura, WMAPE) (v6.0)
 - Migration V13: Otimizacao do banco - remocao de tabelas legadas, padronizacao de tipos, indices (v6.1)
 - V16: Filtro de Itens Bloqueados EN/FL (v6.2)
+- V17: Itens FF incluidos em ruptura e pedido (v6.3)
 
 ## Documentacao Complementar
 
@@ -378,4 +381,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.2)
+**Ultima atualizacao**: Fevereiro 2026 (v6.3)
