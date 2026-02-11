@@ -162,6 +162,7 @@ def api_kpis_resumo():
         # KPI 1: RUPTURA (% de pontos de abastecimento em ruptura)
         # Item ativo = NÃO está em NC, FL, CO ou EN na situação de compra
         # NC=Não Compra, FL=Fora de Linha, CO=Compra Ocasional, EN=Em Negociação
+        # FF=Falta no Fornecedor (INCLUÍDO na ruptura - problema externo mas afeta cliente)
         # Ponto de Abastecimento = Item ativo × Loja × Dia
         # Ruptura = Pontos sem estoque / Total pontos × 100
         # =====================================================================
@@ -170,7 +171,7 @@ def api_kpis_resumo():
 
         if precisa_cpc:
             # Com filtros de fornecedor/categoria/linha
-            # Filtra: sit_compra não está em NC/FL/CO/EN/FF
+            # Filtra: sit_compra não está em NC/FL/CO/EN (FF incluído na ruptura)
             # Usa estoque_posicao_atual para filtrar itens que já foram abastecidos
             query_ruptura = f"""
                 SELECT
@@ -188,7 +189,7 @@ def api_kpis_resumo():
                     AND hed.cod_empresa = sci.cod_empresa
                 WHERE hed.data >= %s
                 AND {where_sql}
-                AND (sci.sit_compra IS NULL OR sci.sit_compra NOT IN ('NC', 'FL', 'CO', 'EN', 'FF'))
+                AND (sci.sit_compra IS NULL OR sci.sit_compra NOT IN ('NC', 'FL', 'CO', 'EN'))
             """
             query_params = [data_inicio] + params
         else:
@@ -203,7 +204,7 @@ def api_kpis_resumo():
 
             where_sql_simple = " AND ".join(where_clauses_simple)
 
-            # Filtra: sit_compra não está em NC/FL/CO/EN/FF
+            # Filtra: sit_compra não está em NC/FL/CO/EN (FF incluído na ruptura)
             # Usa estoque_posicao_atual para filtrar itens que já foram abastecidos
             query_ruptura = f"""
                 SELECT
@@ -219,7 +220,7 @@ def api_kpis_resumo():
                     ON hed.codigo = sci.codigo
                     AND hed.cod_empresa = sci.cod_empresa
                 WHERE {where_sql_simple}
-                AND (sci.sit_compra IS NULL OR sci.sit_compra NOT IN ('NC', 'FL', 'CO', 'EN', 'FF'))
+                AND (sci.sit_compra IS NULL OR sci.sit_compra NOT IN ('NC', 'FL', 'CO', 'EN'))
             """
             query_params = params_simple
 
@@ -578,6 +579,7 @@ def api_kpis_evolucao():
         # Indicador de disponibilidade de estoque do sortimento ativo
         # Item ativo = NÃO está em NC, FL, CO ou EN na situação de compra
         # NC=Não Compra, FL=Fora de Linha, CO=Compra Ocasional, EN=Em Negociação
+        # FF=Falta no Fornecedor (INCLUÍDO na ruptura - problema externo mas afeta cliente)
         # Ponto de abastecimento = Item ativo × Loja × Dia
         # Ruptura = Pontos sem estoque / Total de pontos × 100
         # =====================================================================
@@ -593,7 +595,7 @@ def api_kpis_evolucao():
 
         if precisa_cpc_evolucao:
             # Com filtros - mantém JOIN com cpc
-            # Filtra: sit_compra não está em NC/FL/CO/EN/FF
+            # Filtra: sit_compra não está em NC/FL/CO/EN (FF incluído na ruptura)
             # Usa estoque_posicao_atual para filtrar itens que já foram abastecidos
             query_ruptura = f"""
                 SELECT
@@ -612,14 +614,14 @@ def api_kpis_evolucao():
                     ON hed.codigo = sci.codigo
                     AND hed.cod_empresa = sci.cod_empresa
                 WHERE {where_sql}
-                AND (sci.sit_compra IS NULL OR sci.sit_compra NOT IN ('NC', 'FL', 'CO', 'EN', 'FF'))
+                AND (sci.sit_compra IS NULL OR sci.sit_compra NOT IN ('NC', 'FL', 'CO', 'EN'))
                 GROUP BY {group_by}
                 ORDER BY {group_by}
             """
             query_params_evo = params
         else:
             # Sem filtros de fornecedor/categoria/linha - query mais rápida
-            # Filtra: sit_compra não está em NC/FL/CO/EN/FF
+            # Filtra: sit_compra não está em NC/FL/CO/EN (FF incluído na ruptura)
             # Usa estoque_posicao_atual para filtrar itens que já foram abastecidos
             query_ruptura = f"""
                 SELECT
@@ -637,7 +639,7 @@ def api_kpis_evolucao():
                     ON hed.codigo = sci.codigo
                     AND hed.cod_empresa = sci.cod_empresa
                 WHERE hed.data >= %s
-                AND (sci.sit_compra IS NULL OR sci.sit_compra NOT IN ('NC', 'FL', 'CO', 'EN', 'FF'))
+                AND (sci.sit_compra IS NULL OR sci.sit_compra NOT IN ('NC', 'FL', 'CO', 'EN'))
                 GROUP BY {group_by}
                 ORDER BY {group_by}
             """

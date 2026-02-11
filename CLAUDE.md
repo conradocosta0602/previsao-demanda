@@ -193,7 +193,8 @@ Dashboard para monitoramento de indicadores de performance do sistema.
 - **WMAPE**: Erro percentual ponderado da previsao (meta: < 20%)
 
 **Definicoes**:
-- **Item Ativo**: NAO esta em NC, FL, CO, EN ou FF na situacao de compra
+- **Item Ativo para Ruptura**: NAO esta em NC, FL, CO ou EN na situacao de compra
+- **FF (Falta Fornecedor)**: INCLUIDO na ruptura (problema externo mas afeta cliente)
 - **Ponto de Abastecimento**: Item ativo × Loja × Dia
 - **Ruptura**: Pontos sem estoque / Total pontos × 100
 
