@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.0** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.5** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -195,7 +195,49 @@ buscar_total_lojas(conn) -> int
 | CO     | Compra obrigatoria | Sim |
 | FF     | Fora de fabricacao | Sim |
 
-### 8. Dashboard de KPIs (V15)
+### 8. Arredondamento Inteligente de Pedidos (V19)
+
+**Arquivo**: `core/pedido_fornecedor_integrado.py`
+
+O sistema usa **arredondamento inteligente** para multiplos de caixa, evitando excesso de estoque quando a necessidade e muito inferior ao multiplo.
+
+**Problema Resolvido**:
+- Necessidade: 2 unidades, Caixa: 12 unidades
+- Arredondamento tradicional: pediria 12 (excesso de 10 unidades = 500%)
+- Arredondamento inteligente: nao pede agora, aguarda proximo ciclo
+
+**Logica Hibrida**:
+```
+1. Se fracao >= 50% do multiplo → arredonda para CIMA (regra padrao literatura)
+2. Se fracao < 50%:
+   - Calcula se estoque aguenta ate proximo ciclo (com 20% margem)
+   - Se aguenta → NAO arredonda (deixa para proximo ciclo)
+   - Se nao aguenta → arredonda para CIMA (evita ruptura)
+```
+
+**Constantes**:
+```python
+PERCENTUAL_MINIMO_ARREDONDAMENTO = 0.50  # 50% - padrao literatura
+MARGEM_SEGURANCA_PROXIMO_CICLO = 1.20    # 20% margem de seguranca
+```
+
+**Referencias**: Silver, Pyke & Peterson (2017), APICS, SAP, Oracle
+
+**Campos Retornados**:
+- `arredondamento_decisao`: Motivo da decisao (multiplo_exato, fracao_acima_minimo, risco_ruptura_proximo_ciclo, sem_risco_proximo_ciclo)
+- `fracao_caixa`: Fracao da caixa necessaria (0.0 a 1.0)
+- `arredondou_para_cima`: Se arredondou ou nao
+
+**Decisoes Possiveis**:
+| Decisao | Descricao |
+|---------|-----------|
+| multiplo_exato | Necessidade e multiplo exato da caixa |
+| fracao_acima_minimo | Fracao >= 50%, arredonda para cima |
+| risco_ruptura_proximo_ciclo | Fracao < 50% mas ha risco, arredonda |
+| sem_risco_proximo_ciclo | Fracao < 50% e sem risco, nao arredonda |
+| minimo_1_caixa | Garante minimo de 1 caixa quando necessario |
+
+### 9. Dashboard de KPIs (V15)
 
 **Arquivos**: `app/blueprints/kpis.py`, `static/js/kpis.js`, `templates/kpis.html`
 
@@ -320,6 +362,8 @@ DB_PORT=5432
 
 9. **Delay operacional**: 5 dias adicionados ao lead time para compensar tempo entre calculo e envio do pedido
 
+10. **Arredondamento inteligente**: Multiplo de caixa usa 50% como threshold (Silver, Pyke & Peterson) com verificacao de risco de ruptura
+
 ## Fluxo de Trabalho Tipico
 
 ```
@@ -374,6 +418,7 @@ DB_PORT=5432
 - V16: Filtro de Itens Bloqueados EN/FL (v6.2)
 - V17: Itens FF incluidos em ruptura e pedido (v6.3)
 - V18: Delay operacional de 5 dias no lead time (v6.4)
+- V19: Arredondamento inteligente de pedidos para multiplo de caixa (v6.5)
 
 ## Documentacao Complementar
 
@@ -389,4 +434,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.4)
+**Ultima atualizacao**: Fevereiro 2026 (v6.5)

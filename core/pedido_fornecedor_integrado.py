@@ -46,6 +46,11 @@ CICLO_PEDIDO_DIAS = 7
 # Compensa ineficiências do processo (aprovações, consolidação, envio)
 DELAY_OPERACIONAL_DIAS = 5
 
+# Arredondamento inteligente para múltiplos de caixa
+# Referência: Silver, Pyke & Peterson (2017), APICS, SAP, Oracle
+PERCENTUAL_MINIMO_ARREDONDAMENTO = 0.50  # 50% - padrão literatura (não arredonda se < 50% do múltiplo)
+MARGEM_SEGURANCA_PROXIMO_CICLO = 1.20    # 20% margem - verifica se aguenta até próximo ciclo
+
 
 # ==============================================================================
 # FUNÇÕES AUXILIARES
@@ -150,10 +155,20 @@ def calcular_quantidade_pedido(
     estoque_disponivel: float,
     estoque_transito: float,
     estoque_seguranca: float,
-    multiplo_caixa: int = 1
+    multiplo_caixa: int = 1,
+    demanda_diaria: float = 0,
+    lead_time: int = 0,
+    ciclo_pedido: int = CICLO_PEDIDO_DIAS
 ) -> Dict:
     """
-    Calcula a quantidade a pedir considerando estoque atual e múltiplo de caixa.
+    Calcula a quantidade a pedir com arredondamento inteligente para múltiplo de caixa.
+
+    O arredondamento inteligente evita excesso de estoque quando a necessidade
+    é muito inferior ao múltiplo da caixa. Usa abordagem híbrida:
+    1. Percentual mínimo: só arredonda para cima se necessidade >= 50% do múltiplo
+    2. Verificação de risco: se não arredondar, verifica se estoque aguenta até próximo ciclo
+
+    Referências: Silver, Pyke & Peterson (2017), APICS, SAP, Oracle
 
     Args:
         demanda_periodo: Demanda prevista para o período de cobertura
@@ -161,9 +176,12 @@ def calcular_quantidade_pedido(
         estoque_transito: Estoque em trânsito
         estoque_seguranca: Estoque de segurança calculado
         multiplo_caixa: Unidades por caixa (para arredondamento)
+        demanda_diaria: Demanda média diária (para cálculo de risco)
+        lead_time: Lead time em dias (para cálculo de risco)
+        ciclo_pedido: Ciclo de pedido em dias (para cálculo de risco)
 
     Returns:
-        Dicionário com quantidade a pedir e detalhes
+        Dicionário com quantidade a pedir e detalhes do arredondamento
     """
     # Estoque efetivo
     estoque_efetivo = estoque_disponivel + estoque_transito
@@ -180,18 +198,80 @@ def calcular_quantidade_pedido(
             'estoque_efetivo': round(estoque_efetivo, 0),
             'demanda_periodo': round(demanda_periodo, 0),
             'deve_pedir': False,
-            'ajustado_multiplo': False
+            'ajustado_multiplo': False,
+            'arredondamento_decisao': 'nao_precisa_pedir'
         }
 
-    # Arredondar para múltiplo de caixa (sempre para cima)
-    if multiplo_caixa > 1:
-        numero_caixas = int(np.ceil(necessidade_bruta / multiplo_caixa))
-        quantidade_pedido = numero_caixas * multiplo_caixa
-        ajustado = quantidade_pedido != necessidade_bruta
-    else:
+    # Se não tem múltiplo ou múltiplo = 1, apenas arredonda para cima
+    if multiplo_caixa <= 1:
         quantidade_pedido = int(np.ceil(necessidade_bruta))
-        numero_caixas = quantidade_pedido
-        ajustado = False
+        return {
+            'quantidade_pedido': quantidade_pedido,
+            'numero_caixas': quantidade_pedido,
+            'necessidade_bruta': round(necessidade_bruta, 0),
+            'estoque_efetivo': round(estoque_efetivo, 0),
+            'demanda_periodo': round(demanda_periodo, 0),
+            'deve_pedir': True,
+            'ajustado_multiplo': False,
+            'arredondamento_decisao': 'sem_multiplo'
+        }
+
+    # Calcular número de caixas cheias e fração restante
+    caixas_cheias = int(necessidade_bruta // multiplo_caixa)
+    fracao_caixa = (necessidade_bruta % multiplo_caixa) / multiplo_caixa
+
+    # Decisão de arredondamento inteligente
+    arredondar_para_cima = False
+    decisao = ''
+
+    if fracao_caixa == 0:
+        # Necessidade é múltiplo exato - não precisa arredondar
+        arredondar_para_cima = False
+        decisao = 'multiplo_exato'
+    elif fracao_caixa >= PERCENTUAL_MINIMO_ARREDONDAMENTO:
+        # Fração >= 50% do múltiplo - arredonda para cima (regra padrão literatura)
+        arredondar_para_cima = True
+        decisao = 'fracao_acima_minimo'
+    else:
+        # Fração < 50% - verificar risco de ruptura se não arredondar
+        # Calcula se o estoque + pedido (sem fração) aguenta até o próximo ciclo
+
+        if demanda_diaria > 0 and (lead_time > 0 or ciclo_pedido > 0):
+            # Quantidade se não arredondar (apenas caixas cheias)
+            qtd_sem_arredondar = caixas_cheias * multiplo_caixa
+
+            # Estoque projetado após receber o pedido
+            estoque_apos_pedido = estoque_efetivo + qtd_sem_arredondar
+
+            # Demanda até próximo ciclo (lead time + ciclo) com margem de segurança
+            dias_ate_proximo_ciclo = lead_time + ciclo_pedido
+            demanda_ate_proximo_ciclo = demanda_diaria * dias_ate_proximo_ciclo * MARGEM_SEGURANCA_PROXIMO_CICLO
+
+            # Se estoque projetado não aguenta até próximo ciclo, arredonda para cima
+            if estoque_apos_pedido < (demanda_ate_proximo_ciclo + estoque_seguranca):
+                arredondar_para_cima = True
+                decisao = 'risco_ruptura_proximo_ciclo'
+            else:
+                arredondar_para_cima = False
+                decisao = 'sem_risco_proximo_ciclo'
+        else:
+            # Sem informação de demanda/lead time - usa regra conservadora (arredonda)
+            arredondar_para_cima = True
+            decisao = 'fallback_conservador'
+
+    # Aplicar decisão
+    if arredondar_para_cima:
+        numero_caixas = caixas_cheias + 1
+    else:
+        numero_caixas = caixas_cheias
+
+    # Se ficou com 0 caixas mas precisa pedir, garante pelo menos 1
+    if numero_caixas == 0 and necessidade_bruta > 0:
+        numero_caixas = 1
+        decisao = 'minimo_1_caixa'
+
+    quantidade_pedido = numero_caixas * multiplo_caixa
+    ajustado = quantidade_pedido != int(np.ceil(necessidade_bruta))
 
     return {
         'quantidade_pedido': quantidade_pedido,
@@ -199,9 +279,13 @@ def calcular_quantidade_pedido(
         'necessidade_bruta': round(necessidade_bruta, 0),
         'estoque_efetivo': round(estoque_efetivo, 0),
         'demanda_periodo': round(demanda_periodo, 0),
-        'deve_pedir': True,
+        'deve_pedir': quantidade_pedido > 0,
         'ajustado_multiplo': ajustado,
-        'diferenca_ajuste': quantidade_pedido - int(np.ceil(necessidade_bruta))
+        'diferenca_ajuste': quantidade_pedido - int(np.ceil(necessidade_bruta)),
+        'arredondamento_decisao': decisao,
+        'fracao_caixa': round(fracao_caixa, 3),
+        'percentual_minimo': PERCENTUAL_MINIMO_ARREDONDAMENTO,
+        'arredondou_para_cima': arredondar_para_cima
     }
 
 
@@ -1145,13 +1229,16 @@ class PedidoFornecedorIntegrado:
         # Aplicar fator de eventos na demanda
         demanda_periodo = demanda_periodo_base * fator_eventos
 
-        # 9. Calcular quantidade a pedir
+        # 9. Calcular quantidade a pedir (com arredondamento inteligente)
         pedido_info = calcular_quantidade_pedido(
             demanda_periodo=demanda_periodo,
             estoque_disponivel=estoque['estoque_disponivel'],
             estoque_transito=estoque['estoque_transito'],
             estoque_seguranca=es_info['estoque_seguranca'],
-            multiplo_caixa=parametros['multiplo_caixa']
+            multiplo_caixa=parametros['multiplo_caixa'],
+            demanda_diaria=previsao_diaria,
+            lead_time=lead_time,
+            ciclo_pedido=ciclo_pedido
         )
 
         # DEBUG: Logar calculos de cobertura para itens com pedido
@@ -1238,6 +1325,11 @@ class PedidoFornecedorIntegrado:
             'unidade_menor': parametros.get('unidade_menor', ''),
             'deve_pedir': pedido_info['deve_pedir'],
             'ajustado_multiplo': pedido_info['ajustado_multiplo'],
+
+            # Arredondamento inteligente
+            'arredondamento_decisao': pedido_info.get('arredondamento_decisao', ''),
+            'fracao_caixa': pedido_info.get('fracao_caixa', 0),
+            'arredondou_para_cima': pedido_info.get('arredondou_para_cima', False),
 
             # Valores (usando CUE importado) - sanitizar valores
             'preco_custo': round(sanitizar_float(preco_custo, 0), 2),
