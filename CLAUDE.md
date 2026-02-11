@@ -62,8 +62,12 @@ previsao-demanda/
 
 **Formula de cobertura**:
 ```
-Cobertura = Lead Time + Ciclo (7d) + Seguranca ABC
+Lead Time Efetivo = Lead Time Fornecedor + Delay Operacional (5d)
+Cobertura = Lead Time Efetivo + Ciclo (7d) + Seguranca ABC
 ```
+
+**Delay Operacional**: 5 dias adicionados ao lead time para compensar
+tempo entre calculo do pedido e envio ao fornecedor (aprovacoes, consolidacao).
 
 **Seguranca por curva**:
 - A: +2 dias (Z=2.05, NS=98%)
@@ -366,6 +370,7 @@ DB_PORT=5432
 - Migration V13: Otimizacao do banco - remocao de tabelas legadas, padronizacao de tipos, indices (v6.1)
 - V16: Filtro de Itens Bloqueados EN/FL (v6.2)
 - V17: Itens FF incluidos em ruptura e pedido (v6.3)
+- V18: Delay operacional de 5 dias no lead time (v6.4)
 
 ## Documentacao Complementar
 
@@ -381,4 +386,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.3)
+**Ultima atualizacao**: Fevereiro 2026 (v6.4)

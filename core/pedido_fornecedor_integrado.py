@@ -42,6 +42,10 @@ NIVEL_SERVICO_ABC = {
 # Ciclo de pedido padrão (semanal)
 CICLO_PEDIDO_DIAS = 7
 
+# Delay operacional: tempo entre cálculo do pedido e envio ao fornecedor
+# Compensa ineficiências do processo (aprovações, consolidação, envio)
+DELAY_OPERACIONAL_DIAS = 5
+
 
 # ==============================================================================
 # FUNÇÕES AUXILIARES
@@ -1062,7 +1066,10 @@ class PedidoFornecedorIntegrado:
         preco_custo = self.buscar_preco_custo(codigo, cod_empresa)
 
         # 5. Dados do fornecedor (usar parametro se fornecido, senao buscar do produto ou usar padrao)
-        lead_time = lead_time_dias if lead_time_dias is not None else (produto.get('lead_time_dias') or 15)
+        lead_time_base = lead_time_dias if lead_time_dias is not None else (produto.get('lead_time_dias') or 15)
+        # Lead time efetivo = Lead time do fornecedor + Delay operacional
+        # Delay compensa tempo entre cálculo do pedido e envio ao fornecedor
+        lead_time = lead_time_base + DELAY_OPERACIONAL_DIAS
         ciclo_pedido = ciclo_pedido_dias if ciclo_pedido_dias is not None else CICLO_PEDIDO_DIAS
         curva_abc = produto.get('curva_abc') or 'B'
 
@@ -1199,7 +1206,9 @@ class PedidoFornecedorIntegrado:
             # Fornecedor
             'codigo_fornecedor': produto.get('codigo_fornecedor', ''),
             'nome_fornecedor': produto.get('nome_fornecedor', ''),
-            'lead_time_dias': lead_time,
+            'lead_time_dias': lead_time,  # Lead time efetivo (base + delay operacional)
+            'lead_time_base': lead_time_base,  # Lead time do fornecedor (sem delay)
+            'delay_operacional': DELAY_OPERACIONAL_DIAS,  # Delay entre cálculo e envio
 
             # Classificação
             'curva_abc': curva_abc,
