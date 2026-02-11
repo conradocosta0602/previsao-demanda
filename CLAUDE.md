@@ -186,12 +186,33 @@ Dashboard para monitoramento de indicadores de performance do sistema.
 
 ## Tabelas Principais
 
-- `historico_vendas_diario` - Vendas por dia/loja/produto
-- `cadastro_produtos_completo` - Cadastro de produtos
-- `estoque_atual` - Posicao de estoque
+### Tabelas de Historico (Particionadas por Ano)
+- `historico_vendas_diario` - Vendas por dia/loja/produto (particionada: _2023, _2024, _2025, _2026)
+- `historico_estoque_diario` - Estoque diario por loja/produto (particionada)
+
+### Tabelas de Cadastro
+- `cadastro_produtos_completo` - Cadastro principal de produtos (3.576 itens)
+- `cadastro_fornecedores` - Fornecedor x Loja (1.110 CNPJs unicos)
+- `cadastro_lojas` - 16 lojas
+- `embalagem_arredondamento` - Qtd por embalagem para arredondamento de pedidos
+
+### Tabelas de Demanda
 - `demanda_pre_calculada` - Demanda calculada pelo cronjob
+- `demanda_validada` - Demanda aprovada pelo usuario
 - `demanda_calculo_execucao` - Log de execucoes
-- `auditoria_conformidade` - Log de validacoes
+
+### Tabelas de Estoque
+- `estoque_posicao_atual` - Posicao atual de estoque por loja
+- `situacao_compra_itens` - Status de compra por item/loja (NC, FL, CO, EN, FF)
+
+### Tabelas de Auditoria
+- `auditoria_conformidade` - Log de validacoes do checklist
+
+### Notas sobre Estrutura
+- **Particionamento**: Tabelas de historico sao particionadas por ano para performance
+- **codigo vs cod_produto**: `codigo` e INTEGER, `cod_produto` e VARCHAR - JOINs usam CAST
+- **cadastro_produtos**: Tabela legada - usar `cadastro_produtos_completo` no sistema atual
+- **embalagem**: Tabela removida em v6.1 - usar apenas `embalagem_arredondamento`
 
 ## Padroes de Codigo
 
@@ -243,6 +264,10 @@ DB_PORT=5432
 
 6. **Rateio proporcional**: Em pedidos multi-loja, demanda e distribuida proporcional ao historico de vendas
 
+7. **Tabelas legadas**: `cadastro_produtos` e `embalagem` sao legadas - usar `cadastro_produtos_completo` e `embalagem_arredondamento`
+
+8. **Tipos padronizados**: `codigo` e `cod_empresa` devem ser INTEGER em todo o sistema
+
 ## Fluxo de Trabalho Tipico
 
 ```
@@ -289,6 +314,7 @@ DB_PORT=5432
 - V13: Logica Hibrida de Transferencias (v5.8)
 - V14: Rateio Proporcional de Demanda Multi-Loja (v5.9)
 - V15: Dashboard de KPIs (Ruptura, Cobertura, WMAPE) (v6.0)
+- Migration V13: Otimizacao do banco - remocao de tabelas legadas, padronizacao de tipos, indices (v6.1)
 
 ## Documentacao Complementar
 
@@ -304,4 +330,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.0)
+**Ultima atualizacao**: Fevereiro 2026 (v6.1)
