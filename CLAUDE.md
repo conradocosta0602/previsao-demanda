@@ -318,6 +318,8 @@ DB_PORT=5432
 
 8. **Tipos padronizados**: `codigo` e `cod_empresa` devem ser INTEGER em todo o sistema
 
+9. **Delay operacional**: 5 dias adicionados ao lead time para compensar tempo entre calculo e envio do pedido
+
 ## Fluxo de Trabalho Tipico
 
 ```
@@ -355,6 +357,7 @@ DB_PORT=5432
 
 ## Commits Recentes Relevantes
 
+- `97341c7` - feat(pedido): adicionar delay operacional de 5 dias ao lead time (v6.4)
 - `e2d9886` - fix(pedido): permitir pedido automatico para itens FF (v6.3)
 - `4de6895` - fix(kpis): incluir itens FF na medicao de ruptura (v6.3)
 - `f4a59da` - feat(demanda): filtrar itens EN/FL do calculo de demanda (v6.2)
