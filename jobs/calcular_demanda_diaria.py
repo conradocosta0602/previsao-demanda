@@ -141,6 +141,43 @@ def buscar_fornecedores(conn, cnpj_filtro: str = None) -> List[Dict]:
     return cursor.fetchall()
 
 
+def buscar_itens_bloqueados(conn, cnpj_fornecedor: str) -> Dict[int, set]:
+    """
+    Busca itens com situacao EN (Em Negociacao) ou FL (Fora de Linha) por loja.
+
+    Args:
+        conn: Conexao com o banco
+        cnpj_fornecedor: CNPJ do fornecedor
+
+    Returns:
+        Dict {cod_produto: {cod_empresa1, cod_empresa2, ...}}
+        Mapeia cada produto para o conjunto de lojas onde esta bloqueado.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.codigo, s.cod_empresa
+        FROM situacao_compra_itens s
+        JOIN cadastro_produtos_completo p ON s.codigo::text = p.cod_produto
+        WHERE p.cnpj_fornecedor = %s
+          AND s.sit_compra IN ('EN', 'FL')
+    """, (cnpj_fornecedor,))
+
+    bloqueados = {}
+    for codigo, cod_empresa in cursor.fetchall():
+        if codigo not in bloqueados:
+            bloqueados[codigo] = set()
+        bloqueados[codigo].add(cod_empresa)
+
+    return bloqueados
+
+
+def buscar_total_lojas(conn) -> int:
+    """Retorna o total de lojas ativas no sistema."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(DISTINCT cod_empresa) FROM cadastro_fornecedores")
+    return cursor.fetchone()[0]
+
+
 def buscar_itens_fornecedor(conn, cnpj_fornecedor: str) -> List[Dict]:
     """Busca lista de itens de um fornecedor."""
     from psycopg2.extras import RealDictCursor
@@ -649,6 +686,9 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
     """
     Processa todos os itens de um fornecedor.
     OTIMIZADO: Pre-carrega historico em lote e salva em batch.
+
+    FILTRO v6.2: Itens com situacao EN (Em Negociacao) ou FL (Fora de Linha)
+    nao tem demanda calculada. O filtro e por loja especifica.
     """
     conn = None
     try:
@@ -662,6 +702,7 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
                 'cnpj': cnpj_fornecedor,
                 'nome': nome_fornecedor,
                 'itens': 0,
+                'itens_filtrados_en_fl': 0,
                 'registros': 0,
                 'erros': 0,
                 'sucesso': True
@@ -669,15 +710,37 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
 
         cod_produtos = [item['cod_produto'] for item in itens]
 
-        # PRE-CARREGAR HISTORICO EM LOTE (1 query para todos os itens)
-        logger.debug(f"  Pre-carregando historico de {len(cod_produtos)} itens...")
-        cache_historico = precarregar_historico_lote(conn, cod_produtos, cnpj_fornecedor)
+        # FILTRO EN/FL v6.2: Buscar itens bloqueados por loja
+        itens_bloqueados = buscar_itens_bloqueados(conn, cnpj_fornecedor)
+        total_lojas = buscar_total_lojas(conn)
+
+        # Identificar itens bloqueados em TODAS as lojas (nao calcular demanda)
+        itens_filtrados = 0
+        itens_ativos = []
+        for item in itens:
+            cod_produto = item['cod_produto']
+            lojas_bloqueadas = itens_bloqueados.get(cod_produto, set())
+
+            # Se bloqueado em todas as lojas, nao calcular demanda
+            if len(lojas_bloqueadas) >= total_lojas:
+                itens_filtrados += 1
+                logger.debug(f"  Item {cod_produto} filtrado (EN/FL em todas as lojas)")
+            else:
+                itens_ativos.append(item)
+
+        if itens_filtrados > 0:
+            logger.info(f"  {itens_filtrados} itens filtrados (EN/FL em todas as lojas)")
+
+        # PRE-CARREGAR HISTORICO EM LOTE (apenas itens ativos)
+        cod_produtos_ativos = [item['cod_produto'] for item in itens_ativos]
+        logger.debug(f"  Pre-carregando historico de {len(cod_produtos_ativos)} itens ativos...")
+        cache_historico = precarregar_historico_lote(conn, cod_produtos_ativos, cnpj_fornecedor)
 
         # Processar itens usando cache
         todos_registros = []
         total_erros = 0
 
-        for item in itens:
+        for item in itens_ativos:
             try:
                 cod_produto = item['cod_produto']
                 serie, meta_hist = cache_historico.get(cod_produto, ([], {}))
@@ -703,6 +766,8 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
             'cnpj': cnpj_fornecedor,
             'nome': nome_fornecedor,
             'itens': len(itens),
+            'itens_ativos': len(itens_ativos),
+            'itens_filtrados_en_fl': itens_filtrados,
             'registros': total_registros,
             'erros': total_erros,
             'sucesso': True
@@ -716,6 +781,8 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
             'cnpj': cnpj_fornecedor,
             'nome': nome_fornecedor,
             'itens': 0,
+            'itens_ativos': 0,
+            'itens_filtrados_en_fl': 0,
             'registros': 0,
             'erros': 1,
             'sucesso': False,

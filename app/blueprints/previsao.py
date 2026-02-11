@@ -225,7 +225,8 @@ def _api_gerar_previsao_banco_v2_interno():
             corte_sql = "AND h.data < %s"
             params_com_corte.append(data_inicio)
 
-        # Buscar lista de itens
+        # Buscar lista de itens (incluindo situacao de compra para filtro EN/FL v6.2)
+        # A situacao e agregada por item - se tiver EN ou FL em alguma loja, mostra
         query_itens = f"""
             SELECT DISTINCT
                 h.codigo as cod_produto,
@@ -233,7 +234,14 @@ def _api_gerar_previsao_banco_v2_interno():
                 p.nome_fornecedor,
                 p.cnpj_fornecedor,
                 p.categoria,
-                p.descricao_linha
+                p.descricao_linha,
+                COALESCE(
+                    (SELECT string_agg(DISTINCT s.sit_compra, ',')
+                     FROM situacao_compra_itens s
+                     WHERE s.codigo = h.codigo
+                       AND s.sit_compra IN ('EN', 'FL')),
+                    'ATIVO'
+                ) as situacao_compra
             FROM historico_vendas_diario h
             JOIN cadastro_produtos_completo p ON h.codigo::text = p.cod_produto
             WHERE h.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
@@ -421,6 +429,38 @@ def _api_gerar_previsao_banco_v2_interno():
 
         for item in lista_itens:
             cod_produto = item['cod_produto']
+            situacao_compra = item.get('situacao_compra', 'ATIVO')
+
+            # =====================================================
+            # FILTRO EN/FL v6.2: Itens com situacao EN ou FL
+            # Nao calcular demanda, mas incluir na tabela com demanda zerada
+            # =====================================================
+            if situacao_compra and situacao_compra != 'ATIVO' and ('EN' in situacao_compra or 'FL' in situacao_compra):
+                # Item bloqueado - incluir na tabela com demanda zerada
+                # previsao_por_periodo deve ser um array para o frontend processar
+                # Determinar a situacao principal (EN ou FL)
+                sit_principal = 'FL' if 'FL' in situacao_compra else 'EN'
+                sit_descricao = 'Fora de Linha' if sit_principal == 'FL' else 'Em Negociacao'
+
+                relatorio_itens.append({
+                    'cod_produto': cod_produto,
+                    'descricao': item['descricao'],
+                    'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
+                    'categoria': item['categoria'],
+                    'situacao_compra': situacao_compra,
+                    'sit_compra': sit_principal,  # Campo esperado pelo frontend
+                    'sit_compra_descricao': sit_descricao,  # Campo esperado pelo frontend
+                    'demanda_prevista_total': 0,
+                    'demanda_ano_anterior': 0,
+                    'variacao_percentual': 0,
+                    'sinal_emoji': '⚫',  # Preto para bloqueado
+                    'metodo_estatistico': 'BLOQUEADO',
+                    'fator_tendencia_yoy': 0,
+                    'classificacao_tendencia': 'bloqueado',
+                    'previsao_por_periodo': []  # Array vazio para compatibilidade com frontend
+                })
+                continue
+
             vendas_hist = vendas_item_dict.get(cod_produto, [])
             vendas_hist_sorted = sorted(vendas_hist, key=lambda x: x['periodo'])
 
@@ -771,6 +811,7 @@ def _api_gerar_previsao_banco_v2_interno():
                 'descricao': item['descricao'],
                 'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
                 'categoria': item['categoria'],
+                'situacao_compra': item.get('situacao_compra', 'ATIVO'),
                 'demanda_prevista_total': total_previsao_item,
                 'demanda_ano_anterior': round(total_ano_anterior_item, 2),
                 'variacao_percentual': round(variacao_pct, 1),
