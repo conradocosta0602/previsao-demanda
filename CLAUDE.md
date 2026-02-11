@@ -75,6 +75,16 @@ Cobertura = Lead Time + Ciclo (7d) + Seguranca ABC
 ES = Z × Sigma × sqrt(Lead Time)
 ```
 
+**Situacoes que BLOQUEIAM pedido automatico**:
+- NC (Nao Comprar)
+- FL (Fora de Linha)
+- EN (Encomenda)
+
+**Situacoes que PERMITEM pedido automatico**:
+- ATIVO (item normal)
+- CO (Compra Oportunidade)
+- FF (Falta no Fornecedor) - fornecedor pode regularizar
+
 ### 3. Demanda Pre-Calculada
 
 **Cronjob**: `jobs/calcular_demanda_diaria.py` (05:00)
