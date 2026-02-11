@@ -146,7 +146,42 @@ demanda_loja = demanda_consolidada × proporcao_loja
 
 **Verificacao V14**: Valida calculo de proporcoes, soma = 1.0, e preservacao do total.
 
-### 7. Dashboard de KPIs (V15)
+### 7. Filtro de Itens Bloqueados EN/FL (V16)
+
+**Arquivos**: `jobs/calcular_demanda_diaria.py`, `app/blueprints/previsao.py`
+
+Itens com situacao de compra **EN (Em Negociacao)** ou **FL (Fora de Linha)** sao automaticamente excluidos do calculo de demanda.
+
+**Comportamento**:
+- Itens bloqueados **nao** tem demanda calculada
+- Itens bloqueados **aparecem** na tabela detalhada com:
+  - Demanda = 0
+  - Metodo = "BLOQUEADO"
+  - Coluna "Situacao" mostrando EN ou FL
+
+**Filtro por Loja**:
+- O filtro verifica a situacao de compra **por loja especifica**
+- Um item pode estar FL em uma loja e ATIVO em outra
+- Apenas itens bloqueados em **TODAS** as lojas sao ignorados no cronjob
+
+**Funcoes adicionadas**:
+```python
+# jobs/calcular_demanda_diaria.py
+buscar_itens_bloqueados(conn, cnpj_fornecedor) -> Dict[int, set]
+buscar_total_lojas(conn) -> int
+```
+
+**Situacoes de Compra**:
+| Codigo | Descricao | Calcula Demanda? |
+|--------|-----------|------------------|
+| ATIVO  | Item ativo | Sim |
+| NC     | Nao comprado | Sim |
+| EN     | Em Negociacao | **Nao** |
+| FL     | Fora de Linha | **Nao** |
+| CO     | Compra obrigatoria | Sim |
+| FF     | Fora de fabricacao | Sim |
+
+### 8. Dashboard de KPIs (V15)
 
 **Arquivos**: `app/blueprints/kpis.py`, `static/js/kpis.js`, `templates/kpis.html`
 
@@ -305,6 +340,7 @@ DB_PORT=5432
 
 ## Commits Recentes Relevantes
 
+- `f4a59da` - feat(demanda): filtrar itens EN/FL do calculo de demanda (v6.2)
 - `51ab4e4` - feat(database): migrations para KPIs e indices de ruptura
 - `9c0c1ff` - perf(kpis): otimizar queries de ruptura com filtro de itens abastecidos
 - `79d174f` - feat(demanda): suporte a multiplos fornecedores no Salvar Demanda + timeout 10min
@@ -315,6 +351,7 @@ DB_PORT=5432
 - V14: Rateio Proporcional de Demanda Multi-Loja (v5.9)
 - V15: Dashboard de KPIs (Ruptura, Cobertura, WMAPE) (v6.0)
 - Migration V13: Otimizacao do banco - remocao de tabelas legadas, padronizacao de tipos, indices (v6.1)
+- V16: Filtro de Itens Bloqueados EN/FL (v6.2)
 
 ## Documentacao Complementar
 
@@ -330,4 +367,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.1)
+**Ultima atualizacao**: Fevereiro 2026 (v6.2)
