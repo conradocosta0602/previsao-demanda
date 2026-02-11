@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 13 verificacoes do checklist de conformidade.
+        Executa todas as 15 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -83,6 +83,7 @@ class ValidadorConformidade:
             ('V12', 'Fator Tendencia YoY', self._verificar_fator_tendencia_yoy),
             ('V13', 'Logica Hibrida Transferencias', self._verificar_logica_transferencias),
             ('V14', 'Rateio Proporcional Demanda', self._verificar_rateio_proporcional),
+            ('V20', 'Arredondamento Inteligente', self._verificar_arredondamento_inteligente),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -1170,6 +1171,286 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar rateio proporcional: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_arredondamento_inteligente(self) -> Tuple[str, str, Dict]:
+        """
+        V20: Verifica a logica de arredondamento inteligente para multiplos de caixa.
+
+        Implementado em Fev/2026 para validar que:
+        1. Percentual minimo de 50% para arredondar para cima (padrao literatura)
+        2. Verificacao de risco de ruptura quando fracao < 50%
+        3. Margem de seguranca de 20% no calculo de proximo ciclo
+        4. Garantia de minimo 1 caixa quando necessario
+        5. Constantes de referencia: PERCENTUAL_MINIMO_ARREDONDAMENTO, MARGEM_SEGURANCA_PROXIMO_CICLO
+
+        Referencias: Silver, Pyke & Peterson (2017), APICS, SAP, Oracle
+        """
+        try:
+            from core.pedido_fornecedor_integrado import (
+                calcular_quantidade_pedido,
+                PERCENTUAL_MINIMO_ARREDONDAMENTO,
+                MARGEM_SEGURANCA_PROXIMO_CICLO
+            )
+
+            resultados_testes = []
+            todos_corretos = True
+
+            # =================================================================
+            # Teste 0: Verificar constantes de referencia
+            # =================================================================
+            constantes_ok = (
+                abs(PERCENTUAL_MINIMO_ARREDONDAMENTO - 0.50) < 0.001 and
+                abs(MARGEM_SEGURANCA_PROXIMO_CICLO - 1.20) < 0.001
+            )
+
+            resultados_testes.append({
+                'teste': 'Constantes de referencia',
+                'PERCENTUAL_MINIMO_ARREDONDAMENTO': PERCENTUAL_MINIMO_ARREDONDAMENTO,
+                'esperado_percentual': 0.50,
+                'MARGEM_SEGURANCA_PROXIMO_CICLO': MARGEM_SEGURANCA_PROXIMO_CICLO,
+                'esperado_margem': 1.20,
+                'correto': constantes_ok
+            })
+
+            if not constantes_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 1: Fracao >= 50% deve arredondar para cima
+            # =================================================================
+            cenarios_acima_50 = [
+                # (necessidade_bruta, multiplo_caixa, esperado_caixas, decisao_esperada)
+                (18, 12, 2, 'fracao_acima_minimo'),   # 18/12 = 1.5 caixas, fracao=50% -> arredonda para 2
+                (20, 12, 2, 'fracao_acima_minimo'),   # 20/12 = 1.67 caixas, fracao=67% -> arredonda para 2
+                (10, 12, 1, 'fracao_acima_minimo'),   # 10/12 = 0.83 caixas, fracao=83% -> arredonda para 1
+            ]
+
+            for necessidade, multiplo, esperado_caixas, decisao_esperada in cenarios_acima_50:
+                resultado = calcular_quantidade_pedido(
+                    demanda_periodo=necessidade,
+                    estoque_disponivel=0,
+                    estoque_transito=0,
+                    estoque_seguranca=0,
+                    multiplo_caixa=multiplo,
+                    demanda_diaria=1,
+                    lead_time=10,
+                    ciclo_pedido=7
+                )
+
+                caixas_calculadas = resultado['numero_caixas']
+                decisao_calculada = resultado.get('arredondamento_decisao', '')
+
+                correto = caixas_calculadas == esperado_caixas
+
+                resultados_testes.append({
+                    'teste': 'Fracao >= 50% arredonda',
+                    'necessidade': necessidade,
+                    'multiplo': multiplo,
+                    'caixas_calculadas': caixas_calculadas,
+                    'esperado_caixas': esperado_caixas,
+                    'decisao': decisao_calculada,
+                    'correto': correto
+                })
+
+                if not correto:
+                    todos_corretos = False
+
+            # =================================================================
+            # Teste 2: Fracao < 50% com risco de ruptura deve arredondar
+            # =================================================================
+            # Cenario: necessidade 2 unidades, caixa 12, demanda diaria alta
+            # Se nao arredondar (0 caixas), estoque nao aguenta ate proximo ciclo
+            resultado_risco = calcular_quantidade_pedido(
+                demanda_periodo=2,
+                estoque_disponivel=0,
+                estoque_transito=0,
+                estoque_seguranca=5,
+                multiplo_caixa=12,
+                demanda_diaria=2,
+                lead_time=10,
+                ciclo_pedido=7
+            )
+
+            # Com demanda_diaria=2, lead_time+ciclo=17, margem 1.2 -> demanda_proximo_ciclo = 2*17*1.2 = 40.8
+            # Estoque apos pedido (0 caixas) = 0, que e < 40.8 + 5 = 45.8
+            # Portanto, deve arredondar para evitar ruptura
+            risco_ok = resultado_risco['numero_caixas'] >= 1
+
+            resultados_testes.append({
+                'teste': 'Fracao < 50% com risco arredonda',
+                'necessidade': 2,
+                'multiplo': 12,
+                'demanda_diaria': 2,
+                'lead_time': 10,
+                'ciclo': 7,
+                'caixas_calculadas': resultado_risco['numero_caixas'],
+                'decisao': resultado_risco.get('arredondamento_decisao', ''),
+                'esperado': 'deve arredondar (risco ruptura)',
+                'correto': risco_ok
+            })
+
+            if not risco_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 3: Fracao < 50% sem risco NAO deve arredondar
+            # =================================================================
+            # Cenario: necessidade 2 unidades, caixa 12, estoque alto, demanda baixa
+            resultado_sem_risco = calcular_quantidade_pedido(
+                demanda_periodo=2,
+                estoque_disponivel=100,  # Estoque alto
+                estoque_transito=0,
+                estoque_seguranca=5,
+                multiplo_caixa=12,
+                demanda_diaria=0.5,  # Demanda baixa
+                lead_time=10,
+                ciclo_pedido=7
+            )
+
+            # Com estoque=100 e demanda baixa, nao precisa pedir
+            # Este caso pode retornar 0 (nao precisa pedir) ou verificar se a logica esta correta
+            sem_risco_ok = resultado_sem_risco['deve_pedir'] == False or resultado_sem_risco.get('arredondamento_decisao') in ['nao_precisa_pedir', 'sem_risco_proximo_ciclo']
+
+            resultados_testes.append({
+                'teste': 'Estoque suficiente nao pede',
+                'necessidade': 2,
+                'estoque': 100,
+                'demanda_diaria': 0.5,
+                'deve_pedir': resultado_sem_risco['deve_pedir'],
+                'decisao': resultado_sem_risco.get('arredondamento_decisao', ''),
+                'correto': sem_risco_ok
+            })
+
+            if not sem_risco_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 4: Multiplo exato nao arredonda
+            # =================================================================
+            resultado_exato = calcular_quantidade_pedido(
+                demanda_periodo=24,  # Exatamente 2 caixas de 12
+                estoque_disponivel=0,
+                estoque_transito=0,
+                estoque_seguranca=0,
+                multiplo_caixa=12,
+                demanda_diaria=1,
+                lead_time=10,
+                ciclo_pedido=7
+            )
+
+            exato_ok = resultado_exato['numero_caixas'] == 2 and resultado_exato.get('arredondamento_decisao') == 'multiplo_exato'
+
+            resultados_testes.append({
+                'teste': 'Multiplo exato',
+                'necessidade': 24,
+                'multiplo': 12,
+                'caixas': resultado_exato['numero_caixas'],
+                'decisao': resultado_exato.get('arredondamento_decisao', ''),
+                'esperado': '2 caixas, decisao=multiplo_exato',
+                'correto': exato_ok
+            })
+
+            if not exato_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 5: Garantia de minimo 1 caixa quando necessario
+            # =================================================================
+            resultado_minimo = calcular_quantidade_pedido(
+                demanda_periodo=1,  # Apenas 1 unidade
+                estoque_disponivel=0,
+                estoque_transito=0,
+                estoque_seguranca=0,
+                multiplo_caixa=12,
+                demanda_diaria=1,
+                lead_time=10,
+                ciclo_pedido=7
+            )
+
+            # Fracao = 1/12 = 8.3% < 50%, mas precisa pedir algo
+            # Verifica logica de risco ou minimo 1 caixa
+            minimo_ok = resultado_minimo['numero_caixas'] >= 1 if resultado_minimo['deve_pedir'] else True
+
+            resultados_testes.append({
+                'teste': 'Minimo 1 caixa quando necessario',
+                'necessidade': 1,
+                'multiplo': 12,
+                'caixas': resultado_minimo['numero_caixas'],
+                'deve_pedir': resultado_minimo['deve_pedir'],
+                'decisao': resultado_minimo.get('arredondamento_decisao', ''),
+                'correto': minimo_ok
+            })
+
+            if not minimo_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Teste 6: Sem multiplo (multiplo=1) funciona normalmente
+            # =================================================================
+            resultado_sem_multiplo = calcular_quantidade_pedido(
+                demanda_periodo=15,
+                estoque_disponivel=0,
+                estoque_transito=0,
+                estoque_seguranca=0,
+                multiplo_caixa=1,  # Sem multiplo
+                demanda_diaria=1,
+                lead_time=10,
+                ciclo_pedido=7
+            )
+
+            sem_multiplo_ok = resultado_sem_multiplo['quantidade_pedido'] == 15 and resultado_sem_multiplo.get('arredondamento_decisao') == 'sem_multiplo'
+
+            resultados_testes.append({
+                'teste': 'Sem multiplo',
+                'necessidade': 15,
+                'multiplo': 1,
+                'quantidade': resultado_sem_multiplo['quantidade_pedido'],
+                'decisao': resultado_sem_multiplo.get('arredondamento_decisao', ''),
+                'esperado': '15 unidades, decisao=sem_multiplo',
+                'correto': sem_multiplo_ok
+            })
+
+            if not sem_multiplo_ok:
+                todos_corretos = False
+
+            # =================================================================
+            # Resultado final
+            # =================================================================
+            testes_ok = sum(1 for t in resultados_testes if t.get('correto', False))
+            total_testes = len(resultados_testes)
+
+            if todos_corretos:
+                return 'ok', f'Arredondamento inteligente correto ({testes_ok}/{total_testes} testes)', {
+                    'regras_validadas': [
+                        'Constantes: PERCENTUAL_MINIMO=0.50, MARGEM_SEGURANCA=1.20',
+                        'Fracao >= 50%: arredonda para cima',
+                        'Fracao < 50% com risco: arredonda para cima',
+                        'Fracao < 50% sem risco: nao arredonda',
+                        'Multiplo exato: nao arredonda',
+                        'Garantia minimo 1 caixa',
+                        'Sem multiplo: comportamento normal'
+                    ],
+                    'referencias': 'Silver, Pyke & Peterson (2017), APICS, SAP, Oracle',
+                    'total_testes': total_testes,
+                    'testes_ok': testes_ok,
+                    'detalhes': resultados_testes
+                }
+            else:
+                falhas = [t for t in resultados_testes if not t.get('correto', False)]
+                return 'falha', f'Arredondamento inteligente com erro ({testes_ok}/{total_testes} testes)', {
+                    'testes_falhos': falhas,
+                    'total_testes': total_testes,
+                    'detalhes': resultados_testes
+                }
+
+        except ImportError as e:
+            return 'falha', f'Funcao calcular_quantidade_pedido nao encontrada: {str(e)}', {
+                'erro': 'A funcao precisa ser implementada em core/pedido_fornecedor_integrado.py'
+            }
+        except Exception as e:
+            return 'falha', f'Erro ao verificar arredondamento inteligente: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

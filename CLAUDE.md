@@ -103,10 +103,11 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**14 verificacoes** de conformidade com a metodologia documentada:
+**15 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
+- V20: Arredondamento Inteligente para Multiplo de Caixa
 
 ### 5. Transferencias entre Lojas (V13)
 
