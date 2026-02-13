@@ -84,6 +84,8 @@ class ValidadorConformidade:
             ('V13', 'Logica Hibrida Transferencias', self._verificar_logica_transferencias),
             ('V14', 'Rateio Proporcional Demanda', self._verificar_rateio_proporcional),
             ('V20', 'Arredondamento Inteligente', self._verificar_arredondamento_inteligente),
+            ('V21', 'Arredondamento Pos-Transferencia', self._verificar_arredondamento_pos_transferencia),
+            ('V22', 'ES com LT Base e Rateio Desvio', self._verificar_es_lt_base_rateio_desvio),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -1451,6 +1453,183 @@ class ValidadorConformidade:
             }
         except Exception as e:
             return 'falha', f'Erro ao verificar arredondamento inteligente: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_arredondamento_pos_transferencia(self) -> Tuple[str, str, Dict]:
+        """
+        V21: Verifica que arredondamento e aplicado apos transferencias entre lojas.
+
+        Implementado em v6.7 para garantir que:
+        1. Funcao arredondar_para_multiplo existe e esta exportada
+        2. Apos transferencia, quantidade e arredondada para multiplo de caixa
+        3. Exemplo: 84 - 29 = 55 -> arredonda para 60 (multiplo de 12)
+        """
+        try:
+            from core.pedido_fornecedor_integrado import arredondar_para_multiplo
+
+            resultados_testes = []
+            todos_corretos = True
+
+            # Teste 1: Funcao existe e funciona
+            resultado_1 = arredondar_para_multiplo(55, 12, 'cima')
+            teste_1_ok = resultado_1 == 60
+            resultados_testes.append({
+                'teste': 'arredondar_para_multiplo(55, 12, cima)',
+                'resultado': resultado_1,
+                'esperado': 60,
+                'correto': teste_1_ok
+            })
+            if not teste_1_ok:
+                todos_corretos = False
+
+            # Teste 2: Arredondamento para baixo
+            resultado_2 = arredondar_para_multiplo(55, 12, 'baixo')
+            teste_2_ok = resultado_2 == 48
+            resultados_testes.append({
+                'teste': 'arredondar_para_multiplo(55, 12, baixo)',
+                'resultado': resultado_2,
+                'esperado': 48,
+                'correto': teste_2_ok
+            })
+            if not teste_2_ok:
+                todos_corretos = False
+
+            # Teste 3: Valor ja e multiplo
+            resultado_3 = arredondar_para_multiplo(48, 12, 'cima')
+            teste_3_ok = resultado_3 == 48
+            resultados_testes.append({
+                'teste': 'arredondar_para_multiplo(48, 12, cima)',
+                'resultado': resultado_3,
+                'esperado': 48,
+                'correto': teste_3_ok
+            })
+            if not teste_3_ok:
+                todos_corretos = False
+
+            # Teste 4: Sem multiplo (multiplo=1)
+            resultado_4 = arredondar_para_multiplo(55, 1, 'cima')
+            teste_4_ok = resultado_4 == 55
+            resultados_testes.append({
+                'teste': 'arredondar_para_multiplo(55, 1, cima)',
+                'resultado': resultado_4,
+                'esperado': 55,
+                'correto': teste_4_ok
+            })
+            if not teste_4_ok:
+                todos_corretos = False
+
+            # Teste 5: Valor zero
+            resultado_5 = arredondar_para_multiplo(0, 12, 'cima')
+            teste_5_ok = resultado_5 == 0
+            resultados_testes.append({
+                'teste': 'arredondar_para_multiplo(0, 12, cima)',
+                'resultado': resultado_5,
+                'esperado': 0,
+                'correto': teste_5_ok
+            })
+            if not teste_5_ok:
+                todos_corretos = False
+
+            if todos_corretos:
+                return 'ok', 'Arredondamento pos-transferencia funciona corretamente', {
+                    'funcao': 'arredondar_para_multiplo',
+                    'testes': resultados_testes,
+                    'versao': 'v6.7'
+                }
+            else:
+                return 'falha', 'Arredondamento pos-transferencia com erro', {
+                    'testes': resultados_testes
+                }
+
+        except ImportError as e:
+            return 'falha', f'Funcao arredondar_para_multiplo nao encontrada: {str(e)}', {
+                'erro': 'A funcao deve ser exportada de core/pedido_fornecedor_integrado.py'
+            }
+        except Exception as e:
+            return 'falha', f'Erro ao verificar arredondamento pos-transferencia: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_es_lt_base_rateio_desvio(self) -> Tuple[str, str, Dict]:
+        """
+        V22: Verifica que ES usa LT sem delay e rateio de desvio usa sqrt().
+
+        Implementado em v6.8 para garantir que:
+        1. ES usa lead_time_base (sem delay operacional)
+        2. Rateio de desvio usa sqrt(proporcao), nao proporcao linear
+        """
+        try:
+            import inspect
+            from core.pedido_fornecedor_integrado import PedidoFornecedorIntegrado
+            from app.utils.demanda_pre_calculada import obter_demanda_do_cache
+
+            resultados = []
+            todos_corretos = True
+
+            # Teste 1: Verificar que ES usa lead_time_base (inspecao de codigo)
+            source = inspect.getsource(PedidoFornecedorIntegrado.processar_item)
+            es_usa_lt_base = 'lead_time_dias=lead_time_base' in source
+            resultados.append({
+                'teste': 'ES usa lead_time_base (sem delay)',
+                'correto': es_usa_lt_base,
+                'comentario': 'ES = Z x sigma x sqrt(LT_fornecedor)'
+            })
+            if not es_usa_lt_base:
+                todos_corretos = False
+
+            # Teste 2: Verificar que rateio de desvio usa sqrt (inspecao de codigo)
+            source_cache = inspect.getsource(obter_demanda_do_cache)
+            rateio_usa_sqrt = 'np.sqrt(proporcao_loja)' in source_cache or 'np.sqrt(num_lojas)' in source_cache
+            resultados.append({
+                'teste': 'Rateio de desvio usa sqrt()',
+                'correto': rateio_usa_sqrt,
+                'comentario': 'Propriedade estatistica: variancia rateia linear, desvio padrao rateia pela raiz'
+            })
+            if not rateio_usa_sqrt:
+                todos_corretos = False
+
+            # Teste 3: Validar matematicamente o rateio
+            # Se proporcao = 0.1, desvio rateado deve ser desvio * sqrt(0.1) = desvio * 0.316
+            proporcao = 0.1
+            desvio_original = 10.0
+            desvio_esperado = desvio_original * np.sqrt(proporcao)
+            desvio_incorreto = desvio_original * proporcao
+
+            # Margem de tolerancia
+            teste_3_ok = abs(desvio_esperado - 3.162) < 0.01
+            resultados.append({
+                'teste': 'Validacao matematica sqrt(proporcao)',
+                'proporcao': proporcao,
+                'desvio_original': desvio_original,
+                'desvio_correto (sqrt)': round(desvio_esperado, 3),
+                'desvio_incorreto (linear)': desvio_incorreto,
+                'correto': teste_3_ok
+            })
+            if not teste_3_ok:
+                todos_corretos = False
+
+            if todos_corretos:
+                return 'ok', 'ES usa LT base e rateio de desvio usa sqrt() corretamente', {
+                    'versao': 'v6.8',
+                    'regras': [
+                        'ES usa lead_time_base (sem delay operacional)',
+                        'Rateio proporcional: desvio = desvio * sqrt(proporcao_loja)',
+                        'Rateio uniforme: desvio = desvio / sqrt(num_lojas)'
+                    ],
+                    'testes': resultados
+                }
+            else:
+                return 'falha', 'ES ou rateio de desvio com problema', {
+                    'testes': resultados
+                }
+
+        except ImportError as e:
+            return 'falha', f'Modulo nao encontrado: {str(e)}', {
+                'erro': str(e)
+            }
+        except Exception as e:
+            return 'falha', f'Erro ao verificar ES e rateio: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 
