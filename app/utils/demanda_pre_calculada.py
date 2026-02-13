@@ -8,6 +8,7 @@ usem os mesmos valores de demanda, mantendo INTEGRIDADE TOTAL.
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from psycopg2.extras import RealDictCursor
+import numpy as np
 
 
 def calcular_proporcoes_vendas_por_loja(
@@ -217,13 +218,17 @@ def obter_demanda_do_cache(
         if usar_consolidado_rateado:
             if proporcao_loja is not None and proporcao_loja > 0:
                 # RATEIO PROPORCIONAL: usa proporcao baseada em vendas historicas
+                # Demanda: rateia linearmente pela proporcao
                 demanda_diaria = demanda_diaria * proporcao_loja
-                desvio = desvio * proporcao_loja
+                # Desvio: usa raiz quadrada da proporcao (propriedade estatistica da variancia)
+                # Variancia rateia linearmente, desvio padrao rateia pela raiz
+                desvio = desvio * np.sqrt(proporcao_loja)
                 metodo_rateio = 'proporcional'
             elif num_lojas > 1:
                 # RATEIO UNIFORME (fallback): divide igualmente
                 demanda_diaria = demanda_diaria / num_lojas
-                desvio = desvio / num_lojas
+                # Desvio: usa raiz quadrada do numero de lojas
+                desvio = desvio / np.sqrt(num_lojas)
                 metodo_rateio = 'uniforme'
 
         return (

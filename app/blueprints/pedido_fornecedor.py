@@ -57,7 +57,8 @@ def api_pedido_fornecedor_integrado():
         from core.pedido_fornecedor_integrado import (
             PedidoFornecedorIntegrado,
             agregar_por_fornecedor,
-            calcular_cobertura_abc
+            calcular_cobertura_abc,
+            arredondar_para_multiplo
         )
         from core.demand_calculator import DemandCalculator
         from core.transferencia_regional import TransferenciaRegional
@@ -770,6 +771,11 @@ def api_pedido_fornecedor_integrado():
                                     item_destino = destino['item_ref']
                                     qtd_pedido_atual = item_destino.get('quantidade_pedido', 0) or 0
                                     nova_qtd = max(0, qtd_pedido_atual - qtd_transferir)
+
+                                    # Arredondar para multiplo de caixa apos transferencia
+                                    multiplo_caixa = item_destino.get('multiplo_caixa', 1) or 1
+                                    nova_qtd = arredondar_para_multiplo(nova_qtd, multiplo_caixa, 'cima')
+
                                     item_destino['quantidade_pedido'] = nova_qtd
                                     item_destino['valor_pedido'] = round(nova_qtd * cue_usar, 2)
 

@@ -289,6 +289,35 @@ def calcular_quantidade_pedido(
     }
 
 
+def arredondar_para_multiplo(quantidade: float, multiplo: int, direcao: str = 'cima') -> int:
+    """
+    Arredonda uma quantidade para o multiplo de caixa mais proximo.
+
+    Esta funcao deve ser usada sempre que uma quantidade de pedido for alterada
+    apos o calculo inicial (ex: apos aplicar transferencias).
+
+    Args:
+        quantidade: Quantidade a ser arredondada
+        multiplo: Multiplo de caixa (ex: 12 para caixas de 12 unidades)
+        direcao: 'cima' para arredondar para cima, 'baixo' para arredondar para baixo
+
+    Returns:
+        Quantidade arredondada para o multiplo
+
+    Exemplos:
+        arredondar_para_multiplo(55, 12, 'cima') -> 60  (5 caixas)
+        arredondar_para_multiplo(55, 12, 'baixo') -> 48  (4 caixas)
+        arredondar_para_multiplo(55, 1, 'cima') -> 55  (sem multiplo)
+    """
+    if multiplo <= 1 or quantidade <= 0:
+        return int(max(0, quantidade))
+
+    if direcao == 'baixo':
+        return int(quantidade // multiplo) * multiplo
+    else:
+        return int(np.ceil(quantidade / multiplo)) * multiplo
+
+
 def calcular_cobertura_pos_pedido(
     estoque_disponivel: float,
     estoque_transito: float,
@@ -1211,6 +1240,9 @@ class PedidoFornecedorIntegrado:
             }
 
         # 7. Calcular estoque de segurança
+        # IMPORTANTE: ES usa lead_time_base (sem delay operacional)
+        # O delay operacional e para cobertura logistica, nao para variabilidade de demanda
+        # ES = Z x sigma x sqrt(LT_fornecedor)
         # Garantir que desvio_padrao nao seja NaN
         if desvio_padrao is None or np.isnan(desvio_padrao) or np.isinf(desvio_padrao):
             desvio_padrao = previsao_diaria * 0.3 if previsao_diaria > 0 else 0.1
@@ -1220,7 +1252,7 @@ class PedidoFornecedorIntegrado:
             desvio_diario = 0.1
         es_info = calcular_estoque_seguranca(
             desvio_padrao_diario=desvio_diario,
-            lead_time_dias=lead_time,
+            lead_time_dias=lead_time_base,  # Usar LT sem delay para ES
             curva_abc=curva_abc
         )
 

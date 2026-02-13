@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.6** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.8** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -74,10 +74,15 @@ tempo entre calculo do pedido e envio ao fornecedor (aprovacoes, consolidacao).
 - B: +4 dias (Z=1.65, NS=95%)
 - C: +6 dias (Z=1.28, NS=90%)
 
-**Estoque de Seguranca**:
+**Estoque de Seguranca** (v6.8):
 ```
-ES = Z × Sigma × sqrt(Lead Time)
+ES = Z × Sigma × sqrt(Lead Time Base)
 ```
+- **Lead Time Base**: Lead time do fornecedor SEM delay operacional
+- O delay operacional e para cobertura logistica, nao para variabilidade de demanda
+- **Rateio do desvio**: Quando demanda consolidada e rateada por loja, o desvio usa sqrt()
+  - Demanda: `demanda * proporcao_loja`
+  - Desvio: `desvio * sqrt(proporcao_loja)` (propriedade estatistica da variancia)
 
 **Situacoes que BLOQUEIAM pedido automatico**:
 - NC (Nao Comprar)
@@ -146,8 +151,18 @@ Quando ha oportunidades de transferencia, o sistema exibe badges visuais na tela
 **Comportamento**:
 - Badges aparecem ao lado de cada item/loja
 - Ao receber transferencia, o `quantidade_pedido` e REDUZIDO automaticamente
+- **Apos transferencia, quantidade e ARREDONDADA para multiplo de caixa** (funcao `arredondar_para_multiplo`)
 - Se transferencia cobre toda a necessidade, `quantidade_pedido = 0`
 - Transferencias sao salvas na tabela `oportunidades_transferencia`
+
+**Arredondamento Pos-Transferencia** (v6.7):
+```python
+from core.pedido_fornecedor_integrado import arredondar_para_multiplo
+
+# Exemplo: Pedido original 84 un, transferencia -29 un, multiplo 12
+nova_qtd = max(0, 84 - 29)  # = 55
+nova_qtd = arredondar_para_multiplo(55, 12, 'cima')  # = 60 (5 caixas)
+```
 
 **Importante**: As sugestoes de transferencia sao recalculadas a cada execucao do pedido. Dados antigos (>24h) sao automaticamente limpos.
 
@@ -448,7 +463,7 @@ DB_PORT=5432
 
 5. **Fator YoY**: Corrige subestimacao em fornecedores com crescimento historico
 
-6. **Rateio proporcional**: Em pedidos multi-loja, demanda e distribuida proporcional ao historico de vendas
+6. **Rateio proporcional**: Em pedidos multi-loja, demanda e distribuida proporcional ao historico de vendas. Desvio padrao usa sqrt() da proporcao (v6.8)
 
 7. **Tabelas legadas**: `cadastro_produtos` e `embalagem` sao legadas - usar `cadastro_produtos_completo` e `embalagem_arredondamento`
 
@@ -514,6 +529,8 @@ DB_PORT=5432
 - V18: Delay operacional de 5 dias no lead time (v6.4)
 - V19: Arredondamento inteligente de pedidos para multiplo de caixa (v6.5)
 - V20: Scripts de importacao de dados Soprano + badges de transferencia (v6.6)
+- V21: Arredondamento pos-transferencia + importacao padrao de compra (v6.7)
+- V22: Correcao do calculo de Estoque de Seguranca - rateio de desvio usa sqrt() e ES usa LT sem delay (v6.8)
 
 ## Documentacao Complementar
 
@@ -529,4 +546,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.6)
+**Ultima atualizacao**: Fevereiro 2026 (v6.8)
