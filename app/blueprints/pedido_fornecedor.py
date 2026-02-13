@@ -618,6 +618,7 @@ def api_pedido_fornecedor_integrado():
 
         if is_pedido_multiloja and len(lojas_demanda) > 1:
             print(f"\n  [TRANSFERENCIAS] Analisando oportunidades de transferencia entre {len(lojas_demanda)} lojas...")
+            print(f"  [TRANSFERENCIAS] Total de resultados a analisar: {len(resultados)}")
 
             # Reconectar ao banco para calcular transferencias
             conn_transf = get_db_connection()
@@ -631,6 +632,15 @@ def api_pedido_fornecedor_integrado():
                     if codigo not in itens_por_codigo:
                         itens_por_codigo[codigo] = []
                     itens_por_codigo[codigo].append(item)
+
+                print(f"  [TRANSFERENCIAS] Produtos unicos encontrados: {len(itens_por_codigo)}")
+
+                # DEBUG: Mostrar primeiro produto com multiplas lojas
+                for codigo, itens in list(itens_por_codigo.items())[:3]:
+                    if len(itens) >= 2:
+                        print(f"  [TRANSFERENCIAS] DEBUG produto {codigo}: {len(itens)} lojas")
+                        for it in itens[:3]:
+                            print(f"    Loja {it.get('cod_loja')}: cob={it.get('cobertura_atual_dias')}, dem={it.get('demanda_prevista_diaria')}, qtd_ped={it.get('quantidade_pedido')}")
 
                 # Parametros de transferencia
                 # MARGEM_EXCESSO = 0 significa que qualquer excesso acima do alvo pode ser doado
@@ -792,6 +802,59 @@ def api_pedido_fornecedor_integrado():
             itens_pedido = [r for r in resultados if r.get('deve_pedir') and not r.get('bloqueado') and (r.get('quantidade_pedido', 0) or 0) > 0]
             itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
 
+            # ==============================================================================
+            # SALVAR TRANSFERENCIAS NO BANCO DE DADOS
+            # ==============================================================================
+            if transferencias_sugeridas:
+                try:
+                    conn_save = get_db_connection()
+                    cursor_save = conn_save.cursor()
+
+                    # Limpar transferencias antigas (mais de 24h)
+                    cursor_save.execute("""
+                        DELETE FROM oportunidades_transferencia
+                        WHERE data_calculo < NOW() - INTERVAL '24 hours'
+                    """)
+
+                    # Inserir novas transferencias (usando colunas da tabela real)
+                    for transf in transferencias_sugeridas:
+                        cursor_save.execute("""
+                            INSERT INTO oportunidades_transferencia (
+                                cod_produto, descricao_produto, curva_abc,
+                                loja_origem, nome_loja_origem, estoque_origem, cobertura_origem_dias,
+                                loja_destino, nome_loja_destino, estoque_destino, cobertura_destino_dias,
+                                qtd_sugerida, valor_estimado, cue, urgencia, data_calculo, status
+                            ) VALUES (
+                                %s, %s, %s,
+                                %s, %s, %s, %s,
+                                %s, %s, %s, %s,
+                                %s, %s, %s, %s, NOW(), 'pendente'
+                            )
+                        """, (
+                            transf.get('cod_produto', 0),
+                            transf.get('descricao', '')[:300] if transf.get('descricao') else '',
+                            transf.get('curva_abc', 'B'),
+                            transf.get('loja_origem', 0),
+                            transf.get('nome_loja_origem', '')[:100] if transf.get('nome_loja_origem') else '',
+                            transf.get('estoque_origem', 0),
+                            transf.get('cobertura_origem_dias', 0),
+                            transf.get('loja_destino', 0),
+                            transf.get('nome_loja_destino', '')[:100] if transf.get('nome_loja_destino') else '',
+                            transf.get('estoque_destino', 0),
+                            transf.get('cobertura_destino_dias', 0),
+                            transf.get('qtd_sugerida', 0),
+                            transf.get('valor_estimado', 0),
+                            transf.get('cue', 0),
+                            transf.get('urgencia', 'MEDIA')
+                        ))
+
+                    conn_save.commit()
+                    cursor_save.close()
+                    conn_save.close()
+                    print(f"  [TRANSFERENCIAS] {len(transferencias_sugeridas)} oportunidades salvas no banco")
+                except Exception as e_save:
+                    print(f"  [TRANSFERENCIAS] Erro ao salvar no banco: {e_save}")
+
         # Validacao de pedido minimo
         validacao_pedido_minimo = {}
         alertas_pedido_minimo = []
@@ -920,10 +983,15 @@ def api_pedido_fornecedor_integrado_exportar():
             return jsonify({'success': False, 'erro': 'Dados nao fornecidos'}), 400
 
         itens_pedido = dados.get('itens_pedido', [])
+        itens_bloqueados = dados.get('itens_bloqueados', [])
         estatisticas = dados.get('estatisticas', {})
         agregacao = dados.get('agregacao_fornecedor', {})
 
-        if not itens_pedido:
+        # Debug: mostrar quantos itens chegaram
+        print(f"[EXPORT] Recebido: {len(itens_pedido)} itens_pedido, {len(itens_bloqueados)} itens_bloqueados")
+
+        # Permitir exportar mesmo sem itens de pedido, se houver bloqueados
+        if not itens_pedido and not itens_bloqueados:
             return jsonify({'success': False, 'erro': 'Nenhum item para exportar'}), 400
 
         wb = Workbook()
@@ -1010,6 +1078,89 @@ def api_pedido_fornecedor_integrado_exportar():
             ws_itens.column_dimensions[chr(64 + i)].width = width
 
         ws_itens.freeze_panes = 'A2'
+
+        # Aba Itens Bloqueados (Situacao FL, NC, EN, etc.)
+        if itens_bloqueados:
+            ws_bloq = wb.create_sheet('Itens Bloqueados')
+
+            # Estilo para itens bloqueados (vermelho claro)
+            bloq_fill = PatternFill(start_color='FEE2E2', end_color='FEE2E2', fill_type='solid')
+            bloq_header_fill = PatternFill(start_color='DC2626', end_color='DC2626', fill_type='solid')
+
+            headers_bloq = [
+                'Cod Filial', 'Nome Filial', 'Cod Item', 'Descricao Item',
+                'Nome Fornecedor', 'Situacao', 'Motivo Bloqueio', 'Estoque Atual'
+            ]
+
+            for col, header in enumerate(headers_bloq, start=1):
+                cell = ws_bloq.cell(row=1, column=col, value=header)
+                cell.font = header_font
+                cell.fill = bloq_header_fill
+                cell.border = border
+                cell.alignment = Alignment(horizontal='center')
+
+            # Ordenar por loja e fornecedor
+            itens_bloq_ordenados = sorted(itens_bloqueados, key=lambda x: (
+                x.get('cod_loja', 0) or 0,
+                x.get('nome_fornecedor', '') or ''
+            ))
+
+            for row_idx, item in enumerate(itens_bloq_ordenados, start=2):
+                ws_bloq.cell(row=row_idx, column=1, value=item.get('cod_loja', '')).border = border
+                ws_bloq.cell(row=row_idx, column=2, value=item.get('nome_loja', '')).border = border
+                ws_bloq.cell(row=row_idx, column=3, value=item.get('codigo', '')).border = border
+                ws_bloq.cell(row=row_idx, column=4, value=item.get('descricao', '')[:60]).border = border
+                ws_bloq.cell(row=row_idx, column=5, value=item.get('nome_fornecedor', '')).border = border
+
+                # Situacao de compra (FL, NC, EN, etc.)
+                situacao = item.get('sit_compra', item.get('situacao_compra', ''))
+                ws_bloq.cell(row=row_idx, column=6, value=situacao).border = border
+
+                # Motivo do bloqueio
+                motivo = item.get('motivo_bloqueio', '')
+                if not motivo:
+                    # Gerar motivo baseado na situacao se nao vier preenchido
+                    motivos_por_situacao = {
+                        'FL': 'Fora de Linha - Item descontinuado',
+                        'NC': 'Nao Comprar - Bloqueado para compras',
+                        'EN': 'Encomenda - Apenas sob demanda',
+                        'FF': 'Falta no Fornecedor',
+                        'CO': 'Compra Oportunidade'
+                    }
+                    motivo = motivos_por_situacao.get(situacao, f'Bloqueado por situacao {situacao}')
+
+                cell_motivo = ws_bloq.cell(row=row_idx, column=7, value=motivo)
+                cell_motivo.border = border
+                cell_motivo.fill = bloq_fill
+
+                # Estoque atual
+                estoque = item.get('estoque_atual', 0)
+                ws_bloq.cell(row=row_idx, column=8, value=estoque).border = border
+
+            # Largura das colunas
+            col_widths_bloq = [12, 25, 12, 50, 30, 12, 45, 15]
+            for i, width in enumerate(col_widths_bloq, start=1):
+                ws_bloq.column_dimensions[chr(64 + i)].width = width
+
+            ws_bloq.freeze_panes = 'A2'
+
+            # Atualizar resumo com info de bloqueados
+            ws_resumo['A10'] = 'Itens Bloqueados'
+            ws_resumo['A10'].font = Font(bold=True)
+            ws_resumo['A11'] = 'Total Bloqueados'
+            ws_resumo['B11'] = len(itens_bloqueados)
+
+            # Contar por situacao
+            situacoes_count = {}
+            for item in itens_bloqueados:
+                sit = item.get('sit_compra', item.get('situacao_compra', 'N/A'))
+                situacoes_count[sit] = situacoes_count.get(sit, 0) + 1
+
+            row_sit = 12
+            for sit, count in sorted(situacoes_count.items()):
+                ws_resumo[f'A{row_sit}'] = f'  - {sit}'
+                ws_resumo[f'B{row_sit}'] = count
+                row_sit += 1
 
         output = io.BytesIO()
         wb.save(output)

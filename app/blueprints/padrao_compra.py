@@ -398,6 +398,59 @@ def api_padrao_compra_exportar():
                 ws_criticas.cell(row=row_idx, column=3, value=critica.get('cod_empresa', '')).border = border
                 ws_criticas.cell(row=row_idx, column=4, value=critica.get('mensagem', '')).border = border
 
+        # =====================================================================
+        # ABA 3: ITENS BLOQUEADOS (se houver)
+        # =====================================================================
+        itens_bloqueados = dados.get('itens_bloqueados', [])
+        if itens_bloqueados:
+            ws_bloq = wb.create_sheet('Itens Bloqueados')
+
+            bloq_header_fill = PatternFill(start_color='DC2626', end_color='DC2626', fill_type='solid')
+            bloq_fill = PatternFill(start_color='FEE2E2', end_color='FEE2E2', fill_type='solid')
+
+            headers_bloq = [
+                'Cod Filial', 'Codigo', 'Descricao', 'Fornecedor',
+                'Situacao', 'Motivo Bloqueio', 'Estoque Atual', 'Estoque Transito'
+            ]
+
+            for col, header in enumerate(headers_bloq, 1):
+                cell = ws_bloq.cell(row=1, column=col, value=header)
+                cell.font = header_font
+                cell.fill = bloq_header_fill
+                cell.border = border
+
+            # Ordenar por fornecedor e depois por codigo
+            itens_bloq_ordenados = sorted(itens_bloqueados, key=lambda x: (
+                x.get('nome_fornecedor', '') or '',
+                x.get('codigo', 0)
+            ))
+
+            for row_idx, item in enumerate(itens_bloq_ordenados, 2):
+                ws_bloq.cell(row=row_idx, column=1, value=item.get('cod_empresa', '')).border = border
+                ws_bloq.cell(row=row_idx, column=2, value=item.get('codigo', '')).border = border
+                ws_bloq.cell(row=row_idx, column=3, value=item.get('descricao', '')).border = border
+                ws_bloq.cell(row=row_idx, column=4, value=item.get('nome_fornecedor', '')).border = border
+                ws_bloq.cell(row=row_idx, column=5, value=item.get('sit_compra', '')).border = border
+                ws_bloq.cell(row=row_idx, column=6, value=item.get('motivo_bloqueio', '')).border = border
+                ws_bloq.cell(row=row_idx, column=7, value=item.get('estoque_atual', 0)).border = border
+                ws_bloq.cell(row=row_idx, column=8, value=item.get('estoque_transito', 0)).border = border
+
+                # Aplicar cor de fundo nas linhas
+                for col in range(1, 9):
+                    ws_bloq.cell(row=row_idx, column=col).fill = bloq_fill
+
+            # Ajustar larguras
+            ws_bloq.column_dimensions['A'].width = 12
+            ws_bloq.column_dimensions['B'].width = 12
+            ws_bloq.column_dimensions['C'].width = 40
+            ws_bloq.column_dimensions['D'].width = 30
+            ws_bloq.column_dimensions['E'].width = 12
+            ws_bloq.column_dimensions['F'].width = 30
+            ws_bloq.column_dimensions['G'].width = 15
+            ws_bloq.column_dimensions['H'].width = 15
+
+            print(f"[EXPORT] Adicionada aba 'Itens Bloqueados' com {len(itens_bloqueados)} itens")
+
         # Salvar
         output = io.BytesIO()
         wb.save(output)

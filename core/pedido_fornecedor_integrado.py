@@ -452,7 +452,8 @@ class PedidoFornecedorIntegrado:
                     COALESCE(estoque, 0) as estoque_disponivel,
                     COALESCE(qtd_pendente, 0) as qtd_pendente,
                     COALESCE(qtd_pend_transf, 0) as qtd_pend_transf,
-                    COALESCE(cue, 0) as cue
+                    COALESCE(cue, 0) as cue,
+                    COALESCE(curva_abc, 'B') as curva_abc
                 FROM estoque_posicao_atual
                 WHERE codigo IN ({placeholders_cod})
                   AND cod_empresa IN ({placeholders_emp})
@@ -479,7 +480,8 @@ class PedidoFornecedorIntegrado:
                     'estoque_efetivo': estoque_disp + estoque_transito,
                     'qtd_pendente': qtd_pendente,
                     'qtd_pend_transf': qtd_pend_transf,
-                    'cue': float(row['cue'])
+                    'cue': float(row['cue']),
+                    'curva_abc': row.get('curva_abc', 'B')
                 }
 
             print(f"  [CACHE] Estoque pré-carregado: {len(self._cache_estoque)} registros")
@@ -810,7 +812,7 @@ class PedidoFornecedorIntegrado:
         Returns:
             Dicionário com estoque disponível, em trânsito e pendente
         """
-        default_result = {'estoque_disponivel': 0, 'estoque_transito': 0, 'estoque_efetivo': 0, 'qtd_pendente': 0, 'qtd_pend_transf': 0}
+        default_result = {'estoque_disponivel': 0, 'estoque_transito': 0, 'estoque_efetivo': 0, 'estoque_atual': 0, 'qtd_pendente': 0, 'qtd_pend_transf': 0, 'cue': 0, 'curva_abc': 'B'}
 
         # Converter codigo para int
         try:
@@ -831,7 +833,9 @@ class PedidoFornecedorIntegrado:
             SELECT
                 COALESCE(estoque, 0) as estoque_disponivel,
                 COALESCE(qtd_pendente, 0) as qtd_pendente,
-                COALESCE(qtd_pend_transf, 0) as qtd_pend_transf
+                COALESCE(qtd_pend_transf, 0) as qtd_pend_transf,
+                COALESCE(cue, 0) as cue,
+                COALESCE(curva_abc, 'B') as curva_abc
             FROM estoque_posicao_atual
             WHERE codigo = %s AND cod_empresa = %s
         """
@@ -855,7 +859,9 @@ class PedidoFornecedorIntegrado:
             'estoque_transito': estoque_transito,
             'estoque_efetivo': estoque_disponivel + estoque_transito,
             'qtd_pendente': qtd_pendente,
-            'qtd_pend_transf': qtd_pend_transf
+            'qtd_pend_transf': qtd_pend_transf,
+            'cue': float(row.get('cue', 0)),
+            'curva_abc': row.get('curva_abc', 'B')
         }
 
     def buscar_parametros_gondola(self, codigo, cod_empresa: int) -> Dict:
@@ -1105,13 +1111,32 @@ class PedidoFornecedorIntegrado:
         # 0. Verificar situação de compra (antes de qualquer processamento)
         bloqueio = self.verificar_situacao_compra(codigo, cod_empresa)
         if bloqueio:
-            # Item bloqueado - retorna informações mínimas
+            # Item bloqueado - retorna informações completas para relatório
             produto = self.buscar_dados_produto(codigo)
+            estoque = self.buscar_estoque_atual(codigo, cod_empresa)
+
+            # Buscar nome da loja do cache se disponível
+            nome_loja = ''
+            if hasattr(self, '_cache_lojas') and self._cache_lojas:
+                nome_loja = self._cache_lojas.get(cod_empresa, '')
+
+            # CUE (Custo Unitário de Entrada) - prioridade: estoque > produto
+            preco_custo = estoque.get('cue', 0) if estoque else 0
+            if not preco_custo and produto:
+                preco_custo = produto.get('cue', 0) or produto.get('preco_custo', 0) or 0
+
+            # Curva ABC - prioridade: estoque > produto
+            curva_abc = estoque.get('curva_abc', 'B') if estoque else 'B'
+            if not curva_abc or curva_abc == 'B':
+                curva_abc = produto.get('curva_abc', 'B') if produto else 'B'
+
             return {
                 'codigo': codigo,
                 'descricao': produto.get('descricao', '') if produto else f'Produto {codigo}',
                 'categoria': produto.get('categoria', '') if produto else '',
                 'cod_empresa': cod_empresa,
+                'cod_loja': cod_empresa,  # Alias para compatibilidade
+                'nome_loja': nome_loja,
                 'bloqueado': True,
                 'sit_compra': bloqueio['sit_compra'],
                 'motivo_bloqueio': bloqueio['descricao'],
@@ -1119,9 +1144,20 @@ class PedidoFornecedorIntegrado:
                 'cor_alerta': bloqueio['cor_alerta'],
                 'icone_bloqueio': bloqueio['icone'],
                 'quantidade_pedido': 0,
+                'valor_pedido': 0,
                 'deve_pedir': False,
                 'codigo_fornecedor': produto.get('codigo_fornecedor', '') if produto else '',
-                'nome_fornecedor': produto.get('nome_fornecedor', '') if produto else ''
+                'nome_fornecedor': produto.get('nome_fornecedor', '') if produto else '',
+                'curva_abc': curva_abc,
+                'linha1': produto.get('linha1', '') if produto else '',
+                'linha3': produto.get('linha3', '') if produto else '',
+                'estoque_atual': estoque.get('estoque_disponivel', 0) if estoque else 0,
+                'estoque_efetivo': estoque.get('estoque_efetivo', 0) if estoque else 0,
+                'estoque_transito': estoque.get('estoque_transito', 0) if estoque else 0,
+                'preco_custo': preco_custo,
+                'cue': preco_custo,  # Alias para compatibilidade
+                'demanda_prevista_diaria': 0,
+                'demanda_diaria': 0
             }
 
         # 1. Buscar dados do produto

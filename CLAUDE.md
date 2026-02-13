@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.5** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.6** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -135,6 +135,22 @@ qtd_transferivel = excesso_em_dias × demanda_diaria
 
 **Restricao**: Mesma loja nao pode ser doadora e receptora do mesmo item.
 
+**Badges na Tela de Pedido**:
+Quando ha oportunidades de transferencia, o sistema exibe badges visuais na tela de Pedido ao Fornecedor:
+
+| Badge | Cor | Significado |
+|-------|-----|-------------|
+| `Enviar X un` | Laranja | Loja pode enviar X unidades para outra |
+| `Receber X un` | Verde | Loja vai receber X unidades de outra |
+
+**Comportamento**:
+- Badges aparecem ao lado de cada item/loja
+- Ao receber transferencia, o `quantidade_pedido` e REDUZIDO automaticamente
+- Se transferencia cobre toda a necessidade, `quantidade_pedido = 0`
+- Transferencias sao salvas na tabela `oportunidades_transferencia`
+
+**Importante**: As sugestoes de transferencia sao recalculadas a cada execucao do pedido. Dados antigos (>24h) sao automaticamente limpos.
+
 ### 6. Rateio Proporcional de Demanda (V14)
 
 **Arquivos**: `app/utils/demanda_pre_calculada.py`, `app/blueprints/pedido_fornecedor.py`, `app/blueprints/pedido_planejado.py`
@@ -263,6 +279,83 @@ Dashboard para monitoramento de indicadores de performance do sistema.
 **Graficos**:
 - Evolucao temporal de Ruptura e Cobertura
 - Linha de meta para referencia
+
+### 10. Relatorio de Itens Bloqueados na Exportacao
+
+**Arquivo**: `app/blueprints/pedido_fornecedor.py`
+
+O relatorio de exportacao de pedido ao fornecedor agora inclui **aba separada** para itens bloqueados por situacao de compra.
+
+**Abas do Excel Exportado**:
+1. **Resumo**: Estatisticas gerais + contagem por situacao de bloqueio
+2. **Itens Pedido**: Itens com pedido calculado (formato original)
+3. **Itens Bloqueados**: Itens que NAO tiveram pedido calculado
+
+**Colunas da Aba "Itens Bloqueados"**:
+| Coluna | Descricao |
+|--------|-----------|
+| Cod Filial | Codigo da loja |
+| Nome Filial | Nome da loja |
+| Cod Item | Codigo do produto |
+| Descricao Item | Descricao do produto |
+| Nome Fornecedor | Fornecedor do item |
+| Situacao | Codigo da situacao (FL, NC, EN, etc.) |
+| Motivo Bloqueio | Descricao do motivo |
+| Estoque Atual | Estoque atual na loja |
+
+**Motivos de Bloqueio**:
+| Situacao | Motivo |
+|----------|--------|
+| FL | Fora de Linha - Item descontinuado |
+| NC | Nao Comprar - Bloqueado para compras |
+| EN | Encomenda - Apenas sob demanda |
+| FF | Falta no Fornecedor |
+| CO | Compra Oportunidade |
+
+**Beneficios**:
+- Visibilidade completa dos itens nao calculados
+- Identificacao rapida de itens a serem ajustados
+- Auditoria de por que certos itens nao tem pedido
+- Contagem por situacao no resumo
+
+### 11. Scripts de Importacao de Dados
+
+**Pasta**: Raiz do projeto
+
+Scripts utilitarios para importacao de dados de fornecedores a partir de arquivos CSV exportados do Soprano (sistema legado).
+
+**Scripts Disponiveis**:
+
+| Script | Descricao |
+|--------|-----------|
+| `importar_soprano.py` | Importacao completa do fornecedor Soprano |
+| `importar_cadastros.py` | Importacao generica de cadastros |
+| `importar_demanda_geral.py` | Importacao de demanda historica |
+
+**Uso Tipico**:
+```bash
+# Importar dados do fornecedor
+python importar_soprano.py
+
+# Apos importar, recalcular demanda para todos
+python jobs/calcular_demanda_diaria.py --manual
+```
+
+**Arquivos CSV Esperados** (padrao Soprano):
+- `Cadastro de Fornecedores_[Nome]_[Data].csv` - Parametros do fornecedor
+- `Cadastro de Produtos_[Nome]_[Data].csv` - Produtos e categorias
+- `Embalagem_[Nome]_[Data].csv` - Multiplos de embalagem
+- `Relatorio de Posicao de Estoque_[Nome]_[Data].csv` - Estoque atual
+- `demanda_[Nome]_[Ano].csv` - Historico de vendas diarias
+
+**Tabelas Atualizadas**:
+- `parametros_fornecedor` - Lead time, ciclo, pedido minimo
+- `cadastro_produtos_completo` - Produtos e categorias
+- `embalagem_arredondamento` - Multiplos de caixa
+- `estoque_posicao_atual` - Posicao de estoque
+- `historico_vendas_diario_XXXX` - Vendas por ano (particionada)
+
+**Importante**: Apos importar dados, sempre executar o job de recalculo de demanda para atualizar a tabela `demanda_pre_calculada`.
 
 ## APIs Importantes
 
@@ -420,6 +513,7 @@ DB_PORT=5432
 - V17: Itens FF incluidos em ruptura e pedido (v6.3)
 - V18: Delay operacional de 5 dias no lead time (v6.4)
 - V19: Arredondamento inteligente de pedidos para multiplo de caixa (v6.5)
+- V20: Scripts de importacao de dados Soprano + badges de transferencia (v6.6)
 
 ## Documentacao Complementar
 
@@ -435,4 +529,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.5)
+**Ultima atualizacao**: Fevereiro 2026 (v6.6)

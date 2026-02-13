@@ -894,9 +894,14 @@
                     <div class="card">
                         <div class="card-header">
                             <h3>Pedidos por Fornecedor</h3>
-                            <button id="btnExportarTodos" onclick="exportarTodos()" style="background: #059669; color: white; padding: 8px 16px; font-size: 0.85em; border-radius: 6px; border: none; cursor: pointer; font-weight: 500;">
-                                📥 Exportar Todos
-                            </button>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <a href="/transferencias" id="btnVerTransferencias" style="display: none; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 8px 16px; font-size: 0.85em; border-radius: 6px; text-decoration: none; font-weight: 500; transition: transform 0.2s;">
+                                    🔄 Ver Transferências
+                                </a>
+                                <button id="btnExportarTodos" onclick="exportarTodos()" style="background: #059669; color: white; padding: 8px 16px; font-size: 0.85em; border-radius: 6px; border: none; cursor: pointer; font-weight: 500;">
+                                    📥 Exportar Todos
+                                </button>
+                            </div>
                         </div>
                         <div class="card-body" id="fornecedoresLista" style="padding: 12px;">
                         </div>
@@ -1336,11 +1341,23 @@
                 let metricaTransfHtml = '';
                 if (totalTransf > 0) {
                     metricaTransfHtml = `
-                        <div class="metrica" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 8px; padding: 8px;" title="Transferencias entre lojas reduzem o pedido ao fornecedor">
+                        <a href="/transferencias" class="metrica" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 8px; padding: 8px; text-decoration: none; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;" title="Clique para ver detalhes das transferencias entre lojas" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 4px 12px rgba(16,185,129,0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='none';">
                             <div class="valor" style="color: white;">-R$ ${(economiaTransf/1000).toFixed(1)}k</div>
                             <div class="label" style="color: rgba(255,255,255,0.9);">${totalTransf} Transf.</div>
-                        </div>
+                        </a>
                     `;
+                    // Mostrar botao "Ver Transferencias"
+                    const btnTransf = document.getElementById('btnVerTransferencias');
+                    if (btnTransf) {
+                        btnTransf.style.display = 'inline-block';
+                        btnTransf.innerHTML = `🔄 ${totalTransf} Transferências`;
+                    }
+                } else {
+                    // Esconder botao se nao houver transferencias
+                    const btnTransf = document.getElementById('btnVerTransferencias');
+                    if (btnTransf) {
+                        btnTransf.style.display = 'none';
+                    }
                 }
 
                 document.getElementById('resumoMetricas').innerHTML = `
@@ -1513,9 +1530,10 @@
                         const codLojaItem = item.cod_loja;
 
                         // Filtrar transferencias onde esta loja e ORIGEM (vai enviar)
-                        const transfOrigem = transfs.filter(t => t.cod_loja_origem === codLojaItem);
+                        // Suporta ambos formatos: loja_origem (novo) e cod_loja_origem (antigo)
+                        const transfOrigem = transfs.filter(t => (t.loja_origem || t.cod_loja_origem) === codLojaItem);
                         // Filtrar transferencias onde esta loja e DESTINO (vai receber)
-                        const transfDestino = transfs.filter(t => t.cod_loja_destino === codLojaItem);
+                        const transfDestino = transfs.filter(t => (t.loja_destino || t.cod_loja_destino) === codLojaItem);
 
                         if (transfOrigem.length > 0) {
                             // Loja e ORIGEM - vai ENVIAR para outras lojas
@@ -1670,8 +1688,8 @@
                             if (setProdutosTransf.has(codigoStr)) {
                                 const transfs = detalhesTransf[codigoStr] || [];
                                 const codLojaItem = item.cod_loja;
-                                const transfOrigem = transfs.filter(t => t.cod_loja_origem === codLojaItem);
-                                const transfDestino = transfs.filter(t => t.cod_loja_destino === codLojaItem);
+                                const transfOrigem = transfs.filter(t => (t.loja_origem || t.cod_loja_origem) === codLojaItem);
+                                const transfDestino = transfs.filter(t => (t.loja_destino || t.cod_loja_destino) === codLojaItem);
                                 if (transfOrigem.length > 0) qtdEnviarLoja++;
                                 if (transfDestino.length > 0) qtdReceberLoja++;
                             }
@@ -1801,6 +1819,11 @@
         async function exibirResultadosPadraoCompra(data, tipoPedido = 'reabastecimento') {
             const isPlanejado = tipoPedido === 'planejado' || data.tipo_pedido === 'planejado';
 
+            // Criar mapa de transferencias (necessario para badges nos cards)
+            const transfSugeridas = data.transferencias_sugeridas || [];
+            const transfAntigo = data.transferencias?.detalhes || [];
+            const todasTransf = [...transfSugeridas, ...transfAntigo];
+
             // Extrair TODOS os itens (pedido, OK e bloqueados) com status
             const itensPedidoRaw = data.itens_pedido || [];
             const itensOkRaw = data.itens_ok || [];
@@ -1814,7 +1837,10 @@
             ];
 
             // IMPORTANTE: Atualizar dadosPedidoAtual com itens combinados para exportacao funcionar
+            // Manter itens_bloqueados separados para a aba de bloqueados na exportacao
             dadosPedidoAtual.itens_pedido = itensPedido;
+            dadosPedidoAtual.itens_bloqueados = itensBloqueadosRaw;  // Preservar bloqueados para exportacao
+            console.log('[DEBUG] itens_bloqueados preservados:', itensBloqueadosRaw.length);
 
             // Buscar padroes de compra dos itens
             const codigos = [...new Set(itensPedido.map(i => i.codigo))];
@@ -1994,11 +2020,23 @@
             let metricaTransfPCHtml = '';
             if (totalTransfPC > 0) {
                 metricaTransfPCHtml = `
-                    <div class="metrica" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 8px; padding: 8px;" title="Transferencias entre lojas reduzem o pedido ao fornecedor">
+                    <a href="/transferencias" class="metrica" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 8px; padding: 8px; text-decoration: none; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;" title="Clique para ver detalhes das transferencias entre lojas" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 4px 12px rgba(16,185,129,0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='none';">
                         <div class="valor" style="color: white;">-R$ ${(economiaTransfPC/1000).toFixed(1)}k</div>
                         <div class="label" style="color: rgba(255,255,255,0.9);">${totalTransfPC} Transf.</div>
-                    </div>
+                    </a>
                 `;
+                // Mostrar botao "Ver Transferencias"
+                const btnTransf = document.getElementById('btnVerTransferencias');
+                if (btnTransf) {
+                    btnTransf.style.display = 'inline-block';
+                    btnTransf.innerHTML = `🔄 ${totalTransfPC} Transferências`;
+                }
+            } else {
+                // Esconder botao se nao houver transferencias
+                const btnTransf = document.getElementById('btnVerTransferencias');
+                if (btnTransf) {
+                    btnTransf.style.display = 'none';
+                }
             }
 
             // Resumo Header - Visao Padrao de Compra
@@ -2044,16 +2082,33 @@
                 const qtdUnidadesDestino = itensDestino.reduce((s, i) => s + (i.quantidade_pedido || 0), 0);
                 const lojasOrigemDestino = [...new Set(itensDestino.flatMap(i => i.lojas_origem))];
 
+                // Contar transferencias para este destino
+                const destinoInt = parseInt(destino);
+                const transfParaDestino = todasTransf.filter(t => (t.loja_destino || t.cod_loja_destino) === destinoInt);
+                const transfDeDestino = todasTransf.filter(t => (t.loja_origem || t.cod_loja_origem) === destinoInt);
+                const valorTransfReceber = transfParaDestino.reduce((s, t) => s + (t.valor_estimado || 0), 0);
+                const valorTransfEnviar = transfDeDestino.reduce((s, t) => s + (t.valor_estimado || 0), 0);
+                const qtdTransfReceber = transfParaDestino.reduce((s, t) => s + (t.qtd_sugerida || 0), 0);
+                const qtdTransfEnviar = transfDeDestino.reduce((s, t) => s + (t.qtd_sugerida || 0), 0);
+
+                let transfBadgeHtml = '';
+                if (transfParaDestino.length > 0) {
+                    transfBadgeHtml += `<span class="badge-transf badge-transf-receber" style="margin-left: 8px;" title="Vai RECEBER ${qtdTransfReceber} un de outras lojas (${transfParaDestino.length} transf.)"><span class="icon">↙</span>${transfParaDestino.length} receber</span>`;
+                }
+                if (transfDeDestino.length > 0) {
+                    transfBadgeHtml += `<span class="badge-transf badge-transf-enviar" style="margin-left: 8px;" title="Vai ENVIAR ${qtdTransfEnviar} un para outras lojas (${transfDeDestino.length} transf.)"><span class="icon">↗</span>${transfDeDestino.length} enviar</span>`;
+                }
+
                 fornHtml += `
                     <div class="fornecedor-card">
                         <div class="fornecedor-card-header" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%);">
                             <div class="fornecedor-info">
-                                <h4>Destino: Loja ${destino}</h4>
+                                <h4>Destino: Loja ${destino}${transfBadgeHtml}</h4>
                                 <div class="cnpj">Origem: Lojas ${lojasOrigemDestino.sort((a,b) => a-b).join(', ')}</div>
                             </div>
                             <div class="fornecedor-valor">
                                 <div class="total">R$ ${valorDestino.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</div>
-                                <div class="itens">${totalSkusDestino} SKUs | ${qtdUnidadesDestino.toLocaleString('pt-BR')} un</div>
+                                <div class="itens">${totalSkusDestino} SKUs agregados | Origem: ${lojasOrigemDestino.length}</div>
                             </div>
                         </div>
                         <div class="fornecedor-card-body">
@@ -2063,8 +2118,8 @@
                                     <div class="lbl">Fornecedores</div>
                                 </div>
                                 <div class="fornecedor-stat">
-                                    <div class="num">${lojasOrigemDestino.length}</div>
-                                    <div class="lbl">Lojas Origem</div>
+                                    <div class="num">${qtdUnidadesDestino.toLocaleString('pt-BR')}</div>
+                                    <div class="lbl">Unidades</div>
                                 </div>
                             </div>
                             <div class="fornecedor-acoes">
@@ -2127,7 +2182,7 @@
 
                     let tbodyForn = '';
                     itensForn.forEach(item => {
-                        tbodyForn += gerarLinhaTabelaPadraoCompraAgregado(item);
+                        tbodyForn += gerarLinhaTabelaPadraoCompraAgregado(item, todasTransf);
                     });
 
                     fornecedoresHtml += `
@@ -2181,7 +2236,7 @@
         }
 
         // Gerar linha da tabela para visualizacao Padrao de Compra AGREGADO
-        function gerarLinhaTabelaPadraoCompraAgregado(item) {
+        function gerarLinhaTabelaPadraoCompraAgregado(item, todasTransf = []) {
             // Tooltip com detalhes por loja
             let tooltipDetalhes = item.detalhes_lojas.map(d => {
                 const demandaMensal = (d.demanda * 30).toFixed(2);
@@ -2195,6 +2250,32 @@
             const badgeLojas = qtdLojas > 1
                 ? `<span style="background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 0.75em;" title="${tooltipDetalhes}">${lojasOrigemStr}</span>`
                 : `<span title="${tooltipDetalhes}">${lojasOrigemStr}</span>`;
+
+            // Badge de transferencia - verificar se este produto tem transferencias RELACIONADAS A ESTA LOJA (destino do card)
+            let transfBadge = '';
+            const codigoStr = String(item.codigo);
+            const lojaDestino = parseInt(item.destino);
+
+            // Filtrar apenas transferencias onde ESTA LOJA (destino do card) está envolvida
+            const transfReceber = todasTransf.filter(t =>
+                String(t.cod_produto) === codigoStr &&
+                (t.loja_destino || t.cod_loja_destino) === lojaDestino
+            );
+            const transfEnviar = todasTransf.filter(t =>
+                String(t.cod_produto) === codigoStr &&
+                (t.loja_origem || t.cod_loja_origem) === lojaDestino
+            );
+
+            if (transfReceber.length > 0) {
+                const qtdReceber = transfReceber.reduce((s, t) => s + (t.qtd_sugerida || 0), 0);
+                const origens = transfReceber.map(t => `Loja ${t.loja_origem || t.cod_loja_origem}: ${t.qtd_sugerida} un`).join('\n');
+                transfBadge = `<span class="badge-transf badge-transf-receber" style="margin-left: 4px; font-size: 0.7em;" title="Receber de:\n${origens}"><span class="icon">↙</span>${qtdReceber} un</span>`;
+            }
+            if (transfEnviar.length > 0) {
+                const qtdEnviar = transfEnviar.reduce((s, t) => s + (t.qtd_sugerida || 0), 0);
+                const destinos = transfEnviar.map(t => `Loja ${t.loja_destino || t.cod_loja_destino}: ${t.qtd_sugerida} un`).join('\n');
+                transfBadge += `<span class="badge-transf badge-transf-enviar" style="margin-left: 4px; font-size: 0.7em;" title="Enviar para:\n${destinos}"><span class="icon">↗</span>${qtdEnviar} un</span>`;
+            }
 
             // Status badge - baseado no _status do item
             let statusInfo = '';
@@ -2229,7 +2310,7 @@
 
             return `
                 <tr class="${rowClass}">
-                    <td>${item.codigo}${statusInfo}</td>
+                    <td>${item.codigo}${statusInfo}${transfBadge}</td>
                     <td title="${item.descricao}">${item.descricao.substring(0, 35)}</td>
                     <td style="text-align: center;"><span class="badge badge-${item.curva_abc.toLowerCase()}">${item.curva_abc}</span></td>
                     <td style="text-align: center;">${badgeLojas}</td>
@@ -2337,6 +2418,12 @@
                     criticas: item.criticas.join('; ')
                 }));
 
+                // Filtrar itens bloqueados por destino
+                const bloqueadosDestino = (dadosPedidoAtual.itens_bloqueados || []).filter(item => {
+                    // Para bloqueados, usar cod_empresa direto (sem padrao de compra)
+                    return String(item.cod_empresa) === String(codDestino);
+                });
+
                 // Preparar dados para exportacao no formato esperado pela API
                 const dadosExportar = {
                     linhas_excel: linhasExcel,
@@ -2352,8 +2439,10 @@
                             codigo: i.codigo,
                             cod_empresa: codDestino,
                             mensagem: i.criticas
-                        }))
+                        })),
+                    itens_bloqueados: bloqueadosDestino
                 };
+                console.log('[EXPORT DESTINO] itens_bloqueados:', bloqueadosDestino.length);
 
                 const response = await fetch('/api/padrao-compra/exportar', {
                     method: 'POST',
@@ -2378,12 +2467,17 @@
         async function exportarFornecedor(nomeFornecedor) {
             if (!dadosPedidoAtual?.itens_pedido) return;
 
-            // Filtrar itens do fornecedor
+            // Filtrar itens do fornecedor (pedido e bloqueados)
             const itensForn = dadosPedidoAtual.itens_pedido.filter(i =>
                 (i.nome_fornecedor || '') === nomeFornecedor
             );
 
-            if (!itensForn.length) {
+            // Filtrar itens bloqueados do fornecedor
+            const itensBloqueadosForn = (dadosPedidoAtual.itens_bloqueados || []).filter(i =>
+                (i.nome_fornecedor || '') === nomeFornecedor
+            );
+
+            if (!itensForn.length && !itensBloqueadosForn.length) {
                 alert('Nenhum item encontrado para este fornecedor');
                 return;
             }
@@ -2392,13 +2486,15 @@
             const tipoPedido = document.getElementById('tipo_pedido')?.value || 'reabastecimento';
             const isPlanejado = tipoPedido === 'planejado' || dadosPedidoAtual.tipo_pedido === 'planejado';
 
-            // Criar dados filtrados
+            // Criar dados filtrados (inclui itens bloqueados)
             const dadosFiltrados = {
                 ...dadosPedidoAtual,
                 itens_pedido: itensForn,
+                itens_bloqueados: itensBloqueadosForn,
                 estatisticas: {
                     ...dadosPedidoAtual.estatisticas,
                     total_itens_pedido: itensForn.length,
+                    total_itens_bloqueados: itensBloqueadosForn.length,
                     valor_total_pedido: itensForn.reduce((s, i) => s + (i.valor_pedido || 0), 0)
                 }
             };
@@ -2436,6 +2532,11 @@
                 alert('Nenhum item disponivel para exportar');
                 return;
             }
+
+            // Debug: mostrar quantos bloqueados temos
+            const bloqueados = dadosPedidoAtual.itens_bloqueados || [];
+            console.log('[EXPORT] itens_pedido:', dadosPedidoAtual.itens_pedido.length);
+            console.log('[EXPORT] itens_bloqueados:', bloqueados.length);
 
             const btn = document.getElementById('btnExportarTodos');
             const textoOriginal = btn.innerHTML;
@@ -2534,8 +2635,10 @@
                             valor_total: linhasExcel.reduce((s, i) => s + (i.valor_pedido || 0), 0),
                             destino: 'TODOS'
                         },
-                        criticas: []
+                        criticas: [],
+                        itens_bloqueados: dadosPedidoAtual.itens_bloqueados || []
                     };
+                    console.log('[EXPORT PADRAO COMPRA] itens_bloqueados:', (dadosPedidoAtual.itens_bloqueados || []).length);
 
                     const response = await fetch('/api/padrao-compra/exportar', {
                         method: 'POST',
