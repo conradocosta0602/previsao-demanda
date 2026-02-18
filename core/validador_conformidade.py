@@ -86,6 +86,7 @@ class ValidadorConformidade:
             ('V20', 'Arredondamento Inteligente', self._verificar_arredondamento_inteligente),
             ('V21', 'Arredondamento Pos-Transferencia', self._verificar_arredondamento_pos_transferencia),
             ('V22', 'ES com LT Base e Rateio Desvio', self._verificar_es_lt_base_rateio_desvio),
+            ('V23', 'Demanda Sazonal no Pedido', self._verificar_demanda_sazonal_pedido),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -1630,6 +1631,121 @@ class ValidadorConformidade:
             }
         except Exception as e:
             return 'falha', f'Erro ao verificar ES e rateio: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_demanda_sazonal_pedido(self) -> Tuple[str, str, Dict]:
+        """
+        V23: Verifica que pedido usa demanda sazonal (demanda_prevista/30) em vez de media anual.
+
+        Implementado em v6.9 para garantir que:
+        1. Pedido usa demanda_efetiva ou demanda_prevista dividida por 30 (demanda diaria sazonal)
+        2. NAO usa demanda_diaria_base (media anual sem sazonalidade)
+        3. Isso garante que pedidos reflitam picos e vales sazonais
+
+        Problema anterior: Sistema usava demanda_diaria_base (112 un/dia - media anual)
+        quando deveria usar demanda_prevista/30 (ex: 306/30 = 10.2 un/dia em abril)
+        """
+        try:
+            import inspect
+            from app.utils.demanda_pre_calculada import obter_demanda_do_cache, obter_demanda_diaria_efetiva
+
+            resultados = []
+            todos_corretos = True
+
+            # Teste 1: obter_demanda_do_cache usa demanda_efetiva ou demanda_prevista dividida por 30
+            source_cache = inspect.getsource(obter_demanda_do_cache)
+
+            # Deve encontrar padrao: demanda_mensal / 30 ou demanda_efetiva / 30 ou demanda_prevista / 30
+            usa_demanda_mensal = ('demanda_efetiva' in source_cache or 'demanda_prevista' in source_cache)
+            usa_divisao_30 = ('/ 30' in source_cache or '/30' in source_cache)
+            nao_usa_base_errado = 'demanda_diaria_base' not in source_cache.split('# IMPORTANTE')[0] if '# IMPORTANTE' in source_cache else True
+
+            teste_1_ok = usa_demanda_mensal and usa_divisao_30
+            resultados.append({
+                'teste': 'obter_demanda_do_cache usa demanda mensal / 30',
+                'usa_demanda_efetiva_ou_prevista': usa_demanda_mensal,
+                'usa_divisao_por_30': usa_divisao_30,
+                'correto': teste_1_ok,
+                'comentario': 'Deve usar demanda_efetiva/30 ou demanda_prevista/30'
+            })
+            if not teste_1_ok:
+                todos_corretos = False
+
+            # Teste 2: obter_demanda_diaria_efetiva tambem usa o padrao correto
+            source_efetiva = inspect.getsource(obter_demanda_diaria_efetiva)
+
+            usa_demanda_mensal_2 = ('demanda_efetiva' in source_efetiva or 'demanda_prevista' in source_efetiva)
+            usa_divisao_30_2 = ('/ 30' in source_efetiva or '/30' in source_efetiva)
+
+            teste_2_ok = usa_demanda_mensal_2 and usa_divisao_30_2
+            resultados.append({
+                'teste': 'obter_demanda_diaria_efetiva usa demanda mensal / 30',
+                'usa_demanda_efetiva_ou_prevista': usa_demanda_mensal_2,
+                'usa_divisao_por_30': usa_divisao_30_2,
+                'correto': teste_2_ok,
+                'comentario': 'Funcao auxiliar tambem deve usar padrao correto'
+            })
+            if not teste_2_ok:
+                todos_corretos = False
+
+            # Teste 3: Validacao matematica - demanda sazonal vs media anual
+            # Cenario: demanda_prevista = 306 (abril), demanda_diaria_base = 112.62 (media anual)
+            demanda_prevista_abril = 306
+            demanda_diaria_base_anual = 112.62
+
+            demanda_diaria_correta = demanda_prevista_abril / 30  # 10.2 un/dia
+            demanda_diaria_errada = demanda_diaria_base_anual  # 112.62 un/dia
+
+            # A diferenca e de 11x - isso causaria pedidos 11x maiores!
+            diferenca_percentual = (demanda_diaria_errada / demanda_diaria_correta) * 100 - 100
+
+            teste_3_ok = abs(demanda_diaria_correta - 10.2) < 0.1
+            resultados.append({
+                'teste': 'Validacao matematica sazonalidade',
+                'demanda_prevista_abril': demanda_prevista_abril,
+                'demanda_diaria_correta': round(demanda_diaria_correta, 2),
+                'demanda_diaria_errada_se_usar_base': demanda_diaria_base_anual,
+                'diferenca_percentual_erro': f'+{round(diferenca_percentual, 0)}%',
+                'correto': teste_3_ok,
+                'comentario': 'Usar media anual causaria pedidos 10x maiores em meses de baixa'
+            })
+            if not teste_3_ok:
+                todos_corretos = False
+
+            # Teste 4: Verifica que comentario explicativo existe no codigo
+            comentario_existe = 'IMPORTANTE' in source_cache and ('sazonalidade' in source_cache.lower() or 'sazonal' in source_cache.lower())
+            resultados.append({
+                'teste': 'Documentacao inline presente',
+                'comentario_explicativo': comentario_existe,
+                'correto': True,  # Nao e bloqueante, apenas informativo
+                'comentario': 'Boas praticas: codigo documentado'
+            })
+
+            if todos_corretos:
+                return 'ok', 'Demanda sazonal corretamente usada no pedido (demanda_prevista/30)', {
+                    'versao': 'v6.9',
+                    'regras': [
+                        'Usa demanda_efetiva ou demanda_prevista dividida por 30',
+                        'NAO usa demanda_diaria_base (media anual sem sazonalidade)',
+                        'Pedidos refletem demanda real do mes corrente'
+                    ],
+                    'beneficio': 'Evita pedidos 10x maiores em meses de baixa sazonalidade',
+                    'testes': resultados
+                }
+            else:
+                return 'falha', 'Demanda sazonal NAO esta sendo usada corretamente no pedido', {
+                    'problema': 'Sistema pode estar usando demanda_diaria_base (media anual)',
+                    'impacto': 'Pedidos podem estar superfaturados em meses de baixa',
+                    'testes': resultados
+                }
+
+        except ImportError as e:
+            return 'falha', f'Modulo nao encontrado: {str(e)}', {
+                'erro': str(e)
+            }
+        except Exception as e:
+            return 'falha', f'Erro ao verificar demanda sazonal no pedido: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

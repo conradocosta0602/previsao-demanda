@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.8** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.9** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -465,13 +465,15 @@ DB_PORT=5432
 
 6. **Rateio proporcional**: Em pedidos multi-loja, demanda e distribuida proporcional ao historico de vendas. Desvio padrao usa sqrt() da proporcao (v6.8)
 
-7. **Tabelas legadas**: `cadastro_produtos` e `embalagem` sao legadas - usar `cadastro_produtos_completo` e `embalagem_arredondamento`
+7. **Demanda sazonal no pedido** (v6.9): O calculo de pedido usa `demanda_prevista / 30` (demanda mensal COM sazonalidade) em vez de `demanda_diaria_base` (media anual SEM sazonalidade). Isso garante que o pedido reflita a demanda real do mes, considerando picos e vales sazonais.
 
-8. **Tipos padronizados**: `codigo` e `cod_empresa` devem ser INTEGER em todo o sistema
+8. **Tabelas legadas**: `cadastro_produtos` e `embalagem` sao legadas - usar `cadastro_produtos_completo` e `embalagem_arredondamento`
 
-9. **Delay operacional**: 5 dias adicionados ao lead time para compensar tempo entre calculo e envio do pedido
+9. **Tipos padronizados**: `codigo` e `cod_empresa` devem ser INTEGER em todo o sistema
 
-10. **Arredondamento inteligente**: Multiplo de caixa usa 50% como threshold (Silver, Pyke & Peterson) com verificacao de risco de ruptura
+10. **Delay operacional**: 5 dias adicionados ao lead time para compensar tempo entre calculo e envio do pedido
+
+11. **Arredondamento inteligente**: Multiplo de caixa usa 50% como threshold (Silver, Pyke & Peterson) com verificacao de risco de ruptura
 
 ## Fluxo de Trabalho Tipico
 
@@ -531,6 +533,7 @@ DB_PORT=5432
 - V20: Scripts de importacao de dados Soprano + badges de transferencia (v6.6)
 - V21: Arredondamento pos-transferencia + importacao padrao de compra (v6.7)
 - V22: Correcao do calculo de Estoque de Seguranca - rateio de desvio usa sqrt() e ES usa LT sem delay (v6.8)
+- V23: Correcao demanda sazonal no pedido - usar demanda_prevista/30 em vez de demanda_diaria_base (v6.9)
 
 ## Documentacao Complementar
 
@@ -546,4 +549,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.8)
+**Ultima atualizacao**: Fevereiro 2026 (v6.9)

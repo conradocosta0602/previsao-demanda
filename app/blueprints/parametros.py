@@ -365,6 +365,52 @@ def api_central_parametros_buscar():
         """)
         lojas = cursor.fetchall()
 
+        # Buscar produtos do fornecedor com situacao de compra e padrao de compra
+        # Curva ABC: vem de estoque_posicao_atual (pega a mais comum por produto)
+        # Situacao de compra: pega a mais recente por produto (agregando todas as lojas)
+        # Padrao de compra: pega a loja destino mais recente
+        cursor.execute("""
+            WITH sit_compra_agg AS (
+                SELECT
+                    codigo::text as cod_produto,
+                    sit_compra,
+                    ROW_NUMBER() OVER (PARTITION BY codigo ORDER BY updated_at DESC NULLS LAST) as rn
+                FROM situacao_compra_itens
+                WHERE sit_compra IS NOT NULL
+            ),
+            padrao_compra_agg AS (
+                SELECT
+                    codigo::text as cod_produto,
+                    cod_empresa_destino,
+                    ROW_NUMBER() OVER (PARTITION BY codigo ORDER BY data_referencia DESC, updated_at DESC NULLS LAST) as rn
+                FROM padrao_compra_item
+            ),
+            curva_abc_agg AS (
+                SELECT
+                    codigo::text as cod_produto,
+                    curva_abc,
+                    ROW_NUMBER() OVER (PARTITION BY codigo ORDER BY data_importacao DESC NULLS LAST) as rn
+                FROM estoque_posicao_atual
+                WHERE curva_abc IS NOT NULL
+            )
+            SELECT
+                p.cod_produto,
+                p.descricao,
+                p.categoria,
+                p.codigo_linha,
+                p.descricao_linha,
+                COALESCE(c.curva_abc, '-') as curva_abc,
+                COALESCE(s.sit_compra, 'ATIVO') as sit_compra,
+                pc.cod_empresa_destino as padrao_compra
+            FROM cadastro_produtos_completo p
+            LEFT JOIN curva_abc_agg c ON c.cod_produto = p.cod_produto AND c.rn = 1
+            LEFT JOIN sit_compra_agg s ON s.cod_produto = p.cod_produto AND s.rn = 1
+            LEFT JOIN padrao_compra_agg pc ON pc.cod_produto = p.cod_produto AND pc.rn = 1
+            WHERE p.cnpj_fornecedor = %s AND p.ativo = TRUE
+            ORDER BY p.cod_produto
+        """, [cnpj_fornecedor])
+        produtos = cursor.fetchall()
+
         conn.close()
 
         return jsonify({
@@ -374,7 +420,8 @@ def api_central_parametros_buscar():
                 'nome': nome_fornecedor
             },
             'parametros': [dict(p) for p in parametros],
-            'lojas': [dict(l) for l in lojas]
+            'lojas': [dict(l) for l in lojas],
+            'produtos': [dict(p) for p in produtos]
         })
 
     except Exception as e:

@@ -211,7 +211,11 @@ def obter_demanda_do_cache(
             usar_consolidado_rateado = True
 
     if demanda:
-        demanda_diaria = float(demanda.get('demanda_diaria_base', 0) or 0)
+        # IMPORTANTE: Usar demanda_efetiva (mensal com sazonalidade) dividida por 30
+        # em vez de demanda_diaria_base (media anual sem sazonalidade)
+        # Isso garante que o pedido considere a sazonalidade do mes
+        demanda_mensal = float(demanda.get('demanda_efetiva', 0) or demanda.get('demanda_prevista', 0) or 0)
+        demanda_diaria = demanda_mensal / 30 if demanda_mensal > 0 else 0
         desvio = float(demanda.get('desvio_padrao', 0) or 0)
 
         # Se usando consolidado para loja especifica, aplicar rateio
@@ -381,8 +385,14 @@ def obter_demanda_diaria_efetiva(
     )
 
     if demanda:
+        # IMPORTANTE: Usar demanda_efetiva (mensal com sazonalidade) dividida por 30
+        # em vez de demanda_diaria_base (media anual sem sazonalidade)
+        # Isso garante que o pedido considere a sazonalidade do mes
+        demanda_mensal = float(demanda.get('demanda_efetiva', 0) or demanda.get('demanda_prevista', 0) or 0)
+        demanda_diaria = demanda_mensal / 30 if demanda_mensal > 0 else 0
+
         return (
-            float(demanda.get('demanda_diaria_base', 0) or 0),
+            demanda_diaria,
             float(demanda.get('desvio_padrao', 0) or 0),
             {
                 'fonte': 'pre_calculada',
@@ -393,7 +403,7 @@ def obter_demanda_diaria_efetiva(
                 'limitador_aplicado': demanda.get('limitador_aplicado', False),
                 'tem_ajuste_manual': demanda.get('tem_ajuste_manual', False),
                 'data_calculo': demanda.get('data_calculo'),
-                'demanda_mensal': float(demanda.get('demanda_efetiva', 0) or 0),
+                'demanda_mensal': demanda_mensal,
                 'variacao_vs_aa': demanda.get('variacao_vs_aa')
             }
         )
