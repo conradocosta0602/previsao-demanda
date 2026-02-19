@@ -1,0 +1,288 @@
+/* ===========================================
+   Menu Principal - Sistema de Previsao de Demanda
+   =========================================== */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    min-height: 100vh;
+    color: #fff;
+}
+
+.menu-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 30px 40px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header */
+.menu-header {
+    text-align: center;
+    margin-bottom: 50px;
+    padding: 30px 0;
+}
+
+.logo-section h1 {
+    font-size: 2.8rem;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+}
+
+.logo-section .subtitle {
+    font-size: 1.2rem;
+    color: #94a3b8;
+    font-weight: 400;
+}
+
+/* Menu Grid */
+.menu-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 25px;
+    flex: 1;
+}
+
+/* Menu Cards */
+.menu-card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 30px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    text-decoration: none;
+    color: #fff;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.menu-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.menu-card:hover {
+    transform: translateY(-5px);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+.menu-card:hover::before {
+    opacity: 1;
+}
+
+/* Card Icons */
+.card-icon {
+    width: 60px;
+    height: 60px;
+    min-width: 60px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.card-icon svg {
+    width: 32px;
+    height: 32px;
+}
+
+.menu-card:hover .card-icon {
+    transform: scale(1.1);
+}
+
+/* Card Content */
+.card-content {
+    flex: 1;
+}
+
+.card-content h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    transition: color 0.3s ease;
+}
+
+.card-content p {
+    font-size: 0.9rem;
+    color: #94a3b8;
+    line-height: 1.5;
+}
+
+/* Card Arrow */
+.card-arrow {
+    opacity: 0;
+    transform: translateX(-10px);
+    transition: all 0.3s ease;
+}
+
+.card-arrow svg {
+    width: 24px;
+    height: 24px;
+    color: #94a3b8;
+}
+
+.menu-card:hover .card-arrow {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+/* Individual Card Colors */
+
+/* Previsao */
+.menu-card.previsao::before { background: #3b82f6; }
+.menu-card.previsao .card-icon { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+.menu-card.previsao:hover .card-content h2 { color: #3b82f6; }
+
+/* Simulador */
+.menu-card.simulador::before { background: #8b5cf6; }
+.menu-card.simulador .card-icon { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+.menu-card.simulador:hover .card-content h2 { color: #8b5cf6; }
+
+/* Eventos */
+.menu-card.eventos::before { background: #f59e0b; }
+.menu-card.eventos .card-icon { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+.menu-card.eventos:hover .card-content h2 { color: #f59e0b; }
+
+/* KPIs */
+.menu-card.kpis::before { background: #10b981; }
+.menu-card.kpis .card-icon { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+.menu-card.kpis:hover .card-content h2 { color: #10b981; }
+
+/* Reabastecimento */
+.menu-card.reabastecimento::before { background: #06b6d4; }
+.menu-card.reabastecimento .card-icon { background: rgba(6, 182, 212, 0.2); color: #06b6d4; }
+.menu-card.reabastecimento:hover .card-content h2 { color: #06b6d4; }
+
+/* Pedido Fornecedor */
+.menu-card.pedido-fornecedor::before { background: #ec4899; }
+.menu-card.pedido-fornecedor .card-icon { background: rgba(236, 72, 153, 0.2); color: #ec4899; }
+.menu-card.pedido-fornecedor:hover .card-content h2 { color: #ec4899; }
+
+/* Pedido CD */
+.menu-card.pedido-cd::before { background: #f97316; }
+.menu-card.pedido-cd .card-icon { background: rgba(249, 115, 22, 0.2); color: #f97316; }
+.menu-card.pedido-cd:hover .card-content h2 { color: #f97316; }
+
+/* Transferencias */
+.menu-card.transferencias::before { background: #14b8a6; }
+.menu-card.transferencias .card-icon { background: rgba(20, 184, 166, 0.2); color: #14b8a6; }
+.menu-card.transferencias:hover .card-content h2 { color: #14b8a6; }
+
+/* Pedido Manual */
+.menu-card.pedido-manual::before { background: #6366f1; }
+.menu-card.pedido-manual .card-icon { background: rgba(99, 102, 241, 0.2); color: #6366f1; }
+.menu-card.pedido-manual:hover .card-content h2 { color: #6366f1; }
+
+/* Footer */
+.menu-footer {
+    text-align: center;
+    padding: 30px 0;
+    margin-top: 40px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.menu-footer p {
+    color: #64748b;
+    font-size: 0.9rem;
+}
+
+.menu-footer .footer-info {
+    margin-top: 5px;
+    font-size: 0.8rem;
+    color: #475569;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+    .menu-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .menu-container {
+        padding: 20px;
+    }
+
+    .logo-section h1 {
+        font-size: 2rem;
+    }
+
+    .menu-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .menu-card {
+        padding: 20px;
+    }
+
+    .card-icon {
+        width: 50px;
+        height: 50px;
+        min-width: 50px;
+    }
+
+    .card-icon svg {
+        width: 26px;
+        height: 26px;
+    }
+
+    .card-content h2 {
+        font-size: 1.1rem;
+    }
+
+    .card-content p {
+        font-size: 0.85rem;
+    }
+}
+
+/* Animations */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.menu-card {
+    animation: fadeInUp 0.5s ease forwards;
+}
+
+.menu-card:nth-child(1) { animation-delay: 0.05s; }
+.menu-card:nth-child(2) { animation-delay: 0.1s; }
+.menu-card:nth-child(3) { animation-delay: 0.15s; }
+.menu-card:nth-child(4) { animation-delay: 0.2s; }
+.menu-card:nth-child(5) { animation-delay: 0.25s; }
+.menu-card:nth-child(6) { animation-delay: 0.3s; }
+.menu-card:nth-child(7) { animation-delay: 0.35s; }
+.menu-card:nth-child(8) { animation-delay: 0.4s; }
+.menu-card:nth-child(9) { animation-delay: 0.45s; }

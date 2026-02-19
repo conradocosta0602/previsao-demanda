@@ -1,6 +1,12 @@
-# Sistema de Demanda e Reabastecimento v5.7
+# Sistema de Demanda e Reabastecimento v6.11
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.11 - Padronizacao Excel e Validacao Conformidade (Fev/2026):**
+- **Colunas Padronizadas Excel**: Cod Filial, Filial (abreviado), Cod DIG em todos os exports
+- **20 Verificacoes de Conformidade**: Sistema completo de validacao metodologica (V01-V25)
+- **Transferencias Regionais**: Balanceamento automatico de estoque entre lojas do mesmo grupo
+- **Cronjob Diario 06:00**: Checklist automatico de conformidade com alertas por email
 
 **Novidades v5.7 - Fator de Tendencia YoY e Botao Salvar Demanda (Fev/2026):**
 - **Fator de Tendencia YoY**: Corrige subestimacao em fornecedores com crescimento historico (ex: ZAGONEL +29% real, modelo previa -18% → agora preve +20%)

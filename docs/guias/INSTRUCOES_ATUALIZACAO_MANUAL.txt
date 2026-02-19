@@ -1,0 +1,101 @@
+INSTRUÇÕES PARA ATUALIZAR SEÇÃO 7.1 (MODO MANUAL)
+============================================================
+
+Substituir o conteúdo da seção 7.1 por:
+
+O modo manual permite criar pedidos de duas formas distintas, cada uma adequada a um cenário específico de operação:
+
+
+### 7.1.1. Pedido por Quantidade
+
+Neste modo, o usuário informa diretamente a quantidade desejada para cada item. O sistema valida se a quantidade está em múltiplo de caixa e ajusta automaticamente quando necessário.
+
+
+**Planilha necessária: **exemplo_pedido_quantidade.xlsx
+
+
+
+Colunas obrigatórias:
+
+• Loja, SKU
+• Quantidade_Desejada (quantidade que você quer pedir)
+• Unidades_Por_Caixa (quantas unidades vêm na embalagem)
+
+
+Colunas opcionais (para cálculo de cobertura):
+
+• Demanda_Diaria (para calcular dias de cobertura do pedido)
+• Estoque_Disponivel (para calcular cobertura total)
+
+
+
+**O que o sistema faz:**  Valida se a quantidade está em múltiplo de caixa
+  Ajusta automaticamente para cima se necessário (garante cobertura)
+  Calcula número de caixas a pedir
+  Se tiver demanda diária, calcula cobertura do pedido em dias
+  Gera relatório Excel pronto para emissão do pedido
+
+
+
+**Exemplo prático:**Você quer pedir 100 unidades de um produto que vem em caixas de 12 unidades.
+
+O sistema ajusta para 108 unidades (9 caixas × 12 unidades), garantindo que o pedido estará em múltiplo de caixa.
+
+
+
+
+**Resultado gerado:**• Quantidade_Pedido: 108
+• Numero_Caixas: 9
+• Foi_Ajustado: Sim
+• Diferenca_Ajuste: +8
+• Status_Validacao: Ajustado para múltiplo de caixa
+
+
+
+### 7.1.2. Pedido por Cobertura
+
+Neste modo, o usuário informa quantos dias de cobertura de estoque deseja ter. O sistema calcula automaticamente a quantidade necessária em múltiplos de caixa.
+
+
+**Planilha necessária: **exemplo_pedido_cobertura.xlsx
+
+
+
+Colunas obrigatórias:
+
+• Loja, SKU
+• Demanda_Diaria (demanda média diária do produto)
+• Cobertura_Desejada_Dias (quantos dias de estoque você quer)
+• Unidades_Por_Caixa
+
+
+Colunas opcionais:
+
+• Estoque_Disponivel (estoque físico atual)
+
+
+
+**O que o sistema faz:**  Calcula cobertura atual do estoque (se informado)
+  Calcula necessidade líquida (cobertura desejada - cobertura atual)
+  Converte dias em quantidade (dias × demanda diária)
+  Ajusta para múltiplo de caixa
+  Calcula cobertura real após o pedido
+  Gera relatório Excel pronto para emissão
+
+
+
+**Exemplo prático:**Demanda = 5 unidades/dia, você quer 30 dias de cobertura, tem 20 em estoque, embalagem de 12.
+
+
+
+
+**Cálculo do sistema:**• Cobertura atual = 20 / 5 = 4 dias
+• Necessidade líquida = 30 - 4 = 26 dias
+• Quantidade bruta = 26 × 5 = 130 unidades
+• Ajuste para múltiplo = 132 unidades (11 caixas)
+• Cobertura real = (20 + 132) / 5 = 30.4 dias
+
+
+
+**Observação importante:**Se o estoque atual já fornecer a cobertura desejada ou mais, a Quantidade_Pedido será ZERO (não há necessidade de pedido).
+

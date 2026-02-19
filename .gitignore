@@ -1,15 +1,132 @@
-# Arquivos de dados reais (sensiveis)
+# =============================================================================
+# GITIGNORE - Sistema de Previsao de Demanda
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# DADOS SENSIVEIS (NUNCA COMMITAR)
+# -----------------------------------------------------------------------------
+# Arquivos com dados de negocio
 dados_reais/
 data_export/
 test_data/
+Cadastro de Fornecedores*.csv
+Cadastro de Produtos*.csv
+Embalagem_*.csv
+Relatorio de Posicao de Estoque*.csv
+Relatório de Posição de Estoque*.csv
+demanda_*.csv
+demanda_*.xlsx
+lead_time_dias*.xlsx
+Posição de Estoque*.xlsx
+Pedido Planejado*.xlsx
+CODIGOS*.xlsx
 
-# Arquivos temporarios
+# Arquivos de upload do usuario
+uploads/
+
+# -----------------------------------------------------------------------------
+# BANCOS DE DADOS LOCAIS
+# -----------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+demanda.db
+previsao_demanda.db
+
+# -----------------------------------------------------------------------------
+# ARQUIVOS DE SAIDA/OUTPUTS
+# -----------------------------------------------------------------------------
+outputs/
+*.xlsx
+!exemplo_*.xlsx
+!dados_teste*.xlsx
+
+# -----------------------------------------------------------------------------
+# ARQUIVOS TEMPORARIOS E LOGS
+# -----------------------------------------------------------------------------
 *.log
+logs/
 tmpclaude-*
 erro_previsao.log
+debug_*.txt
+ultimo_*.txt
+teste_*.txt
+*_log.txt
+nul
+diff_*.txt
+doc_content.txt
+secoes_extraidas.txt
 
-# Python
+# -----------------------------------------------------------------------------
+# PYTHON
+# -----------------------------------------------------------------------------
 __pycache__/
-*.pyc
-.env
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Ambientes virtuais
 venv/
+ENV/
+env/
+.venv/
+
+# Variaveis de ambiente
+.env
+.env.local
+.env.*.local
+
+# -----------------------------------------------------------------------------
+# IDE E EDITORES
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# -----------------------------------------------------------------------------
+# SISTEMA OPERACIONAL
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -----------------------------------------------------------------------------
+# DOCUMENTACAO TEMPORARIA (manter apenas docs/)
+# -----------------------------------------------------------------------------
+# Arquivos MD avulsos na raiz (exceto README)
+# NOTA: Mover para docs/ antes de commitar
+
+# -----------------------------------------------------------------------------
+# ARQUIVOS DE APRESENTACAO (manter apenas versao final)
+# -----------------------------------------------------------------------------
+# Apresentacao_Previsao_Demanda_v[0-9].pptx
+
+# -----------------------------------------------------------------------------
+# SCRIPTS DE IMPORTACAO TEMPORARIOS
+# -----------------------------------------------------------------------------
+importar_*.py
+!database/importar_*.py
+verificar_*.py
+criar_tabelas_ajuste.py
+exportar_*.py
