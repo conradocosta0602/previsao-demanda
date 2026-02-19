@@ -1183,8 +1183,20 @@ def api_pedido_fornecedor_integrado_exportar():
             92: 'CAB', 93: 'ALH', 94: 'LAU'
         }
 
+        # Carregar mapeamento de codigos DIG
+        codigos_dig = {}
+        try:
+            conn_dig = get_db_connection()
+            cursor_dig = conn_dig.cursor()
+            cursor_dig.execute("SELECT codigo, codigo_dig FROM codigo_dig")
+            codigos_dig = {str(row[0]): str(row[1]) for row in cursor_dig.fetchall()}
+            cursor_dig.close()
+            conn_dig.close()
+        except Exception:
+            pass  # Tabela pode nao existir ainda
+
         headers = [
-            'Cod Filial', 'Filial', 'Cod Item', 'Descricao Item',
+            'Cod Filial', 'Filial', 'Cod Item', 'Cod DIG', 'Descricao Item',
             'CNPJ Fornecedor', 'Nome Fornecedor', 'Qtd Pedido', 'CUE', 'Critica'
         ]
 
@@ -1208,22 +1220,26 @@ def api_pedido_fornecedor_integrado_exportar():
             # Nome abreviado da filial
             nome_abrev = NOMES_FILIAIS.get(cod_loja, '') if isinstance(cod_loja, int) else ''
             ws_itens.cell(row=row_idx, column=2, value=nome_abrev).border = border
-            ws_itens.cell(row=row_idx, column=3, value=item.get('codigo', '')).border = border
-            ws_itens.cell(row=row_idx, column=4, value=item.get('descricao', '')[:60]).border = border
-            ws_itens.cell(row=row_idx, column=5, value=item.get('cnpj_fornecedor', item.get('codigo_fornecedor', ''))).border = border
-            ws_itens.cell(row=row_idx, column=6, value=item.get('nome_fornecedor', '')).border = border
-            ws_itens.cell(row=row_idx, column=7, value=item.get('quantidade_pedido', 0)).border = border
+            cod_item = str(item.get('codigo', ''))
+            ws_itens.cell(row=row_idx, column=3, value=cod_item).border = border
+            # Codigo DIG
+            cod_dig = codigos_dig.get(cod_item, 'N/D')
+            ws_itens.cell(row=row_idx, column=4, value=cod_dig).border = border
+            ws_itens.cell(row=row_idx, column=5, value=item.get('descricao', '')[:60]).border = border
+            ws_itens.cell(row=row_idx, column=6, value=item.get('cnpj_fornecedor', item.get('codigo_fornecedor', ''))).border = border
+            ws_itens.cell(row=row_idx, column=7, value=item.get('nome_fornecedor', '')).border = border
+            ws_itens.cell(row=row_idx, column=8, value=item.get('quantidade_pedido', 0)).border = border
             cue = item.get('cue', item.get('preco_custo', 0))
-            ws_itens.cell(row=row_idx, column=8, value=cue).border = border
-            ws_itens.cell(row=row_idx, column=8).number_format = '#,##0.00'
+            ws_itens.cell(row=row_idx, column=9, value=cue).border = border
+            ws_itens.cell(row=row_idx, column=9).number_format = '#,##0.00'
             critica = item.get('critica_pedido_minimo', '')
-            cell_critica = ws_itens.cell(row=row_idx, column=9, value=critica)
+            cell_critica = ws_itens.cell(row=row_idx, column=10, value=critica)
             cell_critica.border = border
             if critica:
                 cell_critica.fill = critica_fill
                 cell_critica.font = critica_font
 
-        col_widths = [10, 8, 12, 50, 18, 30, 12, 12, 45]
+        col_widths = [10, 8, 12, 12, 50, 18, 30, 12, 12, 45]
         for i, width in enumerate(col_widths, start=1):
             ws_itens.column_dimensions[chr(64 + i)].width = width
 

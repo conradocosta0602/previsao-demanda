@@ -219,8 +219,20 @@ def api_transferencias_exportar():
             92: 'CAB', 93: 'ALH', 94: 'LAU'
         }
 
+        # Carregar mapeamento de codigos DIG
+        codigos_dig = {}
+        try:
+            conn_dig = get_db_connection()
+            cursor_dig = conn_dig.cursor()
+            cursor_dig.execute("SELECT codigo, codigo_dig FROM codigo_dig")
+            codigos_dig = {str(row[0]): str(row[1]) for row in cursor_dig.fetchall()}
+            cursor_dig.close()
+            conn_dig.close()
+        except Exception:
+            pass  # Tabela pode nao existir ainda
+
         headers = [
-            'Cod Destino', 'Filial Dest', 'Codigo', 'Descricao', 'Curva ABC',
+            'Cod Destino', 'Filial Dest', 'Codigo', 'Cod DIG', 'Descricao', 'Curva ABC',
             'Cod Origem', 'Filial Orig', 'Estoque Origem', 'Cobertura Origem',
             'Estoque Destino', 'Cobertura Destino',
             'Qtd Sugerida', 'Valor Estimado', 'Urgencia', 'Data Calculo'
@@ -239,25 +251,29 @@ def api_transferencias_exportar():
             ws.cell(row=row_idx, column=1, value=cod_destino).border = border
             nome_destino_abrev = NOMES_FILIAIS.get(cod_destino, '') if isinstance(cod_destino, int) else ''
             ws.cell(row=row_idx, column=2, value=nome_destino_abrev).border = border
-            ws.cell(row=row_idx, column=3, value=o.get('cod_produto')).border = border
-            ws.cell(row=row_idx, column=4, value=o.get('descricao_produto', '')).border = border
-            ws.cell(row=row_idx, column=5, value=o.get('curva_abc', '')).border = border
+            cod_produto = str(o.get('cod_produto', ''))
+            ws.cell(row=row_idx, column=3, value=cod_produto).border = border
+            # Codigo DIG
+            cod_dig = codigos_dig.get(cod_produto, 'N/D')
+            ws.cell(row=row_idx, column=4, value=cod_dig).border = border
+            ws.cell(row=row_idx, column=5, value=o.get('descricao_produto', '')).border = border
+            ws.cell(row=row_idx, column=6, value=o.get('curva_abc', '')).border = border
             # Codigo e nome abreviado da loja origem
             cod_origem = o.get('cod_loja_origem', 0)
-            ws.cell(row=row_idx, column=6, value=cod_origem).border = border
+            ws.cell(row=row_idx, column=7, value=cod_origem).border = border
             nome_origem_abrev = NOMES_FILIAIS.get(cod_origem, '') if isinstance(cod_origem, int) else ''
-            ws.cell(row=row_idx, column=7, value=nome_origem_abrev).border = border
-            ws.cell(row=row_idx, column=8, value=o.get('estoque_origem', 0)).border = border
-            ws.cell(row=row_idx, column=9, value=round(o.get('cobertura_origem_dias', 0), 1)).border = border
-            ws.cell(row=row_idx, column=10, value=o.get('estoque_destino', 0)).border = border
-            ws.cell(row=row_idx, column=11, value=round(o.get('cobertura_destino_dias', 0), 1)).border = border
-            ws.cell(row=row_idx, column=12, value=o.get('qtd_sugerida', 0)).border = border
-            ws.cell(row=row_idx, column=13, value=o.get('valor_estimado', 0)).border = border
-            ws.cell(row=row_idx, column=13).number_format = '#,##0.00'
-            ws.cell(row=row_idx, column=14, value=o.get('urgencia', '')).border = border
-            ws.cell(row=row_idx, column=15, value=str(o.get('data_calculo', ''))).border = border
+            ws.cell(row=row_idx, column=8, value=nome_origem_abrev).border = border
+            ws.cell(row=row_idx, column=9, value=o.get('estoque_origem', 0)).border = border
+            ws.cell(row=row_idx, column=10, value=round(o.get('cobertura_origem_dias', 0), 1)).border = border
+            ws.cell(row=row_idx, column=11, value=o.get('estoque_destino', 0)).border = border
+            ws.cell(row=row_idx, column=12, value=round(o.get('cobertura_destino_dias', 0), 1)).border = border
+            ws.cell(row=row_idx, column=13, value=o.get('qtd_sugerida', 0)).border = border
+            ws.cell(row=row_idx, column=14, value=o.get('valor_estimado', 0)).border = border
+            ws.cell(row=row_idx, column=14).number_format = '#,##0.00'
+            ws.cell(row=row_idx, column=15, value=o.get('urgencia', '')).border = border
+            ws.cell(row=row_idx, column=16, value=str(o.get('data_calculo', ''))).border = border
 
-        col_widths = [10, 10, 12, 40, 8, 10, 10, 12, 12, 12, 12, 12, 14, 10, 20]
+        col_widths = [10, 10, 12, 12, 40, 8, 10, 10, 12, 12, 12, 12, 12, 14, 10, 20]
         for i, width in enumerate(col_widths, start=1):
             ws.column_dimensions[chr(64 + i)].width = width
 
