@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.10** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.11** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -114,31 +114,41 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V14: Rateio Proporcional de Demanda Multi-Loja
 - V20: Arredondamento Inteligente para Multiplo de Caixa
 
-### 5. Transferencias entre Lojas (V13)
+### 5. Transferencias entre Lojas (V13/V25)
 
-**Logica Hibrida** para transferencias entre filiais:
-
-```
-Cobertura Alvo = cobertura_dias (se informado) OU cobertura_necessaria_dias (default ABC)
-```
+**Logica Otimizada v6.11** para transferencias entre filiais:
 
 **Regras de Identificacao**:
-- **Doador**: cobertura_atual > cobertura_alvo (MARGEM_EXCESSO = 0)
-- **Receptor**: quantidade_pedido > 0
+- **Doador**: cobertura_atual > 90 dias (COBERTURA_MINIMA_DOADOR = 90)
+- **Receptor**: cobertura_atual <= 90 dias E quantidade_pedido > 0
+- **Restricao**: Apenas entre lojas do MESMO grupo regional (V24)
 
 **Quantidade Transferivel**:
 ```
-excesso_em_dias = cobertura_atual - cobertura_alvo
-qtd_transferivel = excesso_em_dias × demanda_diaria
+excesso_dias = cobertura_atual - 90
+qtd_bruta = excesso_dias × demanda_diaria
+qtd_transferir = (qtd_bruta // multiplo_embalagem) * multiplo_embalagem  # Arredonda BAIXO
 ```
 
-**Niveis de Urgencia**:
-- **CRITICA**: cobertura < 50% do alvo
-- **ALTA**: cobertura < 75% do alvo
-- **MEDIA**: cobertura < 100% do alvo
-- **BAIXA**: demais casos
+**Faixas de Prioridade (Receptores)**:
+| Faixa | Cobertura | Prioridade | Recebe Primeiro? |
+|-------|-----------|------------|------------------|
+| RUPTURA | estoque = 0 | 0 | Sim (maxima) |
+| CRITICA | 0-30 dias | 1 | Segunda |
+| ALTA | 31-60 dias | 2 | Terceira |
+| MEDIA | 61-90 dias | 3 | Quarta |
+| > 90 dias | - | NAO RECEBE | Pode ser doadora |
 
-**Restricao**: Mesma loja nao pode ser doadora e receptora do mesmo item.
+**Algoritmo de Matching Otimizado**:
+- Preferir 1 doador → 1 receptor (consolidar frete)
+- Buscar doador que cobre 100% da necessidade antes de fragmentar
+- Doadores ordenados por excesso (maior primeiro)
+- Receptores ordenados por prioridade (ruptura primeiro)
+
+**Restricoes Adicionais**:
+- Transferencia apenas em multiplos de embalagem (caixas fechadas)
+- Mesma loja nao pode ser doadora e receptora do mesmo item
+- Grupos regionais: PE/PB/RN (lojas 1,2,4,6,7,8) e BA/SE (lojas 3,5,9)
 
 **Badges na Tela de Pedido**:
 Quando ha oportunidades de transferencia, o sistema exibe badges visuais na tela de Pedido ao Fornecedor:
@@ -535,6 +545,7 @@ DB_PORT=5432
 - V22: Correcao do calculo de Estoque de Seguranca - rateio de desvio usa sqrt() e ES usa LT sem delay (v6.8)
 - V23: Correcao demanda sazonal no pedido - usar demanda_prevista/30 em vez de demanda_diaria_base (v6.9)
 - V24: Transferencias respeitam grupos regionais - PE/PB/RN (lojas 1,2,4,6,7,8) e BA/SE (lojas 3,5,9) (v6.10)
+- V25: Transferencias otimizadas - doador >90d, faixas prioridade, multiplo embalagem, matching 1:1 (v6.11)
 
 ## Documentacao Complementar
 
@@ -550,4 +561,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.10)
+**Ultima atualizacao**: Fevereiro 2026 (v6.11)

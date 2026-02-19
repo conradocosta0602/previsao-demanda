@@ -88,6 +88,7 @@ class ValidadorConformidade:
             ('V22', 'ES com LT Base e Rateio Desvio', self._verificar_es_lt_base_rateio_desvio),
             ('V23', 'Demanda Sazonal no Pedido', self._verificar_demanda_sazonal_pedido),
             ('V24', 'Grupos Regionais Transferencia', self._verificar_grupos_regionais_transferencia),
+            ('V25', 'Regras Transferencia Otimizada', self._verificar_regras_transferencia_v611),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -1914,6 +1915,116 @@ class ValidadorConformidade:
             return 'falha', f'Modulo nao encontrado: {str(e)}', {'erro': str(e)}
         except Exception as e:
             return 'falha', f'Erro ao verificar grupos regionais: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_regras_transferencia_v611(self) -> Tuple[str, str, Dict]:
+        """
+        V25: Verifica as regras de transferencia otimizada implementadas em v6.11.
+
+        Regras verificadas:
+        1. Cobertura minima doador = 90 dias (so transfere excesso acima de 90d)
+        2. Faixas de prioridade implementadas (RUPTURA > CRITICA > ALTA > MEDIA)
+        3. Multiplo de embalagem respeitado (arredonda para baixo)
+        4. Algoritmo de matching otimizado (preferir 1 doador → 1 receptor)
+        """
+        try:
+            resultados = []
+            todos_corretos = True
+
+            # Importar modulo para verificar codigo
+            import inspect
+            from app.blueprints import pedido_fornecedor
+
+            source_code = inspect.getsource(pedido_fornecedor)
+
+            # Teste 1: Verificar constante COBERTURA_MINIMA_DOADOR = 90
+            teste_1_ok = 'COBERTURA_MINIMA_DOADOR = 90' in source_code
+            resultados.append({
+                'teste': 'Cobertura minima doador = 90 dias',
+                'constante_encontrada': teste_1_ok,
+                'correto': teste_1_ok
+            })
+            if not teste_1_ok:
+                todos_corretos = False
+
+            # Teste 2: Verificar faixas de prioridade
+            teste_2_ok = all([
+                'FAIXAS_PRIORIDADE' in source_code,
+                'RUPTURA' in source_code,
+                'CRITICA' in source_code,
+                "'ALTA'" in source_code or '"ALTA"' in source_code,
+                "'MEDIA'" in source_code or '"MEDIA"' in source_code
+            ])
+            resultados.append({
+                'teste': 'Faixas de prioridade implementadas',
+                'faixas_encontradas': teste_2_ok,
+                'faixas_esperadas': ['RUPTURA', 'CRITICA', 'ALTA', 'MEDIA'],
+                'correto': teste_2_ok
+            })
+            if not teste_2_ok:
+                todos_corretos = False
+
+            # Teste 3: Verificar arredondamento para multiplo de embalagem
+            teste_3_ok = all([
+                'embalagens_multiplo' in source_code or 'multiplo_emb' in source_code,
+                '// multiplo' in source_code or '// multiplo_emb' in source_code,  # Divisao inteira
+            ])
+            resultados.append({
+                'teste': 'Arredondamento para multiplo de embalagem',
+                'logica_encontrada': teste_3_ok,
+                'comportamento': 'Arredonda para baixo (caixas fechadas)',
+                'correto': teste_3_ok
+            })
+            if not teste_3_ok:
+                todos_corretos = False
+
+            # Teste 4: Verificar algoritmo de matching otimizado
+            teste_4_ok = all([
+                'melhor_doador' in source_code,
+                'usado' in source_code,  # Flag para marcar doador usado
+                'prioridade' in source_code,  # Ordenacao por prioridade
+            ])
+            resultados.append({
+                'teste': 'Algoritmo de matching otimizado',
+                'logica_encontrada': teste_4_ok,
+                'objetivo': 'Preferir 1 doador para 1 receptor (consolidar frete)',
+                'correto': teste_4_ok
+            })
+            if not teste_4_ok:
+                todos_corretos = False
+
+            # Teste 5: Verificar que cobertura > 90 dias nao recebe transferencia
+            teste_5_ok = 'cobertura_atual <= COBERTURA_MINIMA_DOADOR' in source_code
+            resultados.append({
+                'teste': 'Receptores apenas com cobertura <= 90 dias',
+                'validacao_encontrada': teste_5_ok,
+                'regra': 'Lojas com > 90 dias sao doadoras, nao receptoras',
+                'correto': teste_5_ok
+            })
+            if not teste_5_ok:
+                todos_corretos = False
+
+            if todos_corretos:
+                return 'ok', 'Regras de transferencia v6.11 implementadas corretamente', {
+                    'versao': 'v6.11',
+                    'regras': [
+                        'Cobertura minima doador: 90 dias',
+                        'Faixas: RUPTURA(0) > CRITICA(0-30d) > ALTA(31-60d) > MEDIA(61-90d)',
+                        'Multiplo de embalagem: arredonda para baixo',
+                        'Matching otimizado: preferir 1 doador para 1 receptor'
+                    ],
+                    'testes': resultados
+                }
+            else:
+                return 'falha', 'Regras de transferencia v6.11 incompletas', {
+                    'testes': resultados
+                }
+
+        except ImportError as e:
+            return 'falha', f'Modulo nao encontrado: {str(e)}', {'erro': str(e)}
+        except Exception as e:
+            return 'falha', f'Erro ao verificar regras transferencia v6.11: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

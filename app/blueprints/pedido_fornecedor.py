@@ -662,9 +662,32 @@ def api_pedido_fornecedor_integrado():
                         for it in itens[:3]:
                             print(f"    Loja {it.get('cod_loja')}: cob={it.get('cobertura_atual_dias')}, dem={it.get('demanda_prevista_diaria')}, qtd_ped={it.get('quantidade_pedido')}")
 
-                # Parametros de transferencia
-                # MARGEM_EXCESSO = 0 significa que qualquer excesso acima do alvo pode ser doado
-                MARGEM_EXCESSO = 0
+                # ==============================================================================
+                # CONFIGURACAO DE TRANSFERENCIAS v6.11
+                # ==============================================================================
+                # Cobertura minima: doador so pode doar se tiver > 90 dias de cobertura
+                COBERTURA_MINIMA_DOADOR = 90  # dias
+
+                # Faixas de prioridade para receptores (ordenadas por urgencia)
+                # Lojas com cobertura > 90 dias NAO sao receptoras
+                FAIXAS_PRIORIDADE = [
+                    ('RUPTURA', 0, 0),      # estoque = 0, prioridade 0 (maxima)
+                    ('CRITICA', 0, 30),     # 0-30 dias, prioridade 1
+                    ('ALTA', 31, 60),       # 31-60 dias, prioridade 2
+                    ('MEDIA', 61, 90),      # 61-90 dias, prioridade 3
+                ]
+                # > 90 dias = NAO RECEBE (pode ser doador)
+
+                # Carregar multiplos de embalagem para arredondamento
+                cursor_emb = conn_transf.cursor()
+                cursor_emb.execute("""
+                    SELECT codigo, qtd_embalagem
+                    FROM embalagem_arredondamento
+                    WHERE qtd_embalagem > 1
+                """)
+                embalagens_multiplo = {row[0]: row[1] for row in cursor_emb.fetchall()}
+                cursor_emb.close()
+                print(f"  [TRANSFERENCIAS] Embalagens carregadas: {len(embalagens_multiplo)} produtos com multiplo > 1")
 
                 produtos_analisados = 0
                 for codigo, itens_loja in itens_por_codigo.items():
@@ -686,159 +709,222 @@ def api_pedido_fornecedor_integrado():
                         qtd_pedido = item.get('quantidade_pedido', 0) or 0
                         cue = item.get('cue', 0) or item.get('preco_custo', 0) or 0
 
-                        # IMPORTANTE: Usar cobertura necessaria do PROPRIO ITEM
-                        # Quando cobertura_dias e informada no filtro, usa ela
-                        # Quando e ABC (None), usa a cobertura calculada para este item especifico
-                        cobertura_alvo_item = cobertura_dias if cobertura_dias else item.get('cobertura_necessaria_dias', 21)
+                        # ==============================================================
+                        # v6.11: NOVA LOGICA DE IDENTIFICACAO DE DOADORES E RECEPTORES
+                        # ==============================================================
+                        # DOADOR: Cobertura > 90 dias (so transfere o excesso acima de 90 dias)
+                        # RECEPTOR: Cobertura <= 90 dias E tem pedido pendente
+                        # Prioridade: RUPTURA > CRITICA(0-30d) > ALTA(31-60d) > MEDIA(61-90d)
 
-                        # Loja com EXCESSO: cobertura > alvo (pode doar)
-                        if cobertura_atual > cobertura_alvo_item + MARGEM_EXCESSO and demanda_diaria > 0:
-                            excesso_dias = cobertura_atual - cobertura_alvo_item
+                        # Buscar grupo regional da loja (usado em ambos os casos)
+                        grupo_info = grupos_por_loja.get(cod_loja, {})
+
+                        # DOADOR: So pode doar se cobertura > 90 dias
+                        if cobertura_atual > COBERTURA_MINIMA_DOADOR and demanda_diaria > 0:
+                            # Excesso = apenas o que esta ACIMA de 90 dias
+                            excesso_dias = cobertura_atual - COBERTURA_MINIMA_DOADOR
                             excesso_unidades = int(excesso_dias * demanda_diaria)
-                            # Doador deve manter pelo menos a cobertura alvo do item
-                            estoque_minimo = cobertura_alvo_item * demanda_diaria
+
+                            # Estoque minimo que deve manter = 90 dias de cobertura
+                            estoque_minimo = COBERTURA_MINIMA_DOADOR * demanda_diaria
                             disponivel_doar = max(0, int(estoque_atual - estoque_minimo))
+
                             if disponivel_doar > 0:
-                                # Buscar grupo regional da loja
-                                grupo_info = grupos_por_loja.get(cod_loja, {})
                                 lojas_com_excesso.append({
                                     'cod_loja': cod_loja,
                                     'nome_loja': nome_loja,
                                     'estoque': estoque_atual,
                                     'cobertura_dias': cobertura_atual,
-                                    'cobertura_alvo': cobertura_alvo_item,  # Guardar para debug
+                                    'cobertura_minima': COBERTURA_MINIMA_DOADOR,
                                     'demanda_diaria': demanda_diaria,
                                     'excesso_unidades': min(excesso_unidades, disponivel_doar),
                                     'disponivel_doar': disponivel_doar,
                                     'cue': cue,
                                     'grupo_id': grupo_info.get('grupo_id'),
-                                    'grupo_nome': grupo_info.get('grupo_nome')
+                                    'grupo_nome': grupo_info.get('grupo_nome'),
+                                    'usado': False  # Flag para algoritmo de matching
                                 })
 
-                        # Loja com FALTA: precisa pedir (quantidade_pedido > 0)
-                        elif qtd_pedido > 0:
-                            # Buscar grupo regional da loja
-                            grupo_info = grupos_por_loja.get(cod_loja, {})
-                            lojas_com_falta.append({
-                                'cod_loja': cod_loja,
-                                'nome_loja': nome_loja,
-                                'estoque': estoque_atual,
-                                'cobertura_dias': cobertura_atual,
-                                'cobertura_alvo': cobertura_alvo_item,  # Guardar para debug
-                                'demanda_diaria': demanda_diaria,
-                                'necessidade': qtd_pedido,
-                                'item_ref': item,
-                                'cue': cue,
-                                'grupo_id': grupo_info.get('grupo_id'),
-                                'grupo_nome': grupo_info.get('grupo_nome')
-                            })
+                        # RECEPTOR: Cobertura <= 90 dias E tem pedido pendente
+                        # (lojas com > 90 dias nao precisam receber, podem doar)
+                        if cobertura_atual <= COBERTURA_MINIMA_DOADOR and qtd_pedido > 0:
+                            # Calcular faixa de prioridade
+                            prioridade = 99  # Default (nao deve receber)
+                            faixa_nome = 'SEM_PRIORIDADE'
 
-                    # Debug: mostrar produtos com potencial de transferencia
+                            # Verificar se esta em RUPTURA (estoque = 0)
+                            if estoque_atual == 0:
+                                prioridade = 0
+                                faixa_nome = 'RUPTURA'
+                            else:
+                                # Verificar faixas de cobertura
+                                for faixa, min_dias, max_dias in FAIXAS_PRIORIDADE:
+                                    if faixa == 'RUPTURA':
+                                        continue  # Ja tratado acima
+                                    if min_dias <= cobertura_atual <= max_dias:
+                                        prioridade = FAIXAS_PRIORIDADE.index((faixa, min_dias, max_dias))
+                                        faixa_nome = faixa
+                                        break
+
+                            # Apenas adiciona se tem prioridade valida (cobertura <= 90 dias)
+                            if prioridade < 99:
+                                lojas_com_falta.append({
+                                    'cod_loja': cod_loja,
+                                    'nome_loja': nome_loja,
+                                    'estoque': estoque_atual,
+                                    'cobertura_dias': cobertura_atual,
+                                    'demanda_diaria': demanda_diaria,
+                                    'necessidade': qtd_pedido,
+                                    'necessidade_restante': qtd_pedido,  # Para controle do algoritmo
+                                    'item_ref': item,
+                                    'cue': cue,
+                                    'grupo_id': grupo_info.get('grupo_id'),
+                                    'grupo_nome': grupo_info.get('grupo_nome'),
+                                    'prioridade': prioridade,
+                                    'faixa': faixa_nome
+                                })
+
+                    # Debug: mostrar produtos com potencial de transferencia (v6.11)
                     if lojas_com_falta and not lojas_com_excesso:
                         # Mostrar por que nao ha doadoras
-                        coberturas_lojas = [(item.get('cod_loja'), item.get('cobertura_atual_dias', 0), item.get('cobertura_necessaria_dias', 21)) for item in itens_loja]
+                        coberturas_lojas = [(item.get('cod_loja'), item.get('cobertura_atual_dias', 0)) for item in itens_loja]
                         max_cobertura = max([c[1] for c in coberturas_lojas]) if coberturas_lojas else 0
-                        # Pegar cobertura alvo media para o debug (pode variar por item em ABC)
-                        cobertura_alvo_media = sum([c[2] for c in coberturas_lojas]) / len(coberturas_lojas) if coberturas_lojas else 21
-                        if max_cobertura > 0:
-                            modo_cobertura = "fixa" if cobertura_dias else "ABC"
-                            print(f"    Produto {codigo}: SEM DOADORAS - cobertura alvo={cobertura_alvo_media:.0f}d ({modo_cobertura}), max_existente={max_cobertura:.1f}d, {len(lojas_com_falta)} lojas precisam")
+                        if max_cobertura > 0 and max_cobertura <= COBERTURA_MINIMA_DOADOR:
+                            print(f"    Produto {codigo}: SEM DOADORAS - cobertura max={max_cobertura:.1f}d (< {COBERTURA_MINIMA_DOADOR}d minimo), {len(lojas_com_falta)} lojas precisam")
                     elif lojas_com_excesso or lojas_com_falta:
-                        # Mostrar grupos para debug
+                        # Mostrar grupos e faixas para debug
                         grupos_exc = set(l.get('grupo_nome', 'SEM_GRUPO') for l in lojas_com_excesso)
-                        grupos_falta = set(l.get('grupo_nome', 'SEM_GRUPO') for l in lojas_com_falta)
-                        print(f"    Produto {codigo}: {len(lojas_com_excesso)} doadoras {grupos_exc}, {len(lojas_com_falta)} receptoras {grupos_falta}")
+                        faixas_falta = [f"{l['faixa']}({l['cod_loja']})" for l in lojas_com_falta]
+                        print(f"    Produto {codigo}: {len(lojas_com_excesso)} doadoras(>{COBERTURA_MINIMA_DOADOR}d) {grupos_exc}, receptoras: {faixas_falta[:5]}")
 
-                    # Se ha lojas com excesso E lojas com falta, calcular transferencias
+                    # ==============================================================
+                    # ALGORITMO DE MATCHING OTIMIZADO v6.11
+                    # ==============================================================
+                    # Objetivo: Minimizar fragmentacao de transferencias (otimizar frete)
+                    # Estrategia: Preferir 1 doador → 1 receptor (match completo)
+                    # Ordenacao: Receptores por PRIORIDADE (ruptura primeiro), doadores por EXCESSO
+
                     if lojas_com_excesso and lojas_com_falta:
-                        # Ordenar: doadoras por excesso (maior primeiro), receptoras por necessidade (maior primeiro)
+                        # Ordenar receptores por prioridade (menor = mais urgente)
+                        # Empate: ordenar por menor cobertura
+                        lojas_com_falta.sort(key=lambda x: (x['prioridade'], x['cobertura_dias']))
+
+                        # Ordenar doadores por excesso disponivel (maior primeiro)
                         lojas_com_excesso.sort(key=lambda x: -x['disponivel_doar'])
-                        lojas_com_falta.sort(key=lambda x: -x['necessidade'])
 
                         descricao_prod = itens_loja[0].get('descricao', '')
 
+                        # Buscar multiplo de embalagem do produto
+                        multiplo_emb = embalagens_multiplo.get(codigo, 1)
+
                         for destino in lojas_com_falta:
-                            necessidade_restante = destino['necessidade']
-                            if necessidade_restante <= 0:
+                            if destino['necessidade_restante'] <= 0:
                                 continue
 
+                            grupo_destino = destino.get('grupo_id')
+                            if grupo_destino is None:
+                                continue  # Loja nao esta em nenhum grupo
+
+                            # ==============================================================
+                            # BUSCAR MELHOR DOADOR (OTIMIZACAO DE FRETE)
+                            # ==============================================================
+                            # Preferir doador que consegue cobrir 100% da necessidade
+                            # para evitar fragmentacao (1 doador para varios receptores)
+
+                            melhor_doador = None
                             for origem in lojas_com_excesso:
-                                if origem['disponivel_doar'] <= 0:
+                                if origem['usado'] or origem['disponivel_doar'] <= 0:
                                     continue
                                 if origem['cod_loja'] == destino['cod_loja']:
                                     continue  # Mesma loja
 
-                                # ==============================================================
-                                # VALIDACAO DE GRUPO REGIONAL
-                                # ==============================================================
-                                # Transferencias so podem ocorrer entre lojas do MESMO grupo
-                                grupo_origem = grupos_por_loja.get(origem['cod_loja'], {}).get('grupo_id')
-                                grupo_destino = grupos_por_loja.get(destino['cod_loja'], {}).get('grupo_id')
-
-                                # Se alguma loja nao esta em nenhum grupo, nao pode transferir
-                                if grupo_origem is None or grupo_destino is None:
+                                # Validar grupo regional (mesmo grupo apenas)
+                                grupo_origem = origem.get('grupo_id')
+                                if grupo_origem is None or grupo_origem != grupo_destino:
                                     continue
 
-                                # Se lojas estao em grupos diferentes, nao pode transferir
-                                if grupo_origem != grupo_destino:
-                                    continue
+                                # Preferir doador que cobre 100% da necessidade
+                                if origem['disponivel_doar'] >= destino['necessidade_restante']:
+                                    melhor_doador = origem
+                                    break  # Match perfeito encontrado
 
-                                # Quantidade a transferir
-                                qtd_transferir = min(necessidade_restante, origem['disponivel_doar'])
+                                # Senao, guardar maior disponivel do mesmo grupo
+                                if melhor_doador is None:
+                                    melhor_doador = origem
+                                elif origem['disponivel_doar'] > melhor_doador['disponivel_doar']:
+                                    melhor_doador = origem
 
-                                if qtd_transferir > 0:
-                                    cue_usar = origem['cue'] if origem['cue'] > 0 else destino['cue']
-                                    valor_transf = round(qtd_transferir * cue_usar, 2)
+                            if melhor_doador is None:
+                                continue  # Nenhum doador disponivel no mesmo grupo
 
-                                    transferencias_sugeridas.append({
-                                        'cod_produto': codigo,
-                                        'descricao': descricao_prod,
-                                        'loja_origem': origem['cod_loja'],
-                                        'nome_loja_origem': origem['nome_loja'],
-                                        'estoque_origem': origem['estoque'],
-                                        'cobertura_origem_dias': round(origem['cobertura_dias'], 1),
-                                        'loja_destino': destino['cod_loja'],
-                                        'nome_loja_destino': destino['nome_loja'],
-                                        'estoque_destino': destino['estoque'],
-                                        'cobertura_destino_dias': round(destino['cobertura_dias'], 1),
-                                        'qtd_sugerida': qtd_transferir,
-                                        'valor_estimado': valor_transf,
-                                        'cue': cue_usar,
-                                        'urgencia': 'ALTA' if destino['cobertura_dias'] < 7 else 'MEDIA'
-                                    })
+                            # ==============================================================
+                            # CALCULAR QUANTIDADE COM MULTIPLO DE EMBALAGEM
+                            # ==============================================================
+                            qtd_bruta = min(destino['necessidade_restante'], melhor_doador['disponivel_doar'])
 
-                                    # Atualizar controles
-                                    valor_economia_transferencias += valor_transf
-                                    origem['disponivel_doar'] -= qtd_transferir
-                                    necessidade_restante -= qtd_transferir
+                            # Arredondar para BAIXO (caixas fechadas apenas)
+                            qtd_transferir = (qtd_bruta // multiplo_emb) * multiplo_emb
 
-                                    # IMPORTANTE: Reduzir quantidade do pedido do item destino
-                                    item_destino = destino['item_ref']
-                                    qtd_pedido_atual = item_destino.get('quantidade_pedido', 0) or 0
-                                    nova_qtd = max(0, qtd_pedido_atual - qtd_transferir)
+                            # Se arredondou para 0, nao transfere
+                            if qtd_transferir <= 0:
+                                continue
 
-                                    # Arredondar para multiplo de caixa apos transferencia
-                                    multiplo_caixa = item_destino.get('multiplo_caixa', 1) or 1
-                                    nova_qtd = arredondar_para_multiplo(nova_qtd, multiplo_caixa, 'cima')
+                            # Calcular valor
+                            cue_usar = melhor_doador['cue'] if melhor_doador['cue'] > 0 else destino['cue']
+                            valor_transf = round(qtd_transferir * cue_usar, 2)
 
-                                    item_destino['quantidade_pedido'] = nova_qtd
-                                    item_destino['valor_pedido'] = round(nova_qtd * cue_usar, 2)
+                            # Registrar transferencia
+                            transferencias_sugeridas.append({
+                                'cod_produto': codigo,
+                                'descricao': descricao_prod,
+                                'loja_origem': melhor_doador['cod_loja'],
+                                'nome_loja_origem': melhor_doador['nome_loja'],
+                                'estoque_origem': melhor_doador['estoque'],
+                                'cobertura_origem_dias': round(melhor_doador['cobertura_dias'], 1),
+                                'loja_destino': destino['cod_loja'],
+                                'nome_loja_destino': destino['nome_loja'],
+                                'estoque_destino': destino['estoque'],
+                                'cobertura_destino_dias': round(destino['cobertura_dias'], 1),
+                                'qtd_sugerida': qtd_transferir,
+                                'valor_estimado': valor_transf,
+                                'cue': cue_usar,
+                                'urgencia': destino['faixa'],  # v6.11: usar faixa de prioridade
+                                'multiplo_embalagem': multiplo_emb
+                            })
 
-                                    # Marcar que tem transferencia
-                                    if 'transferencias_receber' not in item_destino:
-                                        item_destino['transferencias_receber'] = []
-                                    item_destino['transferencias_receber'].append({
-                                        'loja_origem': origem['cod_loja'],
-                                        'nome_loja_origem': origem['nome_loja'],
-                                        'qtd': qtd_transferir
-                                    })
+                            # Atualizar controles
+                            valor_economia_transferencias += valor_transf
+                            melhor_doador['disponivel_doar'] -= qtd_transferir
+                            destino['necessidade_restante'] -= qtd_transferir
 
-                                    # Se pedido zerou, nao precisa mais pedir
-                                    if nova_qtd == 0:
-                                        item_destino['deve_pedir'] = False
+                            # Marcar doador como usado se esgotou capacidade
+                            if melhor_doador['disponivel_doar'] <= 0:
+                                melhor_doador['usado'] = True
 
-                                if necessidade_restante <= 0:
-                                    break
+                            # IMPORTANTE: Reduzir quantidade do pedido do item destino
+                            item_destino = destino['item_ref']
+                            qtd_pedido_atual = item_destino.get('quantidade_pedido', 0) or 0
+                            nova_qtd = max(0, qtd_pedido_atual - qtd_transferir)
+
+                            # Arredondar para multiplo de caixa apos transferencia
+                            multiplo_caixa = item_destino.get('multiplo_caixa', 1) or 1
+                            nova_qtd = arredondar_para_multiplo(nova_qtd, multiplo_caixa, 'cima')
+
+                            item_destino['quantidade_pedido'] = nova_qtd
+                            item_destino['valor_pedido'] = round(nova_qtd * cue_usar, 2)
+
+                            # Marcar que tem transferencia
+                            if 'transferencias_receber' not in item_destino:
+                                item_destino['transferencias_receber'] = []
+                            item_destino['transferencias_receber'].append({
+                                'loja_origem': melhor_doador['cod_loja'],
+                                'nome_loja_origem': melhor_doador['nome_loja'],
+                                'qtd': qtd_transferir
+                            })
+
+                            # Se pedido zerou, nao precisa mais pedir
+                            if nova_qtd == 0:
+                                item_destino['deve_pedir'] = False
 
                 print(f"  [TRANSFERENCIAS] Produtos analisados: {produtos_analisados}")
                 print(f"  [TRANSFERENCIAS] Encontradas {len(transferencias_sugeridas)} oportunidades")
@@ -1089,8 +1175,16 @@ def api_pedido_fornecedor_integrado_exportar():
         # Aba Itens
         ws_itens = wb.create_sheet('Itens Pedido')
 
+        # Mapeamento de codigo de filial para nome abreviado
+        NOMES_FILIAIS = {
+            1: 'GUS', 2: 'IMB', 3: 'PAL', 4: 'TAM', 5: 'AJU',
+            6: 'JPA', 7: 'PNG', 8: 'CAU', 9: 'BAR', 11: 'FRT',
+            80: 'MDC', 81: 'OBC', 82: 'OSAL', 91: 'CA2',
+            92: 'CAB', 93: 'ALH', 94: 'LAU'
+        }
+
         headers = [
-            'Cod Filial', 'Nome Filial', 'Cod Item', 'Descricao Item',
+            'Cod Filial', 'Filial', 'Cod Item', 'Descricao Item',
             'CNPJ Fornecedor', 'Nome Fornecedor', 'Qtd Pedido', 'CUE', 'Critica'
         ]
 
@@ -1101,14 +1195,19 @@ def api_pedido_fornecedor_integrado_exportar():
             cell.border = border
             cell.alignment = Alignment(horizontal='center')
 
-        itens_ordenados = sorted(itens_pedido, key=lambda x: (
+        # Filtrar apenas itens com pedido > 0 e ordenar
+        itens_com_pedido = [item for item in itens_pedido if (item.get('quantidade_pedido', 0) or 0) > 0]
+        itens_ordenados = sorted(itens_com_pedido, key=lambda x: (
             x.get('cod_loja', 0) or 0,
             x.get('cnpj_fornecedor', '') or ''
         ))
 
         for row_idx, item in enumerate(itens_ordenados, start=2):
-            ws_itens.cell(row=row_idx, column=1, value=item.get('cod_loja', '')).border = border
-            ws_itens.cell(row=row_idx, column=2, value=item.get('nome_loja', '')).border = border
+            cod_loja = item.get('cod_loja', '')
+            ws_itens.cell(row=row_idx, column=1, value=cod_loja).border = border
+            # Nome abreviado da filial
+            nome_abrev = NOMES_FILIAIS.get(cod_loja, '') if isinstance(cod_loja, int) else ''
+            ws_itens.cell(row=row_idx, column=2, value=nome_abrev).border = border
             ws_itens.cell(row=row_idx, column=3, value=item.get('codigo', '')).border = border
             ws_itens.cell(row=row_idx, column=4, value=item.get('descricao', '')[:60]).border = border
             ws_itens.cell(row=row_idx, column=5, value=item.get('cnpj_fornecedor', item.get('codigo_fornecedor', ''))).border = border
@@ -1124,7 +1223,7 @@ def api_pedido_fornecedor_integrado_exportar():
                 cell_critica.fill = critica_fill
                 cell_critica.font = critica_font
 
-        col_widths = [12, 25, 12, 50, 18, 30, 12, 12, 45]
+        col_widths = [10, 8, 12, 50, 18, 30, 12, 12, 45]
         for i, width in enumerate(col_widths, start=1):
             ws_itens.column_dimensions[chr(64 + i)].width = width
 

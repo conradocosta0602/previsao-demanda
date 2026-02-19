@@ -22,14 +22,14 @@ Lojas sao organizadas em grupos regionais que podem trocar estoque entre si. Cad
 - **CD Principal**: Centro de Distribuicao responsavel
 - **Lojas**: Lista de lojas que podem transferir entre si
 
-### Loja Doadora vs Receptora
+### Loja Doadora vs Receptora (v6.11)
 
 | Tipo | Criterio | Acao |
 |------|----------|------|
-| Doadora | Cobertura > cobertura_alvo_item | Pode enviar estoque excedente |
-| Receptora | quantidade_pedido > 0 | Precisa receber estoque |
+| Doadora | Cobertura > 90 dias | Pode enviar excesso acima de 90 dias |
+| Receptora | Cobertura <= 90 dias E quantidade_pedido > 0 | Precisa receber estoque |
 
-**Nota:** A cobertura alvo e determinada por item (ver secao "Logica Hibrida de Cobertura").
+**Nota:** Lojas com cobertura > 90 dias NAO sao receptoras (podem apenas doar).
 
 ### Cobertura de Estoque
 
@@ -92,94 +92,98 @@ Colunas disponiveis:
 | Exportar Excel | Baixa planilha com todas as oportunidades |
 | Limpar Historico | Remove oportunidades antigas |
 
-## Niveis de Urgencia
+## Faixas de Prioridade (v6.11)
 
-### CRITICA (Vermelho)
-- Loja destino com **cobertura = 0 dias**
-- Produto em ruptura efetiva
-- Prioridade maxima de atendimento
+| Faixa | Cobertura | Prioridade | Descricao |
+|-------|-----------|------------|-----------|
+| RUPTURA | estoque = 0 | 0 (maxima) | Produto em ruptura efetiva |
+| CRITICA | 0-30 dias | 1 | Ruptura iminente |
+| ALTA | 31-60 dias | 2 | Situacao de alerta |
+| MEDIA | 61-90 dias | 3 | Preventiva |
+| > 90 dias | - | NAO RECEBE | Pode apenas doar |
 
-### ALTA (Laranja)
-- Loja destino com **cobertura 1-3 dias**
-- Ruptura iminente
-- Atender em ate 24h
+**Ordem de atendimento:** RUPTURA > CRITICA > ALTA > MEDIA (menor prioridade primeiro)
 
-### MEDIA (Amarelo)
-- Loja destino com **cobertura 4-7 dias**
-- Situacao de alerta
-- Atender na proxima rota
+## Regras de Calculo (v6.11)
 
-### BAIXA (Verde)
-- Loja destino com **cobertura > 7 dias**
-- Preventiva/otimizacao
-- Atender quando conveniente
+### Identificacao de Doadores
 
-## Regras de Calculo
-
-### Logica Hibrida de Cobertura (v5.7+)
-
-O sistema usa uma **logica hibrida** para determinar a cobertura alvo de cada item:
+Apenas lojas com cobertura > 90 dias podem doar:
 
 ```python
-# Para cada item/loja:
-cobertura_alvo_item = cobertura_dias if cobertura_dias else item['cobertura_necessaria_dias']
+COBERTURA_MINIMA_DOADOR = 90  # dias
+
+if cobertura_atual > COBERTURA_MINIMA_DOADOR:
+    excesso_dias = cobertura_atual - COBERTURA_MINIMA_DOADOR
+    excesso_unidades = int(excesso_dias * demanda_diaria)
+    # Doador mantem minimo de 90 dias apos doar
 ```
 
-#### Cenario 1: Cobertura Fixa (informada no filtro)
+**Exemplo:**
+- Loja com 120 dias de cobertura, demanda 10 un/dia
+- Excesso = (120 - 90) × 10 = 300 unidades disponiveis para doar
 
-Quando o usuario define uma cobertura especifica (ex: 90 dias):
-- **Todos os itens** usam a mesma cobertura alvo
-- Independente da curva ABC do produto
+### Identificacao de Receptores
 
-```
-Filtro: Cobertura = 90 dias
-→ Item A (curva A): alvo = 90 dias
-→ Item B (curva B): alvo = 90 dias
-→ Item C (curva C): alvo = 90 dias
-```
+Apenas lojas com cobertura <= 90 dias E pedido pendente podem receber:
 
-#### Cenario 2: Cobertura ABC (automatica)
-
-Quando nao e informada cobertura (ou seleciona "ABC"):
-- **Cada item usa sua propria cobertura** calculada
-- Formula: `Lead Time + Ciclo (7d) + Seguranca ABC`
-
-```
-Filtro: Cobertura = ABC
-→ Item A (LT=15): alvo = 15 + 7 + 2 = 24 dias
-→ Item B (LT=15): alvo = 15 + 7 + 4 = 26 dias
-→ Item C (LT=20): alvo = 20 + 7 + 6 = 33 dias
+```python
+if cobertura_atual <= 90 and quantidade_pedido > 0:
+    # Loja e receptora
+    # Prioridade determinada pela faixa de cobertura
 ```
 
 ### Quantidade de Transferencia
 
 ```python
-# Para cada item em cada loja:
-cobertura_alvo = cobertura_dias if cobertura_dias else item['cobertura_necessaria_dias']
+# Excesso do doador
+excesso_unidades = (cobertura_atual - 90) * demanda_diaria
 
-# Excesso do doador (apos manter cobertura alvo)
-estoque_minimo = cobertura_alvo * demanda_diaria
-excesso_doador = estoque_atual - estoque_minimo
+# Arredondar para multiplo de embalagem (caixas fechadas)
+multiplo = embalagem_arredondamento.get(cod_produto, 1)
+qtd_transferir = (qtd_bruta // multiplo) * multiplo
 
-# Quantidade a transferir
-qtd_transferir = min(excesso_doador, necessidade_receptor)
+# Nao transferir se resultado for 0
+if qtd_transferir == 0:
+    continue
 ```
+
+**Exemplo:**
+- Necessidade: 50 unidades
+- Multiplo: 12 unidades (caixa)
+- Transferir: 48 unidades (4 caixas fechadas)
+
+### Algoritmo de Matching Otimizado
+
+Para minimizar fragmentacao e otimizar frete:
+
+```
+1. Ordenar doadores por excesso (MAIOR primeiro)
+2. Ordenar receptores por prioridade (RUPTURA > CRITICA > ALTA > MEDIA)
+3. Para cada receptor:
+   a. Buscar doador que cobre 100% da necessidade
+   b. Se encontrou: fazer match exclusivo (1:1)
+   c. Se nao encontrou: usar maior doador disponivel
+4. Marcar doador como "usado" quando esgotar capacidade
+```
+
+**Objetivo:** Preferir 1 doador → 1 receptor para consolidar frete
 
 ### Parametros Configurados
 
 | Parametro | Valor | Descricao |
 |-----------|-------|-----------|
-| MARGEM_EXCESSO | 0 | Qualquer excesso acima do alvo pode ser doado |
-| COBERTURA_MINIMA_DOADOR | cobertura_alvo | Doador mantem exatamente a cobertura alvo |
-
-**Nota:** A margem de excesso foi removida (MARGEM_EXCESSO = 0) para permitir transferencias mais agressivas, especialmente em coberturas altas (60+ dias).
+| COBERTURA_MINIMA_DOADOR | 90 | Dias minimos para poder doar |
+| FAIXAS_PRIORIDADE | 4 faixas | RUPTURA, CRITICA, ALTA, MEDIA |
+| Multiplo Embalagem | Variavel | Arredonda para baixo (caixas fechadas) |
 
 ### Restricoes
 
 1. **Mesma loja nao pode enviar e receber** o mesmo produto
-2. **Doador nao pode ficar em ruptura** apos doacao
-3. **Apenas lojas do mesmo grupo** podem transferir
+2. **Doador mantem minimo 90 dias** apos doacao
+3. **Apenas lojas do mesmo grupo regional** podem transferir (V24)
 4. **Lojas devem estar ativas** no grupo
+5. **Apenas multiplos de embalagem** sao transferidos
 
 ## Integracao com Pedido CD
 
@@ -203,25 +207,49 @@ Fornecedor X
     └── Produto 123 [Receber 50 un <- Loja A]
 ```
 
-## Exportacao Excel
+## Exportacao Excel (v6.11)
 
 O arquivo exportado contem:
 
 | Coluna | Descricao |
 |--------|-----------|
+| Cod Destino | Codigo da loja destino |
+| Filial Dest | Nome abreviado da loja destino (GUS, IMB, etc.) |
 | Codigo | SKU do produto |
 | Descricao | Nome do produto |
-| ABC | Curva ABC |
-| Loja Origem | Nome da loja doadora |
+| Curva ABC | Classificacao ABC |
+| Cod Origem | Codigo da loja origem |
+| Filial Orig | Nome abreviado da loja origem |
 | Estoque Origem | Estoque atual do doador |
-| Cobertura Origem (dias) | Cobertura do doador |
-| Loja Destino | Nome da loja receptora |
+| Cobertura Origem | Cobertura do doador (dias) |
 | Estoque Destino | Estoque atual do receptor |
-| Cobertura Destino (dias) | Cobertura do receptor |
-| Qtd Transferir | Quantidade sugerida |
+| Cobertura Destino | Cobertura do receptor (dias) |
+| Qtd Sugerida | Quantidade sugerida |
 | Valor Estimado | Valor da transferencia |
-| Urgencia | Nivel de urgencia |
-| Grupo Regional | Nome do grupo |
+| Urgencia | Faixa de prioridade |
+| Data Calculo | Data/hora do calculo |
+
+### Nomes Abreviados das Filiais
+
+| Codigo | Abreviacao |
+|--------|------------|
+| 1 | GUS |
+| 2 | IMB |
+| 3 | PAL |
+| 4 | TAM |
+| 5 | AJU |
+| 6 | JPA |
+| 7 | PNG |
+| 8 | CAU |
+| 9 | BAR |
+| 11 | FRT |
+| 80 | MDC |
+| 81 | OBC |
+| 82 | OSAL |
+| 91 | CA2 |
+| 92 | CAB |
+| 93 | ALH |
+| 94 | LAU |
 
 ## API Endpoints
 
