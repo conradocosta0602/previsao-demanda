@@ -630,7 +630,18 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v5.7 (Fevereiro 2026) - ATUAL
+### v6.11 (Fevereiro 2026) - ATUAL
+
+**Padronizacao Excel e Sistema de Conformidade:**
+
+- **Colunas Padronizadas Excel**: Cod Filial, Filial (abreviado), Cod DIG em todos os exports
+- **20 Verificacoes de Conformidade**: Sistema completo de validacao metodologica (V01-V25)
+- **Transferencias Regionais**: Balanceamento automatico de estoque entre lojas do mesmo grupo
+- **Cronjob Diario 06:00**: Checklist automatico com alertas por email
+- **Organizacao Repositorio**: Documentacao movida para `docs/` com estrutura organizada
+- **Gitignore Completo**: Protecao contra commit de dados sensiveis
+
+### v5.7 (Fevereiro 2026)
 
 **Fator de Tendencia YoY e Botao Salvar Demanda:**
 
@@ -1008,8 +1019,8 @@ Para duvidas ou problemas:
 
 ---
 
-**Versao:** 5.7
+**Versao:** 6.11
 **Status:** Em Producao
-**Ultima Atualizacao:** 05 Fevereiro 2026
+**Ultima Atualizacao:** 19 Fevereiro 2026
 
 **Se este projeto foi util, considere dar uma estrela!**
