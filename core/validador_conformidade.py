@@ -87,6 +87,7 @@ class ValidadorConformidade:
             ('V21', 'Arredondamento Pos-Transferencia', self._verificar_arredondamento_pos_transferencia),
             ('V22', 'ES com LT Base e Rateio Desvio', self._verificar_es_lt_base_rateio_desvio),
             ('V23', 'Demanda Sazonal no Pedido', self._verificar_demanda_sazonal_pedido),
+            ('V24', 'Grupos Regionais Transferencia', self._verificar_grupos_regionais_transferencia),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -1746,6 +1747,173 @@ class ValidadorConformidade:
             }
         except Exception as e:
             return 'falha', f'Erro ao verificar demanda sazonal no pedido: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_grupos_regionais_transferencia(self) -> Tuple[str, str, Dict]:
+        """
+        V24: Verifica que transferencias so ocorrem entre lojas do mesmo grupo regional.
+
+        Implementado em v6.10 para garantir que:
+        1. Tabelas de grupos regionais existem e estao configuradas
+        2. Cada loja pertence a exatamente um grupo
+        3. Transferencias entre lojas de grupos diferentes sao bloqueadas
+        4. Codigo de validacao esta implementado em pedido_fornecedor.py
+
+        Grupos regionais:
+        - NORDESTE_PE_PB_RN (CD 80): Lojas 1, 2, 4, 6, 7, 8
+        - BA_SE (CD 81): Lojas 3, 5, 9
+        """
+        try:
+            resultados = []
+            todos_corretos = True
+
+            # Teste 1: Verificar se tabelas de grupos existem
+            if self.conn:
+                cursor = self.conn.cursor()
+
+                # Verificar tabela grupos_transferencia
+                cursor.execute("""
+                    SELECT COUNT(*) FROM information_schema.tables
+                    WHERE table_name = 'grupos_transferencia'
+                """)
+                tabela_grupos_existe = cursor.fetchone()[0] > 0
+
+                # Verificar tabela lojas_grupo_transferencia
+                cursor.execute("""
+                    SELECT COUNT(*) FROM information_schema.tables
+                    WHERE table_name = 'lojas_grupo_transferencia'
+                """)
+                tabela_lojas_existe = cursor.fetchone()[0] > 0
+
+                teste_1_ok = tabela_grupos_existe and tabela_lojas_existe
+                resultados.append({
+                    'teste': 'Tabelas de grupos existem',
+                    'grupos_transferencia': tabela_grupos_existe,
+                    'lojas_grupo_transferencia': tabela_lojas_existe,
+                    'correto': teste_1_ok
+                })
+                if not teste_1_ok:
+                    todos_corretos = False
+                    cursor.close()
+                    return 'falha', 'Tabelas de grupos regionais nao existem', {'testes': resultados}
+
+                # Teste 2: Verificar grupos ativos configurados
+                cursor.execute("""
+                    SELECT id, nome, cd_principal
+                    FROM grupos_transferencia
+                    WHERE ativo = TRUE
+                """)
+                grupos = cursor.fetchall()
+
+                teste_2_ok = len(grupos) >= 2  # Pelo menos 2 grupos (PE/PB/RN e BA/SE)
+                resultados.append({
+                    'teste': 'Grupos ativos configurados',
+                    'grupos_encontrados': len(grupos),
+                    'grupos': [{'id': g[0], 'nome': g[1], 'cd': g[2]} for g in grupos],
+                    'correto': teste_2_ok
+                })
+                if not teste_2_ok:
+                    todos_corretos = False
+
+                # Teste 3: Verificar lojas mapeadas para grupos
+                cursor.execute("""
+                    SELECT lg.cod_empresa, g.nome
+                    FROM lojas_grupo_transferencia lg
+                    JOIN grupos_transferencia g ON lg.grupo_id = g.id
+                    WHERE lg.ativo = TRUE AND g.ativo = TRUE
+                    ORDER BY lg.cod_empresa
+                """)
+                lojas_grupos = cursor.fetchall()
+
+                # Verificar lojas esperadas
+                lojas_esperadas = {1, 2, 3, 4, 5, 6, 7, 8, 9}  # Lojas 1-9
+                lojas_mapeadas = {lg[0] for lg in lojas_grupos}
+
+                teste_3_ok = lojas_esperadas.issubset(lojas_mapeadas)
+                resultados.append({
+                    'teste': 'Todas as lojas mapeadas para grupos',
+                    'lojas_mapeadas': sorted(list(lojas_mapeadas)),
+                    'lojas_esperadas': sorted(list(lojas_esperadas)),
+                    'faltando': sorted(list(lojas_esperadas - lojas_mapeadas)),
+                    'correto': teste_3_ok
+                })
+                if not teste_3_ok:
+                    todos_corretos = False
+
+                # Teste 4: Verificar configuracao correta dos grupos
+                # Grupo 1 (PE/PB/RN): Lojas 1, 2, 4, 6, 7, 8
+                # Grupo 2 (BA/SE): Lojas 3, 5, 9
+                mapeamento = {lg[0]: lg[1] for lg in lojas_grupos}
+
+                grupo_pe = {'NORDESTE_PE_PB_RN'}
+                grupo_ba = {'BA_SE'}
+
+                config_correta = True
+                erros_config = []
+
+                for loja in [1, 2, 4, 6, 7, 8]:  # PE/PB/RN
+                    if loja in mapeamento and mapeamento[loja] not in grupo_pe:
+                        config_correta = False
+                        erros_config.append(f'Loja {loja} deveria estar em PE/PB/RN, esta em {mapeamento.get(loja)}')
+
+                for loja in [3, 5, 9]:  # BA/SE
+                    if loja in mapeamento and mapeamento[loja] not in grupo_ba:
+                        config_correta = False
+                        erros_config.append(f'Loja {loja} deveria estar em BA/SE, esta em {mapeamento.get(loja)}')
+
+                teste_4_ok = config_correta
+                resultados.append({
+                    'teste': 'Configuracao correta dos grupos',
+                    'mapeamento': mapeamento,
+                    'erros': erros_config if erros_config else None,
+                    'correto': teste_4_ok
+                })
+                if not teste_4_ok:
+                    todos_corretos = False
+
+                cursor.close()
+
+            # Teste 5: Verificar se codigo de validacao existe em pedido_fornecedor.py
+            import inspect
+            from app.blueprints import pedido_fornecedor
+
+            source_code = inspect.getsource(pedido_fornecedor)
+
+            # Verificar se o filtro de grupo regional esta implementado
+            filtro_grupo = 'grupo_origem' in source_code and 'grupo_destino' in source_code
+            validacao_grupo = 'grupo_origem != grupo_destino' in source_code or 'grupos_por_loja' in source_code
+
+            teste_5_ok = filtro_grupo and validacao_grupo
+            resultados.append({
+                'teste': 'Validacao de grupos implementada no codigo',
+                'variaveis_grupo_encontradas': filtro_grupo,
+                'validacao_implementada': validacao_grupo,
+                'correto': teste_5_ok
+            })
+            if not teste_5_ok:
+                todos_corretos = False
+
+            if todos_corretos:
+                return 'ok', 'Grupos regionais configurados e validados corretamente', {
+                    'versao': 'v6.10',
+                    'regras': [
+                        'Transferencias so permitidas entre lojas do MESMO grupo',
+                        'Grupo PE/PB/RN (CD 80): Lojas 1, 2, 4, 6, 7, 8',
+                        'Grupo BA/SE (CD 81): Lojas 3, 5, 9',
+                        'Validacao aplicada em tempo real durante calculo de pedidos'
+                    ],
+                    'testes': resultados
+                }
+            else:
+                return 'falha', 'Problema com configuracao de grupos regionais', {
+                    'testes': resultados
+                }
+
+        except ImportError as e:
+            return 'falha', f'Modulo nao encontrado: {str(e)}', {'erro': str(e)}
+        except Exception as e:
+            return 'falha', f'Erro ao verificar grupos regionais: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

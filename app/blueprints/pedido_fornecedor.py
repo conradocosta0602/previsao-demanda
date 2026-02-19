@@ -626,6 +626,25 @@ def api_pedido_fornecedor_integrado():
             try:
                 calc_transf = TransferenciaRegional(conn_transf)
 
+                # ==============================================================================
+                # CARREGAR GRUPOS REGIONAIS DE TRANSFERENCIA
+                # ==============================================================================
+                # Transferencias so podem ocorrer entre lojas do MESMO grupo regional
+                cursor_grupos = conn_transf.cursor()
+                cursor_grupos.execute("""
+                    SELECT lg.cod_empresa, g.id as grupo_id, g.nome as grupo_nome
+                    FROM lojas_grupo_transferencia lg
+                    JOIN grupos_transferencia g ON lg.grupo_id = g.id
+                    WHERE lg.ativo = TRUE AND g.ativo = TRUE
+                """)
+                grupos_por_loja = {}
+                for row in cursor_grupos.fetchall():
+                    cod_empresa, grupo_id, grupo_nome = row
+                    grupos_por_loja[cod_empresa] = {'grupo_id': grupo_id, 'grupo_nome': grupo_nome}
+                cursor_grupos.close()
+
+                print(f"  [TRANSFERENCIAS] Grupos regionais carregados: {len(set(g['grupo_id'] for g in grupos_por_loja.values()))} grupos, {len(grupos_por_loja)} lojas mapeadas")
+
                 # Agrupar resultados por codigo de produto
                 itens_por_codigo = {}
                 for item in resultados:
@@ -680,6 +699,8 @@ def api_pedido_fornecedor_integrado():
                             estoque_minimo = cobertura_alvo_item * demanda_diaria
                             disponivel_doar = max(0, int(estoque_atual - estoque_minimo))
                             if disponivel_doar > 0:
+                                # Buscar grupo regional da loja
+                                grupo_info = grupos_por_loja.get(cod_loja, {})
                                 lojas_com_excesso.append({
                                     'cod_loja': cod_loja,
                                     'nome_loja': nome_loja,
@@ -689,11 +710,15 @@ def api_pedido_fornecedor_integrado():
                                     'demanda_diaria': demanda_diaria,
                                     'excesso_unidades': min(excesso_unidades, disponivel_doar),
                                     'disponivel_doar': disponivel_doar,
-                                    'cue': cue
+                                    'cue': cue,
+                                    'grupo_id': grupo_info.get('grupo_id'),
+                                    'grupo_nome': grupo_info.get('grupo_nome')
                                 })
 
                         # Loja com FALTA: precisa pedir (quantidade_pedido > 0)
                         elif qtd_pedido > 0:
+                            # Buscar grupo regional da loja
+                            grupo_info = grupos_por_loja.get(cod_loja, {})
                             lojas_com_falta.append({
                                 'cod_loja': cod_loja,
                                 'nome_loja': nome_loja,
@@ -703,7 +728,9 @@ def api_pedido_fornecedor_integrado():
                                 'demanda_diaria': demanda_diaria,
                                 'necessidade': qtd_pedido,
                                 'item_ref': item,
-                                'cue': cue
+                                'cue': cue,
+                                'grupo_id': grupo_info.get('grupo_id'),
+                                'grupo_nome': grupo_info.get('grupo_nome')
                             })
 
                     # Debug: mostrar produtos com potencial de transferencia
@@ -717,7 +744,10 @@ def api_pedido_fornecedor_integrado():
                             modo_cobertura = "fixa" if cobertura_dias else "ABC"
                             print(f"    Produto {codigo}: SEM DOADORAS - cobertura alvo={cobertura_alvo_media:.0f}d ({modo_cobertura}), max_existente={max_cobertura:.1f}d, {len(lojas_com_falta)} lojas precisam")
                     elif lojas_com_excesso or lojas_com_falta:
-                        print(f"    Produto {codigo}: {len(lojas_com_excesso)} lojas com excesso, {len(lojas_com_falta)} lojas com falta")
+                        # Mostrar grupos para debug
+                        grupos_exc = set(l.get('grupo_nome', 'SEM_GRUPO') for l in lojas_com_excesso)
+                        grupos_falta = set(l.get('grupo_nome', 'SEM_GRUPO') for l in lojas_com_falta)
+                        print(f"    Produto {codigo}: {len(lojas_com_excesso)} doadoras {grupos_exc}, {len(lojas_com_falta)} receptoras {grupos_falta}")
 
                     # Se ha lojas com excesso E lojas com falta, calcular transferencias
                     if lojas_com_excesso and lojas_com_falta:
@@ -737,6 +767,21 @@ def api_pedido_fornecedor_integrado():
                                     continue
                                 if origem['cod_loja'] == destino['cod_loja']:
                                     continue  # Mesma loja
+
+                                # ==============================================================
+                                # VALIDACAO DE GRUPO REGIONAL
+                                # ==============================================================
+                                # Transferencias so podem ocorrer entre lojas do MESMO grupo
+                                grupo_origem = grupos_por_loja.get(origem['cod_loja'], {}).get('grupo_id')
+                                grupo_destino = grupos_por_loja.get(destino['cod_loja'], {}).get('grupo_id')
+
+                                # Se alguma loja nao esta em nenhum grupo, nao pode transferir
+                                if grupo_origem is None or grupo_destino is None:
+                                    continue
+
+                                # Se lojas estao em grupos diferentes, nao pode transferir
+                                if grupo_origem != grupo_destino:
+                                    continue
 
                                 # Quantidade a transferir
                                 qtd_transferir = min(necessidade_restante, origem['disponivel_doar'])

@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.9** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.10** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -534,6 +534,7 @@ DB_PORT=5432
 - V21: Arredondamento pos-transferencia + importacao padrao de compra (v6.7)
 - V22: Correcao do calculo de Estoque de Seguranca - rateio de desvio usa sqrt() e ES usa LT sem delay (v6.8)
 - V23: Correcao demanda sazonal no pedido - usar demanda_prevista/30 em vez de demanda_diaria_base (v6.9)
+- V24: Transferencias respeitam grupos regionais - PE/PB/RN (lojas 1,2,4,6,7,8) e BA/SE (lojas 3,5,9) (v6.10)
 
 ## Documentacao Complementar
 
@@ -549,4 +550,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.9)
+**Ultima atualizacao**: Fevereiro 2026 (v6.10)
