@@ -331,10 +331,31 @@ def api_padrao_compra_exportar():
         ws = wb.active
         ws.title = 'Por Padrao de Compra'
 
+        # Mapeamento de codigo de filial para nome abreviado
+        NOMES_FILIAIS = {
+            1: 'GUS', 2: 'IMB', 3: 'PAL', 4: 'TAM', 5: 'AJU',
+            6: 'JPA', 7: 'PNG', 8: 'CAU', 9: 'BAR', 11: 'FRT',
+            80: 'MDC', 81: 'OBC', 82: 'OSAL', 91: 'CA2',
+            92: 'CAB', 93: 'ALH', 94: 'LAU'
+        }
+
+        # Carregar mapeamento de codigos DIG
+        codigos_dig = {}
+        try:
+            conn_dig = get_db_connection()
+            cursor_dig = conn_dig.cursor()
+            cursor_dig.execute("SELECT codigo, codigo_dig FROM codigo_dig")
+            codigos_dig = {str(row[0]): str(row[1]) for row in cursor_dig.fetchall()}
+            cursor_dig.close()
+            conn_dig.close()
+            print(f"[EXPORT PADRAO] Codigos DIG carregados: {len(codigos_dig)} registros")
+        except Exception as e:
+            print(f"[EXPORT PADRAO] Erro ao carregar codigos DIG: {e}")
+
         headers = [
-            'Codigo', 'Descricao', 'Categoria', 'Curva ABC',
+            'Cod Filial', 'Filial', 'Codigo', 'Cod DIG', 'Descricao',
             'Fornecedor', 'CNPJ Fornecedor',
-            'Filial Destino', 'Quantidade', 'CUE', 'Valor Pedido',
+            'Quantidade', 'CUE', 'Valor Pedido',
             'Lead Time Efetivo', 'Lojas Origem', 'Criticas'
         ]
 
@@ -344,14 +365,33 @@ def api_padrao_compra_exportar():
             cell.fill = header_fill
             cell.border = border
 
-        for row_idx, linha in enumerate(linhas, 2):
-            ws.cell(row=row_idx, column=1, value=linha.get('codigo')).border = border
-            ws.cell(row=row_idx, column=2, value=linha.get('descricao', '')).border = border
-            ws.cell(row=row_idx, column=3, value=linha.get('categoria', '')).border = border
-            ws.cell(row=row_idx, column=4, value=linha.get('curva_abc', 'B')).border = border
-            ws.cell(row=row_idx, column=5, value=linha.get('nome_fornecedor', '')).border = border
-            ws.cell(row=row_idx, column=6, value=linha.get('codigo_fornecedor', '')).border = border
-            ws.cell(row=row_idx, column=7, value=linha.get('cod_empresa_destino')).border = border
+        # Filtrar apenas itens com quantidade > 0
+        linhas_com_pedido = [l for l in linhas if (l.get('quantidade_pedido', 0) or 0) > 0]
+
+        for row_idx, linha in enumerate(linhas_com_pedido, 2):
+            # Cod Filial (primeira coluna)
+            cod_filial = linha.get('cod_empresa_destino', 0)
+            try:
+                cod_filial_int = int(cod_filial) if cod_filial else 0
+            except (ValueError, TypeError):
+                cod_filial_int = 0
+            ws.cell(row=row_idx, column=1, value=cod_filial_int).border = border
+
+            # Filial abreviada (segunda coluna)
+            nome_filial_abrev = NOMES_FILIAIS.get(cod_filial_int, '')
+            ws.cell(row=row_idx, column=2, value=nome_filial_abrev).border = border
+
+            # Codigo do produto
+            cod_produto = str(linha.get('codigo', ''))
+            ws.cell(row=row_idx, column=3, value=cod_produto).border = border
+
+            # Codigo DIG
+            cod_dig = codigos_dig.get(cod_produto, 'N/D')
+            ws.cell(row=row_idx, column=4, value=cod_dig).border = border
+
+            ws.cell(row=row_idx, column=5, value=linha.get('descricao', '')).border = border
+            ws.cell(row=row_idx, column=6, value=linha.get('nome_fornecedor', '')).border = border
+            ws.cell(row=row_idx, column=7, value=linha.get('codigo_fornecedor', '')).border = border
             ws.cell(row=row_idx, column=8, value=linha.get('quantidade_pedido', 0)).border = border
             ws.cell(row=row_idx, column=9, value=linha.get('cue', 0)).border = border
             ws.cell(row=row_idx, column=10, value=linha.get('valor_pedido', 0)).border = border
@@ -365,13 +405,13 @@ def api_padrao_compra_exportar():
                 cell_critica.fill = critica_fill
 
         # Ajustar larguras
-        ws.column_dimensions['A'].width = 12
-        ws.column_dimensions['B'].width = 40
-        ws.column_dimensions['C'].width = 20
-        ws.column_dimensions['D'].width = 10
-        ws.column_dimensions['E'].width = 25
-        ws.column_dimensions['F'].width = 18
-        ws.column_dimensions['G'].width = 15
+        ws.column_dimensions['A'].width = 10
+        ws.column_dimensions['B'].width = 8
+        ws.column_dimensions['C'].width = 12
+        ws.column_dimensions['D'].width = 12
+        ws.column_dimensions['E'].width = 40
+        ws.column_dimensions['F'].width = 25
+        ws.column_dimensions['G'].width = 18
         ws.column_dimensions['H'].width = 12
         ws.column_dimensions['I'].width = 12
         ws.column_dimensions['J'].width = 15

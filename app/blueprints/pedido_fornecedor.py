@@ -1192,8 +1192,9 @@ def api_pedido_fornecedor_integrado_exportar():
             codigos_dig = {str(row[0]): str(row[1]) for row in cursor_dig.fetchall()}
             cursor_dig.close()
             conn_dig.close()
-        except Exception:
-            pass  # Tabela pode nao existir ainda
+            print(f"[EXPORT] Codigos DIG carregados: {len(codigos_dig)} registros")
+        except Exception as e:
+            print(f"[EXPORT] Erro ao carregar codigos DIG: {e}")
 
         headers = [
             'Cod Filial', 'Filial', 'Cod Item', 'Cod DIG', 'Descricao Item',
@@ -1214,17 +1215,32 @@ def api_pedido_fornecedor_integrado_exportar():
             x.get('cnpj_fornecedor', '') or ''
         ))
 
+        # DEBUG: mostrar primeiro item para verificar estrutura
+        if itens_ordenados:
+            primeiro = itens_ordenados[0]
+            print(f"[EXPORT] Primeiro item - cod_loja: {primeiro.get('cod_loja')} (tipo: {type(primeiro.get('cod_loja')).__name__})")
+            print(f"[EXPORT] Primeiro item - codigo: {primeiro.get('codigo')} (tipo: {type(primeiro.get('codigo')).__name__})")
+
         for row_idx, item in enumerate(itens_ordenados, start=2):
-            cod_loja = item.get('cod_loja', '')
-            ws_itens.cell(row=row_idx, column=1, value=cod_loja).border = border
+            cod_loja = item.get('cod_loja', 0)
+            # Garantir que cod_loja e inteiro (pode vir como numpy.int64 ou string)
+            try:
+                cod_loja_int = int(cod_loja) if cod_loja else 0
+            except (ValueError, TypeError):
+                cod_loja_int = 0
+            ws_itens.cell(row=row_idx, column=1, value=cod_loja_int).border = border
             # Nome abreviado da filial
-            nome_abrev = NOMES_FILIAIS.get(cod_loja, '') if isinstance(cod_loja, int) else ''
+            nome_abrev = NOMES_FILIAIS.get(cod_loja_int, '')
             ws_itens.cell(row=row_idx, column=2, value=nome_abrev).border = border
             cod_item = str(item.get('codigo', ''))
             ws_itens.cell(row=row_idx, column=3, value=cod_item).border = border
             # Codigo DIG
             cod_dig = codigos_dig.get(cod_item, 'N/D')
             ws_itens.cell(row=row_idx, column=4, value=cod_dig).border = border
+
+            # DEBUG: mostrar primeiros 3 itens
+            if row_idx <= 4:
+                print(f"[EXPORT] Item {row_idx-1}: cod_loja={cod_loja_int}, filial={nome_abrev}, codigo={cod_item}, dig={cod_dig}")
             ws_itens.cell(row=row_idx, column=5, value=item.get('descricao', '')[:60]).border = border
             ws_itens.cell(row=row_idx, column=6, value=item.get('cnpj_fornecedor', item.get('codigo_fornecedor', ''))).border = border
             ws_itens.cell(row=row_idx, column=7, value=item.get('nome_fornecedor', '')).border = border

@@ -247,9 +247,12 @@ def api_transferencias_exportar():
 
         for row_idx, o in enumerate(oportunidades, start=2):
             # Codigo e nome abreviado da loja destino (primeiras colunas)
-            cod_destino = o.get('cod_loja_destino', 0)
+            # NOTA: A tabela usa 'loja_destino', nao 'cod_loja_destino'
+            cod_destino = o.get('loja_destino', 0)
+            if cod_destino is None:
+                cod_destino = 0
             ws.cell(row=row_idx, column=1, value=cod_destino).border = border
-            nome_destino_abrev = NOMES_FILIAIS.get(cod_destino, '') if isinstance(cod_destino, int) else ''
+            nome_destino_abrev = NOMES_FILIAIS.get(int(cod_destino), '') if cod_destino else ''
             ws.cell(row=row_idx, column=2, value=nome_destino_abrev).border = border
             cod_produto = str(o.get('cod_produto', ''))
             ws.cell(row=row_idx, column=3, value=cod_produto).border = border
@@ -259,9 +262,12 @@ def api_transferencias_exportar():
             ws.cell(row=row_idx, column=5, value=o.get('descricao_produto', '')).border = border
             ws.cell(row=row_idx, column=6, value=o.get('curva_abc', '')).border = border
             # Codigo e nome abreviado da loja origem
-            cod_origem = o.get('cod_loja_origem', 0)
+            # NOTA: A tabela usa 'loja_origem', nao 'cod_loja_origem'
+            cod_origem = o.get('loja_origem', 0)
+            if cod_origem is None:
+                cod_origem = 0
             ws.cell(row=row_idx, column=7, value=cod_origem).border = border
-            nome_origem_abrev = NOMES_FILIAIS.get(cod_origem, '') if isinstance(cod_origem, int) else ''
+            nome_origem_abrev = NOMES_FILIAIS.get(int(cod_origem), '') if cod_origem else ''
             ws.cell(row=row_idx, column=8, value=nome_origem_abrev).border = border
             ws.cell(row=row_idx, column=9, value=o.get('estoque_origem', 0)).border = border
             ws.cell(row=row_idx, column=10, value=round(o.get('cobertura_origem_dias', 0), 1)).border = border

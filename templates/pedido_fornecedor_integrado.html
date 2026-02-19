@@ -895,7 +895,7 @@
                         <div class="card-header">
                             <h3>Pedidos por Fornecedor</h3>
                             <div style="display: flex; gap: 8px; align-items: center;">
-                                <a href="/transferencias" id="btnVerTransferencias" style="display: none; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 8px 16px; font-size: 0.85em; border-radius: 6px; text-decoration: none; font-weight: 500; transition: transform 0.2s;">
+                                <a href="#" id="btnVerTransferencias" onclick="abrirPopupTransferencias(); return false;" style="display: none; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 8px 16px; font-size: 0.85em; border-radius: 6px; text-decoration: none; font-weight: 500; transition: transform 0.2s; cursor: pointer;">
                                     🔄 Ver Transferências
                                 </a>
                                 <button id="btnExportarTodos" onclick="exportarTodos()" style="background: #059669; color: white; padding: 8px 16px; font-size: 0.85em; border-radius: 6px; border: none; cursor: pointer; font-weight: 500;">
@@ -925,6 +925,19 @@
     <script>
         let dadosPedidoAtual = null;
         let diasTransferenciaGlobal = 10; // Valor padrao
+
+        // Abre a pagina de transferencias em uma nova janela popup
+        function abrirPopupTransferencias() {
+            const largura = 1200;
+            const altura = 800;
+            const esquerda = (screen.width - largura) / 2;
+            const topo = (screen.height - altura) / 2;
+            window.open(
+                '/transferencias',
+                'transferencias_popup',
+                `width=${largura},height=${altura},left=${esquerda},top=${topo},scrollbars=yes,resizable=yes`
+            );
+        }
 
         document.addEventListener('DOMContentLoaded', async function() {
             await carregarFiltros();
@@ -1429,7 +1442,7 @@
             if (agregacao.fornecedores?.length) {
                 agregacao.fornecedores.forEach((f, idx) => {
                     const btnTransfHtml = qtdSkusComTransf > 0 ? `
-                        <a href="/transferencias" class="btn-sm btn-transf-forn">
+                        <a href="#" onclick="abrirPopupTransferencias(); return false;" class="btn-sm btn-transf-forn" style="cursor: pointer;">
                             ${qtdSkusComTransf} SKUs c/ transf.
                         </a>
                     ` : '';
