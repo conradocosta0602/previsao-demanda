@@ -1615,7 +1615,7 @@
                             <th style="width: 50px; text-align: center;">ABC</th>
                             <th style="width: 80px; text-align: center;">Status</th>
                             <th class="col-num">Estoque</th>
-                            <th class="col-num">Transito</th>
+                            <th class="col-num">Pendente + Transito</th>
                             <th style="width: 100px;">Cobertura</th>
                             <th class="col-num">Demanda Mensal</th>
                             <th class="col-num">Pedido</th>
@@ -1908,6 +1908,7 @@
                         quantidade_pedido: 0,
                         valor_pedido: 0,
                         estoque_total: 0,
+                        transito_total: 0,
                         demanda_total: 0,
                         // Lojas de origem (onde o item sera vendido)
                         lojas_origem: [],
@@ -1930,6 +1931,7 @@
                 itensAgregados[chaveAgregacao].quantidade_pedido += (item.quantidade_pedido || 0);
                 itensAgregados[chaveAgregacao].valor_pedido += (item.valor_pedido || 0);
                 itensAgregados[chaveAgregacao].estoque_total += (item.estoque_atual || item.estoque_efetivo || 0);
+                itensAgregados[chaveAgregacao].transito_total += (item.estoque_transito || 0);
                 itensAgregados[chaveAgregacao].demanda_total += (item.demanda_prevista_diaria || item.demanda_diaria || 0);
 
                 if (item.ruptura_iminente || item._status === 'ruptura') {
@@ -2217,6 +2219,7 @@
                                             <th style="width: 50px; text-align: center;">ABC</th>
                                             <th style="width: 120px; text-align: center;">Lojas Origem</th>
                                             <th class="col-num">Estoque Total</th>
+                                            <th class="col-num">Pendente + Transito</th>
                                             <th class="col-num" title="Demanda mensal media por loja">Dem. Mensal/Loja</th>
                                             <th class="col-num">Qtd Pedido</th>
                                             <th class="col-valor">Valor</th>
@@ -2328,6 +2331,7 @@
                     <td style="text-align: center;"><span class="badge badge-${item.curva_abc.toLowerCase()}">${item.curva_abc}</span></td>
                     <td style="text-align: center;">${badgeLojas}</td>
                     <td class="col-num">${item.estoque_total.toLocaleString('pt-BR')}</td>
+                    <td class="col-num">${item.transito_total > 0 ? item.transito_total.toLocaleString('pt-BR') : '-'}</td>
                     <td class="col-num" title="Media mensal por loja (${item.lojas_origem.length} lojas). Hover nas lojas para ver demanda de cada uma.">${((item.demanda_total / item.lojas_origem.length) * 30).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                     <td class="col-num">${item._status === 'ok' || item._status === 'bloqueado' ? '-' : qtdCell}</td>
                     <td class="col-valor">${item._status === 'ok' || item._status === 'bloqueado' ? '-' : `R$ ${item.valor_pedido.toLocaleString('pt-BR', {minimumFractionDigits: 0})}`}</td>
