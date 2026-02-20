@@ -90,6 +90,7 @@ class ValidadorConformidade:
             ('V24', 'Grupos Regionais Transferencia', self._verificar_grupos_regionais_transferencia),
             ('V25', 'Regras Transferencia Otimizada', self._verificar_regras_transferencia_v611),
             ('V26', 'Limitador Cobertura 90d TSB', self._verificar_limitador_cobertura_e_rede),
+            ('V27', 'Completude Dados Embalagem', self._verificar_completude_embalagem),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -2152,6 +2153,75 @@ class ValidadorConformidade:
             return 'falha', f'Funcao nao encontrada: {str(e)}', {'erro': str(e)}
         except Exception as e:
             return 'falha', f'Erro ao verificar V26: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_completude_embalagem(self) -> Tuple[str, str, Dict]:
+        """
+        V27: Verifica que todos os fornecedores ativos tem dados de embalagem cadastrados.
+
+        Detecta fornecedores com itens sem multiplo de caixa na tabela
+        embalagem_arredondamento, o que causa pedidos sem arredondamento.
+        """
+        try:
+            if not self.conn:
+                return 'falha', 'Sem conexao com banco', {}
+
+            import pandas as pd
+            cursor = self.conn.cursor()
+
+            # Buscar cobertura de embalagem por fornecedor
+            cursor.execute("""
+                SELECT
+                    p.nome_fornecedor,
+                    COUNT(DISTINCT p.cod_produto) as total_itens,
+                    COUNT(DISTINCT e.codigo) as itens_com_embalagem
+                FROM cadastro_produtos_completo p
+                LEFT JOIN embalagem_arredondamento e ON p.cod_produto::integer = e.codigo
+                WHERE p.ativo = TRUE
+                AND p.nome_fornecedor IS NOT NULL
+                AND TRIM(p.nome_fornecedor) != ''
+                GROUP BY p.nome_fornecedor
+                HAVING COUNT(DISTINCT p.cod_produto) >= 5
+                ORDER BY COUNT(DISTINCT p.cod_produto) DESC
+            """)
+
+            fornecedores_sem_embalagem = []
+            total_fornecedores = 0
+            total_itens_sem = 0
+
+            for row in cursor.fetchall():
+                nome, total, com_emb = row
+                total_fornecedores += 1
+                cobertura = (com_emb / total * 100) if total > 0 else 0
+
+                if cobertura < 80:  # Menos de 80% dos itens com embalagem
+                    fornecedores_sem_embalagem.append({
+                        'fornecedor': nome,
+                        'total_itens': total,
+                        'com_embalagem': com_emb,
+                        'sem_embalagem': total - com_emb,
+                        'cobertura_pct': round(cobertura, 1)
+                    })
+                    total_itens_sem += (total - com_emb)
+
+            cursor.close()
+
+            detalhes = {
+                'total_fornecedores_verificados': total_fornecedores,
+                'fornecedores_incompletos': len(fornecedores_sem_embalagem),
+                'total_itens_sem_embalagem': total_itens_sem,
+                'fornecedores': fornecedores_sem_embalagem[:10]  # Top 10
+            }
+
+            if not fornecedores_sem_embalagem:
+                return 'ok', f'Todos os {total_fornecedores} fornecedores tem embalagem completa (>=80%)', detalhes
+            else:
+                nomes = ', '.join(f['fornecedor'] for f in fornecedores_sem_embalagem[:3])
+                return 'alerta', f'{len(fornecedores_sem_embalagem)} fornecedores com embalagem incompleta ({total_itens_sem} itens): {nomes}', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V27: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

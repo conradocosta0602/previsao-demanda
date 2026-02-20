@@ -4,8 +4,9 @@ Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (C
 
 **Novidades v6.12 - Limitador de Cobertura TSB (Fev/2026):**
 - **Limitador Cobertura 90d TSB**: Itens com demanda intermitente (TSB) tem pedido limitado a 90 dias de cobertura por loja
-- **21 Verificacoes de Conformidade**: V26 adicionada para validar limitador TSB
+- **22 Verificacoes de Conformidade**: V26 (limitador TSB) e V27 (completude embalagem)
 - **Protecao contra excesso**: Evita pedidos excessivos em itens de baixo giro com estoque existente
+- **V27 - Alerta Embalagem**: Detecta fornecedores sem dados de multiplo de caixa (causa pedidos sem arredondamento)
 
 **Novidades v5.7 - Fator de Tendencia YoY e Botao Salvar Demanda (Fev/2026):**
 - **Fator de Tendencia YoY**: Corrige subestimacao em fornecedores com crescimento historico (ex: ZAGONEL +29% real, modelo previa -18% → agora preve +20%)
@@ -637,7 +638,8 @@ CREATE TABLE parametros_gondola (
 - **Protecao contra excesso**: Para itens de baixo giro, evita acumulo desnecessario de estoque
 - **Arredondamento para baixo**: Quando limitado, arredonda para baixo no multiplo de caixa (nao ultrapassa 90d)
 - **Minimo garantido**: Garante minimo de 1 caixa quando ha necessidade real (evita bloqueio total)
-- **21 Verificacoes de Conformidade**: Nova verificacao V26 com 4 testes de limitador
+- **22 Verificacoes de Conformidade**: V26 (4 testes limitador) e V27 (completude embalagem)
+- **V27 - Completude Embalagem**: Alerta automatico quando fornecedores nao tem dados de multiplo de caixa
 
 ### v6.11 (Fevereiro 2026)
 

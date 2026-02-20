@@ -116,12 +116,13 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**21 verificacoes** de conformidade com a metodologia documentada:
+**22 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
 - V20: Arredondamento Inteligente para Multiplo de Caixa
 - V26: Limitador de Cobertura 90 dias para itens TSB
+- V27: Completude de dados de embalagem por fornecedor
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -556,6 +557,7 @@ DB_PORT=5432
 - V24: Transferencias respeitam grupos regionais - PE/PB/RN (lojas 1,2,4,6,7,8) e BA/SE (lojas 3,5,9) (v6.10)
 - V25: Transferencias otimizadas - doador >90d, faixas prioridade, multiplo embalagem, matching 1:1 (v6.11)
 - V26: Limitador de cobertura 90 dias para itens TSB - evita excesso em demanda intermitente (v6.12)
+- V27: Completude de dados de embalagem - alerta fornecedores sem multiplo de caixa cadastrado (v6.12)
 
 ## Documentacao Complementar
 

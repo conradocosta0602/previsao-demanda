@@ -55,9 +55,9 @@ docs/
 
 ---
 
-## Verificacoes de Conformidade (V01-V26)
+## Verificacoes de Conformidade (V01-V27)
 
-O sistema possui 21 verificacoes automaticas de conformidade:
+O sistema possui 22 verificacoes automaticas de conformidade:
 
 | Codigo | Verificacao |
 |--------|-------------|
@@ -76,6 +76,7 @@ O sistema possui 21 verificacoes automaticas de conformidade:
 | V13-V14 | Limites de variacao |
 | V20-V25 | Validacoes de transferencias e arredondamento |
 | V26 | Limitador de cobertura 90d para itens TSB |
+| V27 | Completude de dados de embalagem por fornecedor |
 
 ---
 
