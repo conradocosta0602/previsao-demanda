@@ -296,6 +296,43 @@ Execute o script `database/migration_v5.sql` para criar as tabelas necessarias:
 - `situacao_compra_regras` - Regras de bloqueio
 - `situacao_compra_itens` - Itens bloqueados
 
+## Limitador de Cobertura 90 dias - Itens TSB (v6.12)
+
+Itens com metodo de previsao **TSB** (Teunter-Syntetos-Babai) sao itens de demanda intermitente - vendas esporadicas e imprevisíveis. Para esses itens, o sistema aplica um limitador de cobertura pos-pedido de 90 dias por loja.
+
+### Problema Resolvido
+
+Itens TSB com baixa demanda podem gerar pedidos desproporcionais. Exemplo:
+- Item vende 17 unidades em 3 anos (demanda intermitente)
+- Rateio proporcional concentra 71% da demanda em 1 loja
+- Sem limitador: pedido de 42 unidades para loja com 20 em estoque = 8+ meses de cobertura
+
+### Como Funciona
+
+```
+1. Calcular pedido normalmente (formula padrao)
+2. Se item e TSB:
+   - cobertura_pos = (estoque_efetivo + quantidade_pedido) / demanda_diaria
+   - Se cobertura_pos > 90 dias:
+     - qtd_max = 90 * demanda_diaria - estoque_efetivo
+     - Arredondar para BAIXO no multiplo de caixa
+     - Minimo: 1 caixa (se ha necessidade real)
+3. Se item NAO e TSB: sem limitador (comportamento normal)
+```
+
+### Campos no Resultado
+
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| `cobertura_limitada` | bool | Se o limitador atuou |
+| `quantidade_original_antes_limite` | int | Quantidade antes do limitador |
+
+### Constante
+
+```python
+COBERTURA_MAXIMA_POS_PEDIDO = 90  # dias
+```
+
 ## Graceful Degradation
 
 O sistema funciona mesmo sem as tabelas novas:

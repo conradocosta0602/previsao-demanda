@@ -55,9 +55,9 @@ docs/
 
 ---
 
-## Verificacoes de Conformidade (V01-V25)
+## Verificacoes de Conformidade (V01-V26)
 
-O sistema possui 20 verificacoes automaticas de conformidade:
+O sistema possui 21 verificacoes automaticas de conformidade:
 
 | Codigo | Verificacao |
 |--------|-------------|
@@ -75,6 +75,7 @@ O sistema possui 20 verificacoes automaticas de conformidade:
 | V12 | Fator de tendencia YoY |
 | V13-V14 | Limites de variacao |
 | V20-V25 | Validacoes de transferencias e arredondamento |
+| V26 | Limitador de cobertura 90d para itens TSB |
 
 ---
 

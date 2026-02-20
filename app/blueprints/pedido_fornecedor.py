@@ -417,6 +417,22 @@ def api_pedido_fornecedor_integrado():
 
                 if is_pedido_multiloja:
                     num_lojas = len(lojas_demanda)
+
+                    # V26: Detectar metodo de previsao para aplicar limitador de cobertura (apenas TSB)
+                    metodo_produto = None
+                    for loja_pre in lojas_demanda:
+                        proporcao_pre = cache_proporcoes.get((str(codigo), loja_pre))
+                        _, _, meta_pre = obter_demanda_do_cache(
+                            cache_demanda_global, str(codigo), cod_empresa=loja_pre,
+                            num_lojas=num_lojas, proporcao_loja=proporcao_pre
+                        )
+                        if metodo_produto is None and meta_pre.get('metodo_usado'):
+                            metodo_produto = meta_pre.get('metodo_usado')
+                            break  # Metodo e o mesmo para todas as lojas
+
+                    # V26: Limitador de cobertura 90d apenas para itens TSB (demanda intermitente)
+                    is_tsb = metodo_produto and metodo_produto.lower() == 'tsb'
+
                     for loja_cod in lojas_demanda:
                         loja_nome = mapa_nomes_lojas.get(loja_cod, f"Loja {loja_cod}")
 
@@ -451,7 +467,8 @@ def api_pedido_fornecedor_integrado():
                             cobertura_dias=cobertura_dias,
                             lead_time_dias=lead_time_forn,
                             ciclo_pedido_dias=ciclo_pedido_forn,
-                            pedido_minimo_valor=pedido_min_forn
+                            pedido_minimo_valor=pedido_min_forn,
+                            aplicar_limitador_cobertura=is_tsb
                         )
 
                         if 'erro' in resultado:

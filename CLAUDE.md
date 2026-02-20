@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.11** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.12** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -84,6 +84,14 @@ ES = Z × Sigma × sqrt(Lead Time Base)
   - Demanda: `demanda * proporcao_loja`
   - Desvio: `desvio * sqrt(proporcao_loja)` (propriedade estatistica da variancia)
 
+**Limitador de Cobertura 90 dias (TSB)** (v6.12):
+- Aplica-se APENAS a itens com metodo TSB (demanda intermitente)
+- Se cobertura pos-pedido > 90 dias na loja, reduz quantidade do pedido
+- Quantidade maxima: `COBERTURA_MAXIMA_POS_PEDIDO * demanda_diaria - estoque_efetivo`
+- Arredonda para BAIXO no multiplo de caixa (para nao ultrapassar 90 dias)
+- Garante minimo de 1 caixa quando ha necessidade real
+- Constante: `COBERTURA_MAXIMA_POS_PEDIDO = 90`
+
 **Situacoes que BLOQUEIAM pedido automatico**:
 - NC (Nao Comprar)
 - FL (Fora de Linha)
@@ -108,11 +116,12 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**15 verificacoes** de conformidade com a metodologia documentada:
+**21 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
 - V20: Arredondamento Inteligente para Multiplo de Caixa
+- V26: Limitador de Cobertura 90 dias para itens TSB
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -546,6 +555,7 @@ DB_PORT=5432
 - V23: Correcao demanda sazonal no pedido - usar demanda_prevista/30 em vez de demanda_diaria_base (v6.9)
 - V24: Transferencias respeitam grupos regionais - PE/PB/RN (lojas 1,2,4,6,7,8) e BA/SE (lojas 3,5,9) (v6.10)
 - V25: Transferencias otimizadas - doador >90d, faixas prioridade, multiplo embalagem, matching 1:1 (v6.11)
+- V26: Limitador de cobertura 90 dias para itens TSB - evita excesso em demanda intermitente (v6.12)
 
 ## Documentacao Complementar
 
@@ -561,4 +571,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.11)
+**Ultima atualizacao**: Fevereiro 2026 (v6.12)

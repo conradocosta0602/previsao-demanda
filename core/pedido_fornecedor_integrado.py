@@ -51,6 +51,10 @@ DELAY_OPERACIONAL_DIAS = 5
 PERCENTUAL_MINIMO_ARREDONDAMENTO = 0.50  # 50% - padrão literatura (não arredonda se < 50% do múltiplo)
 MARGEM_SEGURANCA_PROXIMO_CICLO = 1.20    # 20% margem - verifica se aguenta até próximo ciclo
 
+# Limitador de cobertura pós-pedido (V26)
+# Evita pedidos excessivos que geram cobertura muito alta, especialmente em itens de baixo giro
+COBERTURA_MAXIMA_POS_PEDIDO = 90  # dias - limite máximo de cobertura após receber o pedido
+
 
 # ==============================================================================
 # FUNÇÕES AUXILIARES
@@ -158,7 +162,8 @@ def calcular_quantidade_pedido(
     multiplo_caixa: int = 1,
     demanda_diaria: float = 0,
     lead_time: int = 0,
-    ciclo_pedido: int = CICLO_PEDIDO_DIAS
+    ciclo_pedido: int = CICLO_PEDIDO_DIAS,
+    aplicar_limitador_cobertura: bool = False
 ) -> Dict:
     """
     Calcula a quantidade a pedir com arredondamento inteligente para múltiplo de caixa.
@@ -205,6 +210,15 @@ def calcular_quantidade_pedido(
     # Se não tem múltiplo ou múltiplo = 1, apenas arredonda para cima
     if multiplo_caixa <= 1:
         quantidade_pedido = int(np.ceil(necessidade_bruta))
+        # V26: Limitador de cobertura pós-pedido (apenas para itens TSB)
+        cobertura_limitada = False
+        quantidade_original = quantidade_pedido
+        if aplicar_limitador_cobertura and demanda_diaria > 0 and quantidade_pedido > 0:
+            cobertura_pos = (estoque_efetivo + quantidade_pedido) / demanda_diaria
+            if cobertura_pos > COBERTURA_MAXIMA_POS_PEDIDO:
+                qtd_maxima = max(0, COBERTURA_MAXIMA_POS_PEDIDO * demanda_diaria - estoque_efetivo)
+                quantidade_pedido = max(1, int(qtd_maxima))
+                cobertura_limitada = True
         return {
             'quantidade_pedido': quantidade_pedido,
             'numero_caixas': quantidade_pedido,
@@ -213,7 +227,10 @@ def calcular_quantidade_pedido(
             'demanda_periodo': round(demanda_periodo, 0),
             'deve_pedir': True,
             'ajustado_multiplo': False,
-            'arredondamento_decisao': 'sem_multiplo'
+            'arredondamento_decisao': 'sem_multiplo',
+            'cobertura_limitada': cobertura_limitada,
+            'quantidade_original_antes_limite': quantidade_original,
+            'cobertura_maxima_dias': COBERTURA_MAXIMA_POS_PEDIDO
         }
 
     # Calcular número de caixas cheias e fração restante
@@ -273,6 +290,28 @@ def calcular_quantidade_pedido(
     quantidade_pedido = numero_caixas * multiplo_caixa
     ajustado = quantidade_pedido != int(np.ceil(necessidade_bruta))
 
+    # V26: Limitador de cobertura pós-pedido (máximo 90 dias, apenas itens TSB)
+    # Evita pedidos excessivos que geram cobertura muito alta
+    cobertura_limitada = False
+    quantidade_original = quantidade_pedido
+    if aplicar_limitador_cobertura and demanda_diaria > 0 and quantidade_pedido > 0:
+        cobertura_pos = (estoque_efetivo + quantidade_pedido) / demanda_diaria
+        if cobertura_pos > COBERTURA_MAXIMA_POS_PEDIDO:
+            # Recalcular quantidade para atingir no máximo 90 dias de cobertura
+            qtd_maxima = max(0, COBERTURA_MAXIMA_POS_PEDIDO * demanda_diaria - estoque_efetivo)
+            # Arredondar para BAIXO (não ultrapassar 90 dias)
+            if multiplo_caixa > 1:
+                qtd_limitada = arredondar_para_multiplo(qtd_maxima, multiplo_caixa, 'baixo')
+            else:
+                qtd_limitada = int(qtd_maxima)
+            # Garantir mínimo de 1 caixa se há necessidade real
+            if qtd_limitada == 0 and necessidade_bruta > 0:
+                qtd_limitada = multiplo_caixa if multiplo_caixa > 1 else 1
+            quantidade_pedido = qtd_limitada
+            numero_caixas = quantidade_pedido // multiplo_caixa if multiplo_caixa > 1 else quantidade_pedido
+            cobertura_limitada = True
+            ajustado = True
+
     return {
         'quantidade_pedido': quantidade_pedido,
         'numero_caixas': numero_caixas,
@@ -285,7 +324,10 @@ def calcular_quantidade_pedido(
         'arredondamento_decisao': decisao,
         'fracao_caixa': round(fracao_caixa, 3),
         'percentual_minimo': PERCENTUAL_MINIMO_ARREDONDAMENTO,
-        'arredondou_para_cima': arredondar_para_cima
+        'arredondou_para_cima': arredondar_para_cima,
+        'cobertura_limitada': cobertura_limitada,
+        'quantidade_original_antes_limite': quantidade_original,
+        'cobertura_maxima_dias': COBERTURA_MAXIMA_POS_PEDIDO
     }
 
 
@@ -1116,7 +1158,8 @@ class PedidoFornecedorIntegrado:
         cobertura_dias: Optional[int] = None,
         lead_time_dias: Optional[int] = None,
         ciclo_pedido_dias: Optional[int] = None,
-        pedido_minimo_valor: Optional[float] = None
+        pedido_minimo_valor: Optional[float] = None,
+        aplicar_limitador_cobertura: bool = False
     ) -> Dict:
         """
         Processa um item individual calculando necessidade de pedido.
@@ -1130,6 +1173,7 @@ class PedidoFornecedorIntegrado:
             lead_time_dias: Lead time do fornecedor (se None, busca do cadastro ou usa 15)
             ciclo_pedido_dias: Ciclo de pedido do fornecedor (se None, usa padrão)
             pedido_minimo_valor: Valor mínimo do pedido (para validação posterior)
+            aplicar_limitador_cobertura: V26 - limitar cobertura pos-pedido a 90 dias (itens TSB)
 
         Returns:
             Dicionário com análise completa do item
@@ -1298,6 +1342,7 @@ class PedidoFornecedorIntegrado:
         demanda_periodo = demanda_periodo_base * fator_eventos
 
         # 9. Calcular quantidade a pedir (com arredondamento inteligente)
+        # V26: Limitador de cobertura pós-pedido de 90 dias (apenas itens TSB)
         pedido_info = calcular_quantidade_pedido(
             demanda_periodo=demanda_periodo,
             estoque_disponivel=estoque['estoque_disponivel'],
@@ -1306,12 +1351,13 @@ class PedidoFornecedorIntegrado:
             multiplo_caixa=parametros['multiplo_caixa'],
             demanda_diaria=previsao_diaria,
             lead_time=lead_time,
-            ciclo_pedido=ciclo_pedido
+            ciclo_pedido=ciclo_pedido,
+            aplicar_limitador_cobertura=aplicar_limitador_cobertura
         )
 
         # DEBUG: Logar calculos de cobertura para itens com pedido
         if pedido_info['quantidade_pedido'] > 0 and cobertura_dias and cobertura_dias >= 60:
-            print(f"    [DEBUG CALC] Item {codigo} Emp {cod_empresa}: prev_diaria={previsao_diaria:.3f}, cobertura_dias={cobertura_dias}, demanda_periodo={demanda_periodo:.1f}, ES={es_info['estoque_seguranca']:.1f}, estoque={estoque['estoque_efetivo']:.1f}, necessidade={pedido_info['necessidade_bruta']:.1f}, qtd_pedido={pedido_info['quantidade_pedido']}")
+            print(f"    [DEBUG CALC] Item {codigo} Emp {cod_empresa}: prev_diaria={previsao_diaria:.3f}, cobertura_dias={cobertura_dias}, demanda_periodo={demanda_periodo:.1f}, ES={es_info['estoque_seguranca']:.1f}, estoque={estoque['estoque_efetivo']:.1f}, necessidade={pedido_info['necessidade_bruta']:.1f}, qtd_pedido={pedido_info['quantidade_pedido']}{' [COB_LIMITADA]' if pedido_info.get('cobertura_limitada') else ''}")
 
         # 10. Calcular valor do pedido (antes de calcular coberturas para usar CUE)
         valor_pedido = pedido_info['quantidade_pedido'] * preco_custo
@@ -1406,7 +1452,11 @@ class PedidoFornecedorIntegrado:
 
             # Alertas - usar valor sanitizado para comparacao
             'risco_ruptura': sanitizar_float(cobertura_atual, 999) < lead_time,
-            'ruptura_iminente': sanitizar_float(cobertura_atual, 999) < 3
+            'ruptura_iminente': sanitizar_float(cobertura_atual, 999) < 3,
+
+            # V26: Limitador de cobertura pós-pedido (itens TSB)
+            'cobertura_limitada': pedido_info.get('cobertura_limitada', False),
+            'quantidade_original_antes_limite': pedido_info.get('quantidade_original_antes_limite', 0)
         }
 
         # Adicionar informações da previsão semanal (se usada)

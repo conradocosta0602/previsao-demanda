@@ -1,12 +1,11 @@
-# Sistema de Demanda e Reabastecimento v6.11
+# Sistema de Demanda e Reabastecimento v6.12
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v6.11 - Padronizacao Excel e Validacao Conformidade (Fev/2026):**
-- **Colunas Padronizadas Excel**: Cod Filial, Filial (abreviado), Cod DIG em todos os exports
-- **20 Verificacoes de Conformidade**: Sistema completo de validacao metodologica (V01-V25)
-- **Transferencias Regionais**: Balanceamento automatico de estoque entre lojas do mesmo grupo
-- **Cronjob Diario 06:00**: Checklist automatico de conformidade com alertas por email
+**Novidades v6.12 - Limitador de Cobertura TSB (Fev/2026):**
+- **Limitador Cobertura 90d TSB**: Itens com demanda intermitente (TSB) tem pedido limitado a 90 dias de cobertura por loja
+- **21 Verificacoes de Conformidade**: V26 adicionada para validar limitador TSB
+- **Protecao contra excesso**: Evita pedidos excessivos em itens de baixo giro com estoque existente
 
 **Novidades v5.7 - Fator de Tendencia YoY e Botao Salvar Demanda (Fev/2026):**
 - **Fator de Tendencia YoY**: Corrige subestimacao em fornecedores com crescimento historico (ex: ZAGONEL +29% real, modelo previa -18% → agora preve +20%)
@@ -630,7 +629,17 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v6.11 (Fevereiro 2026) - ATUAL
+### v6.12 (Fevereiro 2026) - ATUAL
+
+**Limitador de Cobertura 90 dias para itens TSB:**
+
+- **V26 - Limitador Cobertura TSB**: Itens com metodo TSB (demanda intermitente) tem pedido limitado a no maximo 90 dias de cobertura pos-pedido por loja
+- **Protecao contra excesso**: Para itens de baixo giro, evita acumulo desnecessario de estoque
+- **Arredondamento para baixo**: Quando limitado, arredonda para baixo no multiplo de caixa (nao ultrapassa 90d)
+- **Minimo garantido**: Garante minimo de 1 caixa quando ha necessidade real (evita bloqueio total)
+- **21 Verificacoes de Conformidade**: Nova verificacao V26 com 4 testes de limitador
+
+### v6.11 (Fevereiro 2026)
 
 **Padronizacao Excel e Sistema de Conformidade:**
 
@@ -1019,8 +1028,8 @@ Para duvidas ou problemas:
 
 ---
 
-**Versao:** 6.11
+**Versao:** 6.12
 **Status:** Em Producao
-**Ultima Atualizacao:** 19 Fevereiro 2026
+**Ultima Atualizacao:** 20 Fevereiro 2026
 
 **Se este projeto foi util, considere dar uma estrela!**

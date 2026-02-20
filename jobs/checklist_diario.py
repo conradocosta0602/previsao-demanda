@@ -42,10 +42,25 @@ import argparse
 import smtplib
 import logging
 import json
+import numpy as np
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from pathlib import Path
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """Encoder JSON que converte tipos NumPy para tipos nativos Python."""
+    def default(self, obj):
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 # Adicionar pasta raiz ao path para imports
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -127,7 +142,7 @@ def salvar_resultado_banco(conn, resultado: dict, tipo: str = 'cronjob_diario'):
             resultado.get('verificacoes_ok', 0),
             resultado.get('verificacoes_falha', 0),
             resultado.get('verificacoes_alerta', 0),
-            json.dumps({'verificacoes': resultado.get('verificacoes', [])}),
+            json.dumps({'verificacoes': resultado.get('verificacoes', [])}, cls=NumpyEncoder),
             resultado.get('tempo_execucao_ms'),
             resultado.get('alerta_enviado', False),
             CONFIGURACAO_ALERTAS['email']['destinatarios'] if resultado.get('alerta_enviado') else None

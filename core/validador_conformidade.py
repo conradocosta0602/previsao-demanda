@@ -89,6 +89,7 @@ class ValidadorConformidade:
             ('V23', 'Demanda Sazonal no Pedido', self._verificar_demanda_sazonal_pedido),
             ('V24', 'Grupos Regionais Transferencia', self._verificar_grupos_regionais_transferencia),
             ('V25', 'Regras Transferencia Otimizada', self._verificar_regras_transferencia_v611),
+            ('V26', 'Limitador Cobertura 90d TSB', self._verificar_limitador_cobertura_e_rede),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -2025,6 +2026,132 @@ class ValidadorConformidade:
             return 'falha', f'Modulo nao encontrado: {str(e)}', {'erro': str(e)}
         except Exception as e:
             return 'falha', f'Erro ao verificar regras transferencia v6.11: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_limitador_cobertura_e_rede(self) -> Tuple[str, str, Dict]:
+        """
+        V26: Verifica o limitador de cobertura pos-pedido (90 dias) para itens TSB.
+
+        Testes:
+        1. Constante COBERTURA_MAXIMA_POS_PEDIDO = 90 existe
+        2. Limitador reduz pedido quando cobertura > 90 dias
+        3. Limitador NAO interfere quando cobertura <= 90 dias
+        4. Limitador com multiplo de caixa arredonda para baixo
+        """
+        try:
+            from core.pedido_fornecedor_integrado import (
+                calcular_quantidade_pedido,
+                COBERTURA_MAXIMA_POS_PEDIDO
+            )
+
+            resultados = []
+            todos_corretos = True
+
+            # Teste 1: Constante correta
+            teste_1_ok = COBERTURA_MAXIMA_POS_PEDIDO == 90
+            resultados.append({
+                'teste': 'COBERTURA_MAXIMA_POS_PEDIDO = 90',
+                'valor': COBERTURA_MAXIMA_POS_PEDIDO,
+                'correto': teste_1_ok
+            })
+            if not teste_1_ok:
+                todos_corretos = False
+
+            # Teste 2: Limitador reduz pedido quando cobertura > 90 dias (item TSB)
+            # Cenario: demanda_diaria=1, estoque=50, necessidade alta → pedido grande
+            # Sem limitador, pediria 60 (cobertura_pos = 110d). Com limitador, max 40 (cobertura_pos = 90d)
+            resultado_pedido = calcular_quantidade_pedido(
+                demanda_periodo=100,     # Precisa de 100 un no periodo
+                estoque_disponivel=50,   # Ja tem 50
+                estoque_transito=0,
+                estoque_seguranca=10,
+                multiplo_caixa=1,
+                demanda_diaria=1,
+                lead_time=30,
+                ciclo_pedido=7,
+                aplicar_limitador_cobertura=True  # TSB
+            )
+            # Necessidade bruta = 100 + 10 - 50 = 60
+            # Sem limitador: pediria 60 → cobertura_pos = (50+60)/1 = 110d > 90d
+            # Com limitador: max = 90*1 - 50 = 40 → cobertura_pos = (50+40)/1 = 90d
+            teste_2_ok = resultado_pedido['quantidade_pedido'] <= 40 and resultado_pedido.get('cobertura_limitada', False)
+            resultados.append({
+                'teste': 'Limitador reduz pedido (cobertura > 90d)',
+                'quantidade_pedido': resultado_pedido['quantidade_pedido'],
+                'cobertura_limitada': resultado_pedido.get('cobertura_limitada'),
+                'quantidade_original': resultado_pedido.get('quantidade_original_antes_limite'),
+                'correto': teste_2_ok
+            })
+            if not teste_2_ok:
+                todos_corretos = False
+
+            # Teste 3: Limitador NAO interfere quando cobertura <= 90 dias (item TSB)
+            resultado_normal = calcular_quantidade_pedido(
+                demanda_periodo=50,
+                estoque_disponivel=10,
+                estoque_transito=0,
+                estoque_seguranca=5,
+                multiplo_caixa=1,
+                demanda_diaria=1,
+                lead_time=30,
+                ciclo_pedido=7,
+                aplicar_limitador_cobertura=True  # TSB, mas cobertura < 90d
+            )
+            # Necessidade bruta = 50 + 5 - 10 = 45
+            # cobertura_pos = (10+45)/1 = 55d < 90d → NAO limita
+            teste_3_ok = resultado_normal['quantidade_pedido'] == 45 and not resultado_normal.get('cobertura_limitada', False)
+            resultados.append({
+                'teste': 'Limitador NAO interfere (cobertura <= 90d)',
+                'quantidade_pedido': resultado_normal['quantidade_pedido'],
+                'cobertura_limitada': resultado_normal.get('cobertura_limitada'),
+                'correto': teste_3_ok
+            })
+            if not teste_3_ok:
+                todos_corretos = False
+
+            # Teste 4: Limitador com multiplo de caixa arredonda para baixo (item TSB)
+            resultado_multiplo = calcular_quantidade_pedido(
+                demanda_periodo=100,
+                estoque_disponivel=50,
+                estoque_transito=0,
+                estoque_seguranca=10,
+                multiplo_caixa=12,
+                demanda_diaria=1,
+                lead_time=30,
+                ciclo_pedido=7,
+                aplicar_limitador_cobertura=True  # TSB
+            )
+            # qtd_max = 90*1 - 50 = 40 → arredonda baixo para multiplo 12 → 36 (3 caixas)
+            teste_4_ok = resultado_multiplo['quantidade_pedido'] % 12 == 0 and resultado_multiplo.get('cobertura_limitada', False)
+            cobertura_pos_4 = (50 + resultado_multiplo['quantidade_pedido']) / 1
+            teste_4_ok = teste_4_ok and cobertura_pos_4 <= 90
+            resultados.append({
+                'teste': 'Limitador com multiplo caixa (arredonda baixo)',
+                'quantidade_pedido': resultado_multiplo['quantidade_pedido'],
+                'multiplo_caixa': 12,
+                'cobertura_pos': cobertura_pos_4,
+                'correto': teste_4_ok
+            })
+            if not teste_4_ok:
+                todos_corretos = False
+
+            testes_ok = sum(1 for r in resultados if r['correto'])
+            total_testes = len(resultados)
+
+            if todos_corretos:
+                return 'ok', f'Limitador cobertura 90d para TSB correto ({testes_ok}/{total_testes} testes)', {
+                    'testes': resultados
+                }
+            else:
+                return 'falha', f'Limitador cobertura TSB com falhas ({testes_ok}/{total_testes} testes)', {
+                    'testes': resultados
+                }
+
+        except ImportError as e:
+            return 'falha', f'Funcao nao encontrada: {str(e)}', {'erro': str(e)}
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V26: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 
