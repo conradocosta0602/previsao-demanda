@@ -13,6 +13,7 @@ Características:
 - Destino configurável (Lojas ou CD)
 """
 
+import math
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
@@ -151,6 +152,63 @@ def calcular_estoque_seguranca(
         'nivel_servico': nivel_servico,
         'z_score': round(z_score, 2),
         'curva_abc': curva
+    }
+
+
+def calcular_es_pooling_cd(
+    desvios_por_loja: List[float],
+    lead_time_fornecedor: int,
+    curva_abc: str = 'B'
+) -> Dict:
+    """
+    Calcula Estoque de Segurança do CD com efeito risk pooling.
+    (Chopra & Meindl, 2019; Silver, Pyke & Peterson, 2017)
+
+    Quando múltiplas lojas são abastecidas por um CD centralizado,
+    a variabilidade total é menor que a soma das variabilidades individuais.
+
+    Fórmula: ES_cd = Z × σ_total × √LT
+    Onde: σ_total = √(Σ σ²_loja)  (efeito pooling)
+
+    Args:
+        desvios_por_loja: Lista com desvio padrão diário de cada loja
+        lead_time_fornecedor: Lead time do fornecedor em dias (sem delay operacional)
+        curva_abc: Classificação ABC do item
+
+    Returns:
+        Dicionário com ES do CD e detalhes do cálculo
+    """
+    # Filtrar desvios válidos
+    desvios_validos = [s for s in desvios_por_loja if s and s > 0]
+
+    if not desvios_validos:
+        return {
+            'es_cd': 0,
+            'sigma_total': 0,
+            'z_score': 0,
+            'lead_time_usado': lead_time_fornecedor,
+            'num_lojas': len(desvios_por_loja)
+        }
+
+    # σ_total = √(Σ σ²_loja) — efeito pooling
+    sigma_total = math.sqrt(sum(s ** 2 for s in desvios_validos))
+
+    # Z-score baseado na curva ABC (mesma tabela do ES por loja)
+    curva = curva_abc.upper() if curva_abc else 'B'
+    if curva not in NIVEL_SERVICO_ABC:
+        curva = 'B'
+    z_score = stats.norm.ppf(NIVEL_SERVICO_ABC[curva])
+
+    # ES_cd = Z × σ_total × √LT
+    lt = max(lead_time_fornecedor, 1)
+    es_cd = z_score * sigma_total * math.sqrt(lt)
+
+    return {
+        'es_cd': round(max(0, es_cd), 2),
+        'sigma_total': round(sigma_total, 4),
+        'z_score': round(z_score, 2),
+        'lead_time_usado': lt,
+        'num_lojas': len(desvios_por_loja)
     }
 
 
@@ -1449,6 +1507,9 @@ class PedidoFornecedorIntegrado:
             'preco_custo': round(sanitizar_float(preco_custo, 0), 2),
             'cue': round(sanitizar_float(preco_custo, 0), 2),  # Alias para compatibilidade com transferencias
             'valor_pedido': round(sanitizar_float(valor_pedido, 0), 2),
+
+            # Desvio padrao diario (para ES pooling V29)
+            'desvio_padrao_diario': round(sanitizar_float(desvio_diario, 0), 6),
 
             # Alertas - usar valor sanitizado para comparacao
             'risco_ruptura': sanitizar_float(cobertura_atual, 999) < lead_time,

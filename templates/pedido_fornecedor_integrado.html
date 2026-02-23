@@ -1359,6 +1359,18 @@
                             <div class="label" style="color: rgba(255,255,255,0.9);">${totalTransf} Transf.</div>
                         </a>
                     `;
+                }
+
+                // Metrica de distribuicao do CD (V29)
+                let metricaCDHtml = '';
+                const resumoCDStats = data.resumo_distribuicao_cd;
+                if (resumoCDStats && resumoCDStats.total_distribuido > 0) {
+                    metricaCDHtml = `
+                        <div class="metrica" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border-radius: 8px; padding: 8px;">
+                            <div class="valor" style="color: white;">-R$ ${(resumoCDStats.valor_economia/1000).toFixed(1)}k</div>
+                            <div class="label" style="color: rgba(255,255,255,0.9);">${resumoCDStats.total_distribuido.toLocaleString('pt-BR')} un CD</div>
+                        </div>
+                    `;
                     // Mostrar botao "Ver Transferencias"
                     const btnTransf = document.getElementById('btnVerTransferencias');
                     if (btnTransf) {
@@ -1391,6 +1403,7 @@
                         <div class="label">Em Ruptura</div>
                     </div>
                     ${metricaTransfHtml}
+                    ${metricaCDHtml}
                     <div class="metrica">
                         <div class="valor">R$ ${(stats.valor_total_pedido/1000).toFixed(1)}k</div>
                         <div class="label">Valor Total</div>
@@ -1420,6 +1433,12 @@
             const resumoTransf = data.resumo_transferencias;
             if (resumoTransf && resumoTransf.total > 0) {
                 console.log(`[TRANSFERENCIAS] ${resumoTransf.total} oportunidades encontradas, economia: R$ ${resumoTransf.valor_total.toFixed(2)}`);
+            }
+
+            // Exibir resumo da distribuicao do CD (V29) se houver
+            const resumoCD = data.resumo_distribuicao_cd;
+            if (resumoCD && resumoCD.total_distribuido > 0) {
+                console.log(`[CD V29] ${resumoCD.total_transferencias} distribuicoes do CD, total: ${resumoCD.total_distribuido} un, economia: R$ ${resumoCD.valor_economia.toFixed(2)}`);
             }
 
             // Combinar itens do pedido + bloqueados para a tabela
@@ -1570,6 +1589,13 @@
                         const tooltip = tooltipLines.join(' | ');
                         transfBadge = `<span class="badge-transf" title="${tooltip}"><span class="icon">↔</span>${qtdTotal} un</span>`;
                     }
+                }
+
+                // Badge de distribuicao do CD (V29)
+                if (item.transferencias_cd && item.transferencias_cd.length > 0) {
+                    const qtdCD = item.transferencias_cd.reduce((s, t) => s + (t.qtd || 0), 0);
+                    const cdOrigem = item.transferencias_cd[0].cd_origem || 'CD';
+                    transfBadge += ` <span class="badge-transf badge-transf-receber" style="margin-left: 4px; background: linear-gradient(135deg, #dbeafe 0%, #93c5fd 100%); color: #1e40af; border-color: #60a5fa;" title="Receber ${qtdCD} un do CD ${cdOrigem}"><span class="icon">📦</span>CD ${qtdCD} un</span>`;
                 }
 
                 const qtdPedido = item._status === 'bloqueado' ? 0 : (item.quantidade_pedido || 0);
@@ -1923,7 +1949,9 @@
                         // Lead time do destino + dias transferencia
                         lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
                         // CUE (preco) - usar o primeiro encontrado
-                        cue: item.cue || item.preco || 0
+                        cue: item.cue || item.preco || 0,
+                        // Multiplo de caixa (para re-arredondamento apos ajuste de transferencia)
+                        multiplo_caixa: item.multiplo_caixa || 1
                     };
                 }
 
@@ -1963,7 +1991,8 @@
                     qtd: item.quantidade_pedido || 0,
                     estoque: item.estoque_atual || item.estoque_efetivo || 0,
                     demanda: item.demanda_prevista_diaria || item.demanda_diaria || 0,
-                    proporcao: item.proporcao_loja || null  // Proporcao de vendas da loja (0.0 a 1.0)
+                    proporcao: item.proporcao_loja || null,  // Proporcao de vendas da loja (0.0 a 1.0)
+                    transferencias_cd: item.transferencias_cd || null  // Distribuicao do CD (V29)
                 });
 
                 // Contar itens sem padrao
@@ -1986,7 +2015,15 @@
                     const qtdOriginal = item.quantidade_pedido;
 
                     // Adicionar a quantidade extra
-                    item.quantidade_pedido += qtdAdicional;
+                    let qtdNova = item.quantidade_pedido + qtdAdicional;
+
+                    // Re-arredondar para multiplo de caixa (para cima)
+                    const mult = item.multiplo_caixa || 1;
+                    if (mult > 1) {
+                        qtdNova = Math.ceil(qtdNova / mult) * mult;
+                    }
+
+                    item.quantidade_pedido = qtdNova;
 
                     // Recalcular valor do pedido
                     if (item.cue > 0) {
@@ -1995,7 +2032,7 @@
 
                     // Guardar info do ajuste para exibicao
                     item.qtd_original = qtdOriginal;
-                    item.qtd_adicional_transferencia = qtdAdicional;
+                    item.qtd_adicional_transferencia = item.quantidade_pedido - qtdOriginal;
                     item.ajustado_transferencia = true;
                 }
             });
@@ -2293,6 +2330,19 @@
                 transfBadge += `<span class="badge-transf badge-transf-enviar" style="margin-left: 4px; font-size: 0.7em;" title="Enviar para:\n${destinos}"><span class="icon">↗</span>${qtdEnviar} un</span>`;
             }
 
+            // Badge de distribuicao do CD (V29) - verificar nos detalhes das lojas
+            if (item.detalhes_lojas) {
+                let totalCDDist = 0;
+                item.detalhes_lojas.forEach(d => {
+                    if (d.transferencias_cd) {
+                        d.transferencias_cd.forEach(t => { totalCDDist += (t.qtd || 0); });
+                    }
+                });
+                if (totalCDDist > 0) {
+                    transfBadge += ` <span class="badge-transf badge-transf-receber" style="margin-left: 4px; font-size: 0.7em; background: linear-gradient(135deg, #dbeafe 0%, #93c5fd 100%); color: #1e40af; border-color: #60a5fa;" title="CD distribui ${totalCDDist} un para lojas deste item">📦CD ${totalCDDist} un</span>`;
+                }
+            }
+
             // Status badge - baseado no _status do item
             let statusInfo = '';
             let rowClass = '';
@@ -2394,7 +2444,8 @@
                             demanda_total: 0,
                             lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
                             lojas_origem: [],
-                            criticas: []
+                            criticas: [],
+                            multiplo_caixa: item.multiplo_caixa || 1
                         };
                     }
                     // Somar quantidades
@@ -2421,7 +2472,12 @@
                     const isCentralizado = item.lojas_origem.some(loja => String(loja) !== String(item.cod_empresa_destino));
                     if (isCentralizado && item.demanda_total > 0) {
                         const qtdAdicional = Math.ceil(item.demanda_total * diasTransferenciaGlobal);
-                        item.quantidade_pedido += qtdAdicional;
+                        let qtdNova = item.quantidade_pedido + qtdAdicional;
+                        const mult = item.multiplo_caixa || 1;
+                        if (mult > 1) {
+                            qtdNova = Math.ceil(qtdNova / mult) * mult;
+                        }
+                        item.quantidade_pedido = qtdNova;
                         if (item.cue > 0) {
                             item.valor_pedido = item.quantidade_pedido * item.cue;
                         }
@@ -2614,7 +2670,8 @@
                                 demanda_total: 0,
                                 lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
                                 lojas_origem: [],
-                                criticas: []
+                                criticas: [],
+                                multiplo_caixa: item.multiplo_caixa || 1
                             };
                         }
                         itensAgrupados[chaveAgrupamento].quantidade_pedido += (item.quantidade_pedido || 0);
@@ -2631,7 +2688,12 @@
                         const isCentralizado = item.lojas_origem.some(loja => String(loja) !== String(item.cod_empresa_destino));
                         if (isCentralizado && item.demanda_total > 0) {
                             const qtdAdicional = Math.ceil(item.demanda_total * diasTransferenciaGlobal);
-                            item.quantidade_pedido += qtdAdicional;
+                            let qtdNova = item.quantidade_pedido + qtdAdicional;
+                            const mult = item.multiplo_caixa || 1;
+                            if (mult > 1) {
+                                qtdNova = Math.ceil(qtdNova / mult) * mult;
+                            }
+                            item.quantidade_pedido = qtdNova;
                             if (item.cue > 0) {
                                 item.valor_pedido = item.quantidade_pedido * item.cue;
                             }

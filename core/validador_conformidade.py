@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 15 verificacoes do checklist de conformidade.
+        Executa todas as 23 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -91,6 +91,7 @@ class ValidadorConformidade:
             ('V25', 'Regras Transferencia Otimizada', self._verificar_regras_transferencia_v611),
             ('V26', 'Limitador Cobertura 90d TSB', self._verificar_limitador_cobertura_e_rede),
             ('V27', 'Completude Dados Embalagem', self._verificar_completude_embalagem),
+            ('V29', 'Distribuicao Estoque CD (DRP)', self._verificar_distribuicao_cd),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -2222,6 +2223,129 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V27: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_distribuicao_cd(self) -> Tuple[str, str, Dict]:
+        """
+        V29: Verifica que a logica de distribuicao de estoque do CD para lojas esta funcional.
+
+        Testa:
+        1. Funcao calcular_es_pooling_cd existe e calcula corretamente
+        2. Tabela padrao_compra_item tem mapeamentos para CDs (>= 80)
+        3. Estoque de CDs esta disponivel para consulta
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: Funcao calcular_es_pooling_cd existe e calcula
+            testes_total += 1
+            try:
+                from core.pedido_fornecedor_integrado import calcular_es_pooling_cd
+                resultado = calcular_es_pooling_cd(
+                    desvios_por_loja=[2.5, 1.8, 3.1, 2.0, 1.5],
+                    lead_time_fornecedor=45,
+                    curva_abc='B'
+                )
+                es_cd = resultado['es_cd']
+                sigma_total = resultado['sigma_total']
+
+                # Validar: sigma_total deve ser sqrt(sum(s^2))
+                import math
+                esperado = math.sqrt(2.5**2 + 1.8**2 + 3.1**2 + 2.0**2 + 1.5**2)
+                if abs(sigma_total - esperado) < 0.01:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'ES Pooling CD',
+                        'status': 'ok',
+                        'detalhe': f'sigma_total={sigma_total:.4f} (esperado={esperado:.4f}), ES_cd={es_cd:.2f}'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'ES Pooling CD',
+                        'status': 'falha',
+                        'detalhe': f'sigma_total={sigma_total:.4f} != esperado={esperado:.4f}'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'ES Pooling CD',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 2: Padrao de compra tem mapeamentos para CD
+            testes_total += 1
+            if self.conn:
+                cursor = self.conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(DISTINCT codigo) as itens,
+                           COUNT(DISTINCT cod_empresa_destino) as cds
+                    FROM padrao_compra_item
+                    WHERE cod_empresa_destino >= 80
+                      AND cod_empresa_venda < 80
+                """)
+                row = cursor.fetchone()
+                itens_cd = row[0] if row else 0
+                num_cds = row[1] if row else 0
+                cursor.close()
+
+                if itens_cd > 0:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Padrao Compra CD',
+                        'status': 'ok',
+                        'detalhe': f'{itens_cd} itens mapeados para {num_cds} CD(s)'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Padrao Compra CD',
+                        'status': 'alerta',
+                        'detalhe': 'Nenhum item com padrao de compra para CD'
+                    })
+
+            # Teste 3: Campo desvio_padrao_diario existe no processar_item
+            testes_total += 1
+            try:
+                from core.pedido_fornecedor_integrado import PedidoFornecedorIntegrado
+                import inspect
+                source = inspect.getsource(PedidoFornecedorIntegrado.processar_item)
+                if 'desvio_padrao_diario' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Campo desvio_padrao_diario',
+                        'status': 'ok',
+                        'detalhe': 'Campo presente no resultado de processar_item'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Campo desvio_padrao_diario',
+                        'status': 'falha',
+                        'detalhe': 'Campo NAO encontrado em processar_item'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Campo desvio_padrao_diario',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            detalhes = {
+                'testes_ok': testes_ok,
+                'testes_total': testes_total,
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'Distribuicao CD funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'Distribuicao CD parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'Distribuicao CD com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V29: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

@@ -533,6 +533,26 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
 
     cursor = conn.cursor()
 
+    # FIX: DELETE antes do INSERT para resolver duplicacao com cod_empresa NULL
+    # PostgreSQL trata NULL != NULL em UNIQUE constraints, causando duplicatas
+    # Agrupar registros por (cod_produto, cnpj_fornecedor, ano, mes) para DELETE
+    chaves_para_deletar = set()
+    for reg in registros:
+        chaves_para_deletar.add((
+            reg['cod_produto'], reg['cnpj_fornecedor'],
+            reg['ano'], reg['mes']
+        ))
+
+    # Deletar registros antigos SEM ajuste manual que serao recalculados
+    if chaves_para_deletar:
+        chaves_list = list(chaves_para_deletar)
+        execute_values(cursor, """
+            DELETE FROM demanda_pre_calculada
+            WHERE ajuste_manual IS NULL
+              AND (cod_produto, cnpj_fornecedor, ano, mes) IN (VALUES %s)
+              AND cod_empresa IS NULL
+        """, chaves_list, template="(%s, %s, %s, %s)")
+
     # Preparar dados para insert em lote
     valores = [
         (
@@ -547,7 +567,7 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
         for reg in registros
     ]
 
-    # Usar execute_values para INSERT em lote (muito mais rapido)
+    # INSERT em lote (sem ON CONFLICT pois ja deletamos os antigos)
     execute_values(cursor, """
         INSERT INTO demanda_pre_calculada (
             cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
@@ -557,23 +577,6 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             limitador_aplicado, metodo_usado, categoria_serie,
             dias_historico, total_vendido_historico, data_calculo
         ) VALUES %s
-        ON CONFLICT (cod_produto, cnpj_fornecedor, cod_empresa, ano, mes)
-        DO UPDATE SET
-            demanda_prevista = EXCLUDED.demanda_prevista,
-            demanda_diaria_base = EXCLUDED.demanda_diaria_base,
-            desvio_padrao = EXCLUDED.desvio_padrao,
-            fator_sazonal = EXCLUDED.fator_sazonal,
-            fator_tendencia_yoy = EXCLUDED.fator_tendencia_yoy,
-            classificacao_tendencia = EXCLUDED.classificacao_tendencia,
-            valor_ano_anterior = EXCLUDED.valor_ano_anterior,
-            variacao_vs_aa = EXCLUDED.variacao_vs_aa,
-            limitador_aplicado = EXCLUDED.limitador_aplicado,
-            metodo_usado = EXCLUDED.metodo_usado,
-            categoria_serie = EXCLUDED.categoria_serie,
-            dias_historico = EXCLUDED.dias_historico,
-            total_vendido_historico = EXCLUDED.total_vendido_historico,
-            data_calculo = NOW()
-        WHERE demanda_pre_calculada.ajuste_manual IS NULL
     """, valores, template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())")
 
     conn.commit()

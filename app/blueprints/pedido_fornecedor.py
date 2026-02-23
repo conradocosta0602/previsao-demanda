@@ -58,7 +58,8 @@ def api_pedido_fornecedor_integrado():
             PedidoFornecedorIntegrado,
             agregar_por_fornecedor,
             calcular_cobertura_abc,
-            arredondar_para_multiplo
+            arredondar_para_multiplo,
+            calcular_es_pooling_cd
         )
         from core.demand_calculator import DemandCalculator
         from core.transferencia_regional import TransferenciaRegional
@@ -623,6 +624,87 @@ def api_pedido_fornecedor_integrado():
         itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
 
         # ==============================================================================
+        # PRE-CARREGAR ESTOQUE DO CD (para distribuicao V29)
+        # ==============================================================================
+        # V29: Detectar padrao de compra que direciona para CD(s), mesmo com destino "Lojas"
+        # Suporta multiplos CDs (cod_empresa >= 80): cada item pode ir para um CD diferente
+        estoque_cd = {}          # {codigo_item: {estoque, qtd_pendente, ...}}
+        cd_por_item = {}         # {codigo_item: cod_cd}  - mapeia cada item ao seu CD
+        cds_detectados = set()   # Conjunto de CDs encontrados
+
+        if is_destino_cd:
+            # Destino unico selecionado pelo usuario (ex: "CD 80")
+            for cod in codigos_produtos:
+                cd_por_item[cod] = cod_destino
+            cds_detectados.add(cod_destino)
+        elif is_pedido_multiloja and codigos_produtos:
+            # Verificar padrao de compra: mapear cada item ao seu CD especifico
+            # Filtrar apenas lojas de venda (< 80) para evitar auto-mapeamento CD->CD
+            try:
+                conn_pc = get_db_connection()
+                cursor_pc = conn_pc.cursor()
+                cursor_pc.execute("""
+                    SELECT codigo, cod_empresa_destino, COUNT(*) as cnt
+                    FROM padrao_compra_item
+                    WHERE codigo = ANY(%s)
+                      AND cod_empresa_destino >= 80
+                      AND cod_empresa_venda < 80
+                    GROUP BY codigo, cod_empresa_destino
+                    ORDER BY codigo, cnt DESC
+                """, (codigos_produtos,))
+                for row in cursor_pc.fetchall():
+                    cod_item = int(row[0])
+                    cod_cd = int(row[1])
+                    # Pegar o CD mais frequente (primeira linha por item, ordenado por cnt DESC)
+                    if cod_item not in cd_por_item:
+                        cd_por_item[cod_item] = cod_cd
+                        cds_detectados.add(cod_cd)
+                cursor_pc.close()
+                conn_pc.close()
+                if cds_detectados:
+                    print(f"  [CD V29] Padrao de compra detectado: {len(cd_por_item)} itens -> CDs {sorted(cds_detectados)}")
+            except Exception as e_pc:
+                print(f"  [CD V29] Erro ao verificar padrao de compra: {e_pc}")
+
+        # Carregar estoque de TODOS os CDs detectados
+        if cds_detectados and codigos_produtos:
+            try:
+                conn_cd = get_db_connection()
+                cursor_cd = conn_cd.cursor()
+                cds_list = list(cds_detectados)
+                cursor_cd.execute("""
+                    SELECT cod_empresa, codigo,
+                           COALESCE(estoque, 0) as estoque,
+                           COALESCE(qtd_pendente, 0) as qtd_pendente,
+                           COALESCE(qtd_pend_transf, 0) as qtd_pend_transf,
+                           COALESCE(cue, 0) as cue
+                    FROM estoque_posicao_atual
+                    WHERE cod_empresa = ANY(%s) AND codigo = ANY(%s)
+                """, (cds_list, codigos_produtos))
+                for row in cursor_cd.fetchall():
+                    cod_cd = int(row[0])
+                    cod_item = int(row[1])
+                    # Indexar por item (cada item tem 1 CD via padrao_compra)
+                    if cd_por_item.get(cod_item) == cod_cd:
+                        estoque_cd[cod_item] = {
+                            'cod_cd': cod_cd,
+                            'estoque': float(row[2]),
+                            'qtd_pendente': float(row[3]),
+                            'qtd_pend_transf': float(row[4]),
+                            'cue': float(row[5])
+                        }
+                cursor_cd.close()
+                conn_cd.close()
+                for cd in sorted(cds_detectados):
+                    itens_cd = [k for k, v in estoque_cd.items() if v.get('cod_cd') == cd]
+                    print(f"  [CD V29] Estoque CD {cd} carregado: {len(itens_cd)} itens")
+            except Exception as e_cd:
+                print(f"  [CD V29] Erro ao carregar estoque CD: {e_cd}")
+
+        # Variavel de compatibilidade (usado no JSON de resposta)
+        cd_destino_v29 = sorted(cds_detectados)[0] if cds_detectados else None
+
+        # ==============================================================================
         # CALCULO DE TRANSFERENCIAS ENTRE LOJAS
         # ==============================================================================
         # Antes de finalizar o pedido, verificar se ha lojas com excesso de estoque
@@ -956,6 +1038,192 @@ def api_pedido_fornecedor_integrado():
             itens_pedido = [r for r in resultados if r.get('deve_pedir') and not r.get('bloqueado') and (r.get('quantidade_pedido', 0) or 0) > 0]
             itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
 
+        # ==============================================================================
+        # ETAPA 3: DISTRIBUICAO DO ESTOQUE DO CD PARA LOJAS (V29)
+        # ==============================================================================
+        # Apos transferencias loja<->loja, o CD distribui seu estoque para lojas
+        # que AINDA precisam de pedido. CD = "super-doador" sem restricao regional.
+        # Reserva ES do CD com efeito pooling (sigma_total = sqrt(sum(sigma^2)))
+        transferencias_cd = []
+        info_distribuicao_cd = {}
+
+        if cds_detectados and estoque_cd:
+            print(f"\n  [CD V29] Iniciando distribuicao do estoque de {len(cds_detectados)} CD(s) {sorted(cds_detectados)} para lojas...")
+
+            # Agrupar resultados por codigo de produto (normalizar para int)
+            itens_por_codigo_cd = {}
+            for item in resultados:
+                codigo = int(item.get('codigo', 0))
+                if codigo not in itens_por_codigo_cd:
+                    itens_por_codigo_cd[codigo] = []
+                itens_por_codigo_cd[codigo].append(item)
+
+            # Carregar multiplos de embalagem (reutilizar se ja carregados acima)
+            embalagens_multiplo_cd = {}
+            try:
+                conn_emb_cd = get_db_connection()
+                cursor_emb_cd = conn_emb_cd.cursor()
+                cursor_emb_cd.execute("""
+                    SELECT codigo, qtd_embalagem
+                    FROM embalagem_arredondamento
+                    WHERE qtd_embalagem > 1
+                """)
+                embalagens_multiplo_cd = {int(row[0]): int(row[1]) for row in cursor_emb_cd.fetchall()}
+                cursor_emb_cd.close()
+                conn_emb_cd.close()
+            except Exception as e_emb:
+                print(f"  [CD V29] Erro ao carregar embalagens: {e_emb}")
+
+            total_distribuido_cd = 0
+            total_itens_distribuidos = 0
+            valor_economia_cd = 0
+
+            for codigo, itens_loja in itens_por_codigo_cd.items():
+                info_cd = estoque_cd.get(codigo, {})
+                estoque_cd_disp = info_cd.get('estoque', 0) + info_cd.get('qtd_pend_transf', 0)
+                cd_do_item = cd_por_item.get(codigo)
+
+                if estoque_cd_disp <= 0 or not cd_do_item:
+                    continue
+
+                # Calcular ES do CD com efeito pooling
+                desvios_lojas = []
+                curva_item = 'B'
+                lead_time_item = 15  # default
+                for item in itens_loja:
+                    desvio = item.get('desvio_padrao_diario', 0) or 0
+                    desvios_lojas.append(desvio)
+                    curva_item = item.get('curva_abc', 'B') or 'B'
+                    lead_time_item = item.get('lead_time_usado', 15) or 15
+
+                es_cd_info = calcular_es_pooling_cd(desvios_lojas, lead_time_item, curva_item)
+                es_cd_valor = es_cd_info['es_cd']
+
+                # Estoque distribuivel = estoque CD - ES do CD (reserva minima)
+                estoque_distribuivel = max(0, estoque_cd_disp - es_cd_valor)
+
+                if estoque_distribuivel <= 0:
+                    continue
+
+                # Identificar lojas que AINDA precisam (pedido > 0 apos etapa 2)
+                receptores_cd = []
+                for item in itens_loja:
+                    qtd_pedido = float(item.get('quantidade_pedido', 0) or 0)
+                    cobertura = float(item.get('cobertura_atual_dias', 0) or 0)
+                    demanda_d = float(item.get('demanda_prevista_diaria', 0) or 0)
+                    estoque_loja = float(item.get('estoque_atual', 0) or 0)
+
+                    if qtd_pedido > 0 and demanda_d > 0:
+                        # Mesma logica de prioridade V25
+                        if estoque_loja == 0:
+                            prioridade = 0
+                            faixa = 'RUPTURA'
+                        elif cobertura <= 30:
+                            prioridade = 1
+                            faixa = 'CRITICA'
+                        elif cobertura <= 60:
+                            prioridade = 2
+                            faixa = 'ALTA'
+                        elif cobertura <= 90:
+                            prioridade = 3
+                            faixa = 'MEDIA'
+                        else:
+                            continue  # > 90 dias, nao precisa
+
+                        receptores_cd.append({
+                            'item_ref': item,
+                            'cod_loja': item.get('cod_loja'),
+                            'nome_loja': item.get('nome_loja', f"Loja {item.get('cod_loja')}"),
+                            'necessidade': qtd_pedido,
+                            'necessidade_restante': qtd_pedido,
+                            'prioridade': prioridade,
+                            'faixa': faixa,
+                            'cobertura_dias': cobertura,
+                            'demanda_diaria': demanda_d
+                        })
+
+                if not receptores_cd:
+                    continue
+
+                # Ordenar por prioridade (RUPTURA primeiro), depois por cobertura
+                receptores_cd.sort(key=lambda x: (x['prioridade'], x['cobertura_dias']))
+
+                # Distribuir estoque do CD
+                estoque_restante_cd = estoque_distribuivel
+                multiplo_emb = embalagens_multiplo_cd.get(codigo, 1)
+
+                for receptor in receptores_cd:
+                    if estoque_restante_cd <= 0:
+                        break
+
+                    qtd_bruta = min(receptor['necessidade_restante'], estoque_restante_cd)
+                    # Arredondar para BAIXO (caixa fechada)
+                    if multiplo_emb > 1:
+                        qtd_distribuir = (int(qtd_bruta) // multiplo_emb) * multiplo_emb
+                    else:
+                        qtd_distribuir = int(qtd_bruta)
+
+                    if qtd_distribuir <= 0:
+                        continue
+
+                    # Reduzir pedido da loja
+                    item_dest = receptor['item_ref']
+                    qtd_antes = float(item_dest.get('quantidade_pedido', 0) or 0)
+                    nova_qtd = max(0, qtd_antes - qtd_distribuir)
+                    # Re-arredondar para multiplo de caixa (para cima)
+                    if multiplo_emb > 1:
+                        nova_qtd = arredondar_para_multiplo(nova_qtd, multiplo_emb, 'cima')
+                    item_dest['quantidade_pedido'] = nova_qtd
+                    cue_item = float(item_dest.get('cue', 0) or item_dest.get('preco_custo', 0) or 0)
+                    item_dest['valor_pedido'] = round(float(nova_qtd) * cue_item, 2)
+
+                    # Marcar distribuicao do CD no item
+                    if 'transferencias_cd' not in item_dest:
+                        item_dest['transferencias_cd'] = []
+                    item_dest['transferencias_cd'].append({
+                        'cd_origem': cd_do_item,
+                        'qtd': qtd_distribuir
+                    })
+
+                    if nova_qtd == 0:
+                        item_dest['deve_pedir'] = False
+
+                    estoque_restante_cd -= qtd_distribuir
+                    total_distribuido_cd += qtd_distribuir
+                    valor_economia_cd += qtd_distribuir * cue_item
+
+                    transferencias_cd.append({
+                        'cod_produto': codigo,
+                        'descricao': item_dest.get('descricao', ''),
+                        'cd_origem': cd_do_item,
+                        'loja_destino': receptor['cod_loja'],
+                        'nome_loja_destino': receptor['nome_loja'],
+                        'qtd_distribuida': qtd_distribuir,
+                        'urgencia': receptor['faixa'],
+                        'cue': cue_item
+                    })
+
+                    if qtd_antes != nova_qtd:
+                        total_itens_distribuidos += 1
+
+            info_distribuicao_cd = {
+                'total_distribuido': total_distribuido_cd,
+                'total_transferencias': len(transferencias_cd),
+                'total_itens_atendidos': total_itens_distribuidos,
+                'valor_economia': round(valor_economia_cd, 2),
+                'cds_utilizados': sorted(cds_detectados)
+            }
+
+            print(f"  [CD V29] Distribuicao concluida: {total_distribuido_cd} un distribuidas em {len(transferencias_cd)} transferencias")
+            print(f"  [CD V29] Economia estimada: R$ {valor_economia_cd:,.2f}")
+
+            # Recalcular itens_pedido apos distribuicao CD (alguns podem ter zerado)
+            itens_pedido = [r for r in resultados if r.get('deve_pedir') and not r.get('bloqueado') and (r.get('quantidade_pedido', 0) or 0) > 0]
+            itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
+
+            # Recalcular agregacao apos distribuicao CD
+            agregacao = agregar_por_fornecedor(resultados)
+
             # ==============================================================================
             # SALVAR TRANSFERENCIAS NO BANCO DE DADOS
             # ==============================================================================
@@ -1111,7 +1379,22 @@ def api_pedido_fornecedor_integrado():
                 'valor_total': round(valor_economia_transferencias, 2),
                 'produtos_unicos': len(set(t['cod_produto'] for t in transferencias_sugeridas)) if transferencias_sugeridas else 0,
                 'urgentes': len([t for t in transferencias_sugeridas if t.get('urgencia') == 'ALTA'])
-            } if transferencias_sugeridas else None
+            } if transferencias_sugeridas else None,
+            # Distribuicao do CD para lojas (V29)
+            'distribuicao_cd': transferencias_cd,
+            'tem_distribuicao_cd': len(transferencias_cd) > 0,
+            'resumo_distribuicao_cd': info_distribuicao_cd if info_distribuicao_cd else None,
+            'is_destino_cd': is_destino_cd,
+            'cds_detectados_v29': sorted(cds_detectados) if cds_detectados else [],
+            'cd_por_item': {str(k): v for k, v in cd_por_item.items()} if cd_por_item else None,
+            'estoque_cd_info': {
+                str(cod): {
+                    'cd': info.get('cod_cd', 0),
+                    'estoque': info.get('estoque', 0),
+                    'qtd_pendente': info.get('qtd_pendente', 0),
+                    'qtd_pend_transf': info.get('qtd_pend_transf', 0)
+                } for cod, info in estoque_cd.items()
+            } if estoque_cd else None
         }))
 
     except Exception as e:

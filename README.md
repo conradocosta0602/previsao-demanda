@@ -1,13 +1,15 @@
-# Sistema de Demanda e Reabastecimento v6.13
+# Sistema de Demanda e Reabastecimento v6.14
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v6.13 - Tabela de Custo (CUE) na Tela de Demanda (Fev/2026):**
-- **Tabela de Custo (CUE)**: Segunda tabela espelhada na Tela de Demanda exibindo valores em R$ (qtd x CUE)
-- **CUE media ponderada**: Para multi-loja, CUE = media ponderada pelo estoque de cada loja
-- **Sincronizacao de ajustes**: Ajustes manuais na tabela de quantidade refletem automaticamente na tabela de custo
-- **Excel com 2 abas**: "Relatorio Detalhado" (quantidade + CUE unitario) e "Custo (CUE)" (valores em R$)
-- **Coluna Pendente + Transito**: Nova coluna na tela de Pedido ao Fornecedor
+**Novidades v6.14 - Distribuicao de Estoque do CD para Lojas - V29 (Fev/2026):**
+- **V29 - DRP (Distribution Requirements Planning)**: O sistema agora distribui o estoque do CD para lojas com falta antes de calcular o pedido ao fornecedor
+- **Suporte a multiplos CDs**: Cada item e mapeado ao seu CD via `padrao_compra_item` (loja >= 80)
+- **ES Pooling (Chopra & Meindl)**: Estoque de seguranca do CD usa efeito pooling (sigma_total = sqrt(sum(sigma^2))), reduzindo ~65% vs soma individual
+- **Distribuicao em caixa fechada**: Arredonda para baixo no multiplo de embalagem
+- **Prioridade V25**: Mesma logica de faixas (RUPTURA > CRITICA > ALTA > MEDIA)
+- **Badge CD na tela**: Mostra quantidade distribuida do CD para cada loja
+- **23 verificacoes de conformidade**: Nova V29 valida logica de distribuicao CD
 
 **Novidades v5.7 - Fator de Tendencia YoY e Botao Salvar Demanda (Fev/2026):**
 - **Fator de Tendencia YoY**: Corrige subestimacao em fornecedores com crescimento historico (ex: ZAGONEL +29% real, modelo previa -18% → agora preve +20%)
@@ -631,7 +633,21 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v6.13 (Fevereiro 2026) - ATUAL
+### v6.14 (Fevereiro 2026) - ATUAL
+
+**V29 - Distribuicao de Estoque do CD para Lojas (DRP):**
+
+- **Etapa 3 no fluxo de pedido**: Apos transferencias loja<->loja (V25), distribui estoque do CD para lojas com falta
+- **Multiplos CDs**: Suporta CDs 80, 81, 82, 83, 92, 93, 94 - cada item mapeado ao seu CD via `padrao_compra_item`
+- **ES Pooling**: Estoque de seguranca do CD calculado com efeito risk pooling (Chopra & Meindl, 2019)
+- **Distribuicao em caixa fechada**: Arredonda para baixo no multiplo de embalagem
+- **Prioridade**: RUPTURA > CRITICA > ALTA > MEDIA (mesma logica V25)
+- **Badge visual**: Badge verde "CD X un" na tela quando loja recebe do CD
+- **Desvio padrao diario**: Novo campo `desvio_padrao_diario` retornado por `processar_item()`
+- **Fix duplicados demanda_pre_calculada**: Corrigido UNIQUE constraint com NULL (PostgreSQL)
+- **23 verificacoes de conformidade**: Nova V29 no checklist
+
+### v6.13 (Fevereiro 2026)
 
 **Tabela de Custo (CUE) na Tela de Demanda:**
 
