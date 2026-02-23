@@ -1,12 +1,13 @@
-# Sistema de Demanda e Reabastecimento v6.12
+# Sistema de Demanda e Reabastecimento v6.13
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v6.12 - Limitador de Cobertura TSB (Fev/2026):**
-- **Limitador Cobertura 90d TSB**: Itens com demanda intermitente (TSB) tem pedido limitado a 90 dias de cobertura por loja
-- **22 Verificacoes de Conformidade**: V26 (limitador TSB) e V27 (completude embalagem)
-- **Protecao contra excesso**: Evita pedidos excessivos em itens de baixo giro com estoque existente
-- **V27 - Alerta Embalagem**: Detecta fornecedores sem dados de multiplo de caixa (causa pedidos sem arredondamento)
+**Novidades v6.13 - Tabela de Custo (CUE) na Tela de Demanda (Fev/2026):**
+- **Tabela de Custo (CUE)**: Segunda tabela espelhada na Tela de Demanda exibindo valores em R$ (qtd x CUE)
+- **CUE media ponderada**: Para multi-loja, CUE = media ponderada pelo estoque de cada loja
+- **Sincronizacao de ajustes**: Ajustes manuais na tabela de quantidade refletem automaticamente na tabela de custo
+- **Excel com 2 abas**: "Relatorio Detalhado" (quantidade + CUE unitario) e "Custo (CUE)" (valores em R$)
+- **Coluna Pendente + Transito**: Nova coluna na tela de Pedido ao Fornecedor
 
 **Novidades v5.7 - Fator de Tendencia YoY e Botao Salvar Demanda (Fev/2026):**
 - **Fator de Tendencia YoY**: Corrige subestimacao em fornecedores com crescimento historico (ex: ZAGONEL +29% real, modelo previa -18% → agora preve +20%)
@@ -630,7 +631,19 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v6.12 (Fevereiro 2026) - ATUAL
+### v6.13 (Fevereiro 2026) - ATUAL
+
+**Tabela de Custo (CUE) na Tela de Demanda:**
+
+- **V28 - Tabela de Custo**: Segunda tabela espelhada (cabecalho azul) abaixo da tabela de quantidade (cabecalho verde)
+- **CUE media ponderada**: Para dados multi-loja, CUE = SUM(cue * estoque) / SUM(estoque)
+- **Sincronizacao automatica**: Ajustes manuais na quantidade refletem na tabela de custo com celulas amarelas
+- **Excel com 2 abas**: Aba "Relatorio Detalhado" (quantidade + CUE unitario) e aba "Custo (CUE)" (R$)
+- **Coluna Pendente + Transito**: Nova coluna na tela de Pedido ao Fornecedor (modo consolidado e reabastecimento)
+- **Ordenacao por codigo**: Itens ordenados por codigo decrescente em ambas as tabelas
+- **Cache-busting**: app.js com versao aleatoria para evitar cache do browser
+
+### v6.12 (Fevereiro 2026)
 
 **Limitador de Cobertura 90 dias para itens TSB:**
 
@@ -1030,8 +1043,8 @@ Para duvidas ou problemas:
 
 ---
 
-**Versao:** 6.12
+**Versao:** 6.13
 **Status:** Em Producao
-**Ultima Atualizacao:** 20 Fevereiro 2026
+**Ultima Atualizacao:** 23 Fevereiro 2026
 
 **Se este projeto foi util, considere dar uma estrela!**

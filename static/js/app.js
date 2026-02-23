@@ -3162,20 +3162,23 @@ let dadosRelatorioDetalhado = null;
 function exibirRelatorioDetalhado(dados) {
     if (!dados || !dados.itens || dados.itens.length === 0) {
         document.getElementById('relatorioDetalhadoSection').style.display = 'none';
+        document.getElementById('relatorioCustoSection').style.display = 'none';
         return;
     }
 
     // Armazenar dados globalmente para filtros
     dadosRelatorioDetalhado = dados;
 
-    // Mostrar seção
+    // Mostrar seções
     document.getElementById('relatorioDetalhadoSection').style.display = 'block';
+    document.getElementById('relatorioCustoSection').style.display = 'block';
 
     // Popular filtro de fornecedores
     popularFiltroFornecedores(dados.itens);
 
-    // Renderizar tabela
+    // Renderizar tabelas
     renderizarTabelaRelatorioDetalhado(dados.itens, dados.periodos_previsao, dados.granularidade);
+    renderizarTabelaRelatorioCusto(dados.itens, dados.periodos_previsao, dados.granularidade);
 
     // Exibir resumo
     exibirResumoRelatorio(dados.itens);
@@ -3340,26 +3343,11 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
             return sitCompra === 'FL' || sitCompra === 'EN';
         }
 
-        // Ordenar itens: primeiro por sit_compra (FL/EN por último), depois por criticidade
+        // Ordenar itens por código decrescente (maior para menor)
         const itensOrdenados = [...itensFornecedor].sort((a, b) => {
-            // Primeiro: itens FL/EN vão para o final
-            const aExcluido = isSitCompraExcluido(a.sit_compra);
-            const bExcluido = isSitCompraExcluido(b.sit_compra);
-
-            if (aExcluido !== bExcluido) {
-                return aExcluido ? 1 : -1;  // Excluídos vão para o final
-            }
-
-            // Segundo: por prioridade de alerta (menor = mais crítico)
-            const prioridadeA = getPrioridadeAlerta(a.sinal_emoji);
-            const prioridadeB = getPrioridadeAlerta(b.sinal_emoji);
-
-            if (prioridadeA !== prioridadeB) {
-                return prioridadeA - prioridadeB;
-            }
-
-            // Terceiro: por variação absoluta (maior primeiro)
-            return Math.abs(b.variacao_percentual || 0) - Math.abs(a.variacao_percentual || 0);
+            const codA = parseInt(a.cod_produto) || 0;
+            const codB = parseInt(b.cod_produto) || 0;
+            return codB - codA;
         });
 
         // Linhas dos itens (inicialmente visíveis) - com onclick para drill-down
@@ -3436,6 +3424,176 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
     tbody.innerHTML = bodyHtml;
 }
 
+// Formatar valor como moeda BRL
+function formatCurrency(valor) {
+    if (valor === 0 || valor === null || valor === undefined) return 'R$ 0,00';
+    return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Renderizar tabela espelhada de custo (CUE)
+function renderizarTabelaRelatorioCusto(itens, periodos, granularidade) {
+    const thead = document.getElementById('relatorioCustoHeader');
+    const tbody = document.getElementById('relatorioCustoBody');
+
+    if (!thead || !tbody) return;
+
+    const mesesNomes = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+    function formatarPeriodoHeader(periodo) {
+        if (!periodo) return '-';
+        if (granularidade === 'semanal') {
+            return `S${periodo.semana}/${periodo.ano}`;
+        } else if (granularidade === 'diario' || granularidade === 'diaria') {
+            const partes = periodo.split('-');
+            if (partes.length === 3) {
+                return `${partes[2]}/${partes[1]}`;
+            }
+            return periodo;
+        } else {
+            const mesIdx = periodo.mes - 1;
+            return `${mesesNomes[mesIdx]}/${periodo.ano}`;
+        }
+    }
+
+    // Cabecalho azul
+    let headerHtml = '<tr style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; font-size: 0.8em;">';
+    headerHtml += '<th style="padding: 8px; text-align: left; border: 1px solid #93c5fd; position: sticky; left: 0; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); z-index: 12; min-width: 70px; width: 70px;">Código</th>';
+    headerHtml += '<th style="padding: 8px; text-align: left; border: 1px solid #93c5fd; position: sticky; left: 70px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); z-index: 12; min-width: 220px; width: 220px;">Descrição</th>';
+
+    periodos.forEach(periodo => {
+        const nomePeriodo = formatarPeriodoHeader(periodo);
+        headerHtml += `<th style="padding: 6px; text-align: center; border: 1px solid #93c5fd; min-width: 90px;">${nomePeriodo}</th>`;
+    });
+
+    headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #93c5fd; background: #1e40af; min-width: 100px;">Total Prev. R$</th>';
+    headerHtml += '<th style="padding: 8px; text-align: center; border: 1px solid #93c5fd; min-width: 80px;">CUE Unit.</th>';
+    headerHtml += '</tr>';
+
+    thead.innerHTML = headerHtml;
+
+    // Agrupar itens por fornecedor
+    const itensPorFornecedor = {};
+    itens.forEach(item => {
+        const fornecedor = item.nome_fornecedor || 'SEM FORNECEDOR';
+        if (!itensPorFornecedor[fornecedor]) {
+            itensPorFornecedor[fornecedor] = [];
+        }
+        itensPorFornecedor[fornecedor].push(item);
+    });
+
+    const fornecedoresOrdenados = Object.keys(itensPorFornecedor).sort();
+    const numColunasPeriodos = periodos.length;
+
+    let bodyHtml = '';
+    let custoTotalGeral = 0;
+    let custoAnoAntGeral = 0;
+
+    fornecedoresOrdenados.forEach(fornecedor => {
+        const itensFornecedor = itensPorFornecedor[fornecedor];
+        const fornecedorId = fornecedor.replace(/[^a-zA-Z0-9]/g, '_');
+
+        let custoTotalFornecedor = 0;
+        let totaisCustoPorPeriodo = new Array(numColunasPeriodos).fill(0);
+
+        itensFornecedor.forEach(item => {
+            const cue = item.cue || 0;
+            custoTotalFornecedor += (item.demanda_prevista_total || 0) * cue;
+
+            if (item.previsao_por_periodo) {
+                item.previsao_por_periodo.forEach((p, idx) => {
+                    if (idx < numColunasPeriodos) {
+                        totaisCustoPorPeriodo[idx] += (p.previsao || 0) * cue;
+                    }
+                });
+            }
+        });
+
+        custoTotalGeral += custoTotalFornecedor;
+
+        // Linha do fornecedor
+        bodyHtml += `<tr class="linha-fornecedor-custo" data-fornecedor-custo="${fornecedorId}" onclick="toggleFornecedorCusto('${fornecedorId}')" style="background: #dbeafe; cursor: pointer; font-weight: bold;">`;
+        bodyHtml += `<td style="padding: 10px; border: 1px solid #93c5fd; position: sticky; left: 0; background: #dbeafe; z-index: 6; width: 70px;">`;
+        bodyHtml += `<span class="toggle-icon-custo" id="toggle-custo-${fornecedorId}">▼</span>`;
+        bodyHtml += `</td>`;
+        bodyHtml += `<td style="padding: 10px; border: 1px solid #93c5fd; position: sticky; left: 70px; background: #dbeafe; z-index: 6; width: 220px;">`;
+        bodyHtml += `${fornecedor} (${itensFornecedor.length} itens)`;
+        bodyHtml += `</td>`;
+
+        totaisCustoPorPeriodo.forEach((total, idx) => {
+            bodyHtml += `<td data-custo-fornecedor-total="${fornecedorId}" data-custo-periodo-idx="${idx}" style="padding: 6px; text-align: center; border: 1px solid #93c5fd; background: #dbeafe; font-weight: bold; font-size: 0.85em;">${formatCurrency(total)}</td>`;
+        });
+
+        bodyHtml += `<td data-custo-fornecedor-total-geral="${fornecedorId}" style="padding: 8px; text-align: center; border: 1px solid #93c5fd; background: #bfdbfe; font-weight: bold;">${formatCurrency(custoTotalFornecedor)}</td>`;
+        bodyHtml += `<td style="padding: 8px; text-align: center; border: 1px solid #93c5fd; background: #dbeafe;">-</td>`;
+        bodyHtml += `</tr>`;
+
+        // Itens do fornecedor - ordenados por código decrescente (mesma ordem da tabela de quantidade)
+        const itensOrdenadosCusto = [...itensFornecedor].sort((a, b) => {
+            const codA = parseInt(a.cod_produto) || 0;
+            const codB = parseInt(b.cod_produto) || 0;
+            return codB - codA;
+        });
+
+        itensOrdenadosCusto.forEach(item => {
+            const cue = item.cue || 0;
+            const custoTotalItem = (item.demanda_prevista_total || 0) * cue;
+
+            bodyHtml += `<tr class="linha-item-custo" data-fornecedor-custo="${fornecedorId}" style="background: white;">`;
+            bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 0; background: white; z-index: 5; font-size: 0.85em; min-width: 70px; width: 70px;">${item.cod_produto}</td>`;
+            bodyHtml += `<td style="padding: 6px 8px; border: 1px solid #ddd; position: sticky; left: 70px; background: white; z-index: 5; font-size: 0.85em; min-width: 220px; width: 220px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${item.descricao}">${item.descricao}</td>`;
+
+            if (item.previsao_por_periodo && item.previsao_por_periodo.length > 0) {
+                item.previsao_por_periodo.forEach((p, idx) => {
+                    if (idx < numColunasPeriodos) {
+                        const valorCusto = (p.previsao || 0) * cue;
+                        bodyHtml += `<td data-custo-cod-produto="${item.cod_produto}" data-custo-periodo="${p.periodo}" style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.85em;">${cue > 0 ? formatCurrency(valorCusto) : '-'}</td>`;
+                    }
+                });
+                for (let i = item.previsao_por_periodo.length; i < numColunasPeriodos; i++) {
+                    bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; color: #999;">-</td>`;
+                }
+            } else {
+                for (let i = 0; i < numColunasPeriodos; i++) {
+                    bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; color: #999;">-</td>`;
+                }
+            }
+
+            // Total previsto em R$
+            bodyHtml += `<td data-custo-item-total="${item.cod_produto}" style="padding: 6px; text-align: center; border: 1px solid #ddd; font-weight: 500; background: #eff6ff;">${cue > 0 ? formatCurrency(custoTotalItem) : '-'}</td>`;
+
+            // CUE unitario
+            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.8em; color: #6b7280;">${cue > 0 ? formatCurrency(cue) : '-'}</td>`;
+
+            bodyHtml += `</tr>`;
+        });
+    });
+
+    tbody.innerHTML = bodyHtml;
+
+    // Atualizar resumo
+    const resumoSection = document.getElementById('resumoRelatorioCusto');
+    if (resumoSection) {
+        resumoSection.style.display = 'block';
+        document.getElementById('resumoCustoTotal').textContent = formatCurrency(custoTotalGeral);
+    }
+}
+
+// Toggle para expandir/recolher fornecedor na tabela de custo
+function toggleFornecedorCusto(fornecedorId) {
+    const linhasItem = document.querySelectorAll(`.linha-item-custo[data-fornecedor-custo="${fornecedorId}"]`);
+    const toggleIcon = document.getElementById(`toggle-custo-${fornecedorId}`);
+
+    const estaVisivel = linhasItem[0]?.style.display !== 'none';
+
+    linhasItem.forEach(linha => {
+        linha.style.display = estaVisivel ? 'none' : '';
+    });
+
+    if (toggleIcon) {
+        toggleIcon.textContent = estaVisivel ? '►' : '▼';
+    }
+}
+
 // Toggle para expandir/recolher itens de um fornecedor
 function toggleFornecedor(fornecedorId) {
     const linhasItem = document.querySelectorAll(`.linha-item[data-fornecedor="${fornecedorId}"]`);
@@ -3491,8 +3649,13 @@ function filtrarRelatorioDetalhado() {
         itensFiltrados = itensFiltrados.filter(item => item.sinal_alerta === filtroAlerta);
     }
 
-    // Re-renderizar tabela com itens filtrados
+    // Re-renderizar tabelas com itens filtrados
     renderizarTabelaRelatorioDetalhado(
+        itensFiltrados,
+        dadosRelatorioDetalhado.periodos_previsao,
+        dadosRelatorioDetalhado.granularidade
+    );
+    renderizarTabelaRelatorioCusto(
         itensFiltrados,
         dadosRelatorioDetalhado.periodos_previsao,
         dadosRelatorioDetalhado.granularidade
@@ -4998,6 +5161,59 @@ async function salvarAjustesItem() {
                 const novoValor = valorAtual + diferencaTotal;
                 celulaFornTotal.textContent = formatNumber(novoValor);
                 celulaFornTotal.style.background = '#fef3c7';
+            }
+
+            // =====================================================
+            // Atualizar tabela de CUSTO (CUE) espelhada
+            // =====================================================
+            const cueItem = itemSelecionadoDrillDown?.dados?.cue || 0;
+            if (cueItem > 0) {
+                // Atualizar cada célula de período na tabela de custo
+                ajustesParaSalvar.forEach(ajuste => {
+                    const celulaCusto = document.querySelector(`td[data-custo-cod-produto="${ajuste.cod_produto}"][data-custo-periodo="${ajuste.periodo}"]`);
+                    if (celulaCusto) {
+                        const valorCusto = ajuste.valor_ajustado * cueItem;
+                        celulaCusto.textContent = formatCurrency(valorCusto);
+                        celulaCusto.style.background = '#fef3c7';
+                        celulaCusto.title = `Ajustado: ${formatNumber(ajuste.valor_ajustado)} un × ${formatCurrency(cueItem)}`;
+                    }
+                });
+
+                // Atualizar total do item na tabela de custo
+                const celulaCustoItemTotal = document.querySelector(`td[data-custo-item-total="${codProduto}"]`);
+                if (celulaCustoItemTotal && itemSelecionadoDrillDown?.dados) {
+                    const novoTotalCusto = (itemSelecionadoDrillDown.dados.demanda_prevista_total || 0) * cueItem;
+                    celulaCustoItemTotal.textContent = formatCurrency(novoTotalCusto);
+                    celulaCustoItemTotal.style.background = '#fef3c7';
+                }
+
+                // Atualizar totais do fornecedor na tabela de custo (por período)
+                const periodos = itemSelecionadoDrillDown?.dados?.previsao_por_periodo || [];
+                Object.entries(diferencasPorPeriodo).forEach(([periodo, diferenca]) => {
+                    const diferencaCusto = diferenca * cueItem;
+                    // Encontrar idx do periodo
+                    const periodoIdx = periodos.findIndex(p => p.periodo === periodo);
+                    if (periodoIdx >= 0) {
+                        const celulaCustoFornPeriodo = document.querySelector(`td[data-custo-fornecedor-total="${fornecedorId}"][data-custo-periodo-idx="${periodoIdx}"]`);
+                        if (celulaCustoFornPeriodo) {
+                            const valorAtualStr = celulaCustoFornPeriodo.textContent.replace(/[R$\s.]/g, '').replace(',', '.');
+                            const valorAtual = parseFloat(valorAtualStr) || 0;
+                            const novoValor = valorAtual + diferencaCusto;
+                            celulaCustoFornPeriodo.textContent = formatCurrency(novoValor);
+                            celulaCustoFornPeriodo.style.background = '#fef3c7';
+                        }
+                    }
+                });
+
+                // Atualizar total geral do fornecedor na tabela de custo
+                const celulaCustoFornTotal = document.querySelector(`td[data-custo-fornecedor-total-geral="${fornecedorId}"]`);
+                if (celulaCustoFornTotal) {
+                    const valorAtualStr = celulaCustoFornTotal.textContent.replace(/[R$\s.]/g, '').replace(',', '.');
+                    const valorAtual = parseFloat(valorAtualStr) || 0;
+                    const novoValor = valorAtual + (diferencaTotal * cueItem);
+                    celulaCustoFornTotal.textContent = formatCurrency(novoValor);
+                    celulaCustoFornTotal.style.background = '#fef3c7';
+                }
             }
 
             // Atualizar tabela comparativa (linha Previsão)

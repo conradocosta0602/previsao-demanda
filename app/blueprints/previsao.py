@@ -296,6 +296,26 @@ def _api_gerar_previsao_banco_v2_interno():
         cursor.execute(query_estoque, params_com_corte)
         estoque_por_item_raw = cursor.fetchall()
 
+        # =====================================================
+        # BUSCAR CUE (Custo Unitario de Estoque) POR ITEM
+        # Media ponderada pelo estoque de cada loja
+        # =====================================================
+        query_cue = """
+            SELECT codigo as cod_produto,
+                   CASE WHEN SUM(estoque) > 0
+                        THEN SUM(cue * estoque) / SUM(estoque)
+                        ELSE MAX(cue)
+                   END as cue_medio
+            FROM estoque_posicao_atual
+            WHERE cue > 0
+            GROUP BY codigo
+        """
+        cursor.execute(query_cue)
+        cue_rows = cursor.fetchall()
+        cue_por_item = {}
+        for row in cue_rows:
+            cue_por_item[row['cod_produto']] = float(row['cue_medio'] or 0)
+
         # Organizar estoque por item
         estoque_item_dict = {}
         for est in estoque_por_item_raw:
@@ -457,7 +477,8 @@ def _api_gerar_previsao_banco_v2_interno():
                     'metodo_estatistico': 'BLOQUEADO',
                     'fator_tendencia_yoy': 0,
                     'classificacao_tendencia': 'bloqueado',
-                    'previsao_por_periodo': []  # Array vazio para compatibilidade com frontend
+                    'previsao_por_periodo': [],  # Array vazio para compatibilidade com frontend
+                    'cue': round(cue_por_item.get(cod_produto, 0), 4)
                 })
                 continue
 
@@ -819,7 +840,8 @@ def _api_gerar_previsao_banco_v2_interno():
                 'metodo_estatistico': metodo_exibicao,
                 'fator_tendencia_yoy': round(fator_tendencia_yoy, 4),
                 'classificacao_tendencia': classificacao_tendencia,
-                'previsao_por_periodo': previsao_item_periodos
+                'previsao_por_periodo': previsao_item_periodos,
+                'cue': round(cue_por_item.get(cod_produto, 0), 4)
             })
 
             # Contar modelos
@@ -2003,7 +2025,7 @@ def api_exportar_relatorio_itens():
         headers = ['Codigo', 'Descricao']
         for periodo in periodos:
             headers.append(formatar_periodo_header(periodo))
-        headers.extend(['Total Prev.', 'Ano Ant.', 'Var. %', 'Alerta', 'Metodo'])
+        headers.extend(['Total Prev.', 'Ano Ant.', 'Var. %', 'Alerta', 'Metodo', 'CUE'])
 
         for col, header in enumerate(headers, start=1):
             cell = ws.cell(row=row_num, column=col, value=header)
@@ -2079,6 +2101,9 @@ def api_exportar_relatorio_itens():
             ws.cell(row=row_num, column=col_offset + 4, value='').fill = fornecedor_fill
             ws.cell(row=row_num, column=col_offset + 4).border = border
 
+            ws.cell(row=row_num, column=col_offset + 5, value='').fill = fornecedor_fill
+            ws.cell(row=row_num, column=col_offset + 5).border = border
+
             row_num += 1
 
             # Linhas dos itens do fornecedor
@@ -2117,6 +2142,10 @@ def api_exportar_relatorio_itens():
 
                 ws.cell(row=row_num, column=col_offset + 4, value=item.get('metodo_estatistico', '')).border = border
 
+                cue_valor = item.get('cue', 0)
+                ws.cell(row=row_num, column=col_offset + 5, value=cue_valor).border = border
+                ws.cell(row=row_num, column=col_offset + 5).number_format = '#,##0.0000'
+
                 row_num += 1
 
         # Ajustar largura das colunas
@@ -2126,6 +2155,117 @@ def api_exportar_relatorio_itens():
             ws.column_dimensions[get_column_letter(col_idx)].width = 12
 
         ws.freeze_panes = 'C2'
+
+        # =====================================================
+        # ABA 2: RELATORIO EM VALOR DE CUSTO (CUE)
+        # =====================================================
+        ws_custo = wb.create_sheet(title='Custo (CUE)')
+
+        custo_header_fill = PatternFill(start_color='3B82F6', end_color='1D4ED8', fill_type='solid')
+        custo_fornecedor_fill = PatternFill(start_color='DBEAFE', end_color='DBEAFE', fill_type='solid')
+        custo_total_fill = PatternFill(start_color='1E40AF', end_color='1E40AF', fill_type='solid')
+
+        row_custo = 1
+
+        # Filtros (se houver)
+        if filtros:
+            ws_custo.cell(row=row_custo, column=1, value='Filtros Aplicados:').font = Font(bold=True)
+            row_custo += 1
+            for chave, valor in filtros.items():
+                if valor:
+                    ws_custo.cell(row=row_custo, column=1, value=f'  {chave.title()}: {valor}')
+                    row_custo += 1
+            row_custo += 1
+
+        # Cabecalho
+        headers_custo = ['Codigo', 'Descricao']
+        for periodo in periodos:
+            headers_custo.append(formatar_periodo_header(periodo))
+        headers_custo.extend(['Total Prev. R$', 'CUE Unit.'])
+
+        for col, header in enumerate(headers_custo, start=1):
+            cell = ws_custo.cell(row=row_custo, column=col, value=header)
+            cell.font = header_font
+            cell.fill = custo_header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center')
+
+        row_custo += 1
+
+        # Agrupar e ordenar por fornecedor (mesmo da aba 1)
+        for fornecedor in fornecedores_ordenados:
+            itens_fornecedor = itens_por_fornecedor[fornecedor]
+
+            # Totais de custo do fornecedor
+            total_custo_forn = 0
+            totais_custo_periodo = [0] * len(periodos)
+
+            for item in itens_fornecedor:
+                cue = item.get('cue', 0)
+                total_custo_forn += item.get('demanda_prevista_total', 0) * cue
+
+                if item.get('previsao_por_periodo'):
+                    for idx, p in enumerate(item['previsao_por_periodo']):
+                        if idx < len(periodos):
+                            totais_custo_periodo[idx] += p.get('previsao', 0) * cue
+
+            # Linha do fornecedor
+            ws_custo.cell(row=row_custo, column=1, value='').fill = custo_fornecedor_fill
+            ws_custo.cell(row=row_custo, column=1).border = border
+            ws_custo.cell(row=row_custo, column=2, value=f'{fornecedor} ({len(itens_fornecedor)} itens)').font = Font(bold=True)
+            ws_custo.cell(row=row_custo, column=2).fill = custo_fornecedor_fill
+            ws_custo.cell(row=row_custo, column=2).border = border
+
+            for idx, total in enumerate(totais_custo_periodo, start=3):
+                cell = ws_custo.cell(row=row_custo, column=idx, value=round(total, 2))
+                cell.fill = custo_fornecedor_fill
+                cell.border = border
+                cell.number_format = '#,##0.00'
+                cell.font = Font(bold=True)
+
+            col_custo_offset = 3 + len(periodos)
+            ws_custo.cell(row=row_custo, column=col_custo_offset, value=round(total_custo_forn, 2)).fill = custo_fornecedor_fill
+            ws_custo.cell(row=row_custo, column=col_custo_offset).border = border
+            ws_custo.cell(row=row_custo, column=col_custo_offset).number_format = '#,##0.00'
+            ws_custo.cell(row=row_custo, column=col_custo_offset).font = Font(bold=True)
+
+            ws_custo.cell(row=row_custo, column=col_custo_offset + 1, value='').fill = custo_fornecedor_fill
+            ws_custo.cell(row=row_custo, column=col_custo_offset + 1).border = border
+
+            row_custo += 1
+
+            # Linhas dos itens
+            for item in itens_fornecedor:
+                cue = item.get('cue', 0)
+
+                ws_custo.cell(row=row_custo, column=1, value=item.get('cod_produto', '')).border = border
+                ws_custo.cell(row=row_custo, column=2, value=item.get('descricao', '')[:50]).border = border
+
+                if item.get('previsao_por_periodo'):
+                    for idx, p in enumerate(item['previsao_por_periodo'], start=3):
+                        if idx - 3 < len(periodos):
+                            valor_custo = round(p.get('previsao', 0) * cue, 2)
+                            cell = ws_custo.cell(row=row_custo, column=idx, value=valor_custo)
+                            cell.border = border
+                            cell.number_format = '#,##0.00'
+
+                col_custo_offset = 3 + len(periodos)
+                total_item_custo = round(item.get('demanda_prevista_total', 0) * cue, 2)
+                ws_custo.cell(row=row_custo, column=col_custo_offset, value=total_item_custo).border = border
+                ws_custo.cell(row=row_custo, column=col_custo_offset).number_format = '#,##0.00'
+
+                ws_custo.cell(row=row_custo, column=col_custo_offset + 1, value=round(cue, 4)).border = border
+                ws_custo.cell(row=row_custo, column=col_custo_offset + 1).number_format = '#,##0.0000'
+
+                row_custo += 1
+
+        # Ajustar largura
+        ws_custo.column_dimensions['A'].width = 12
+        ws_custo.column_dimensions['B'].width = 35
+        for col_idx in range(3, len(headers_custo) + 1):
+            ws_custo.column_dimensions[get_column_letter(col_idx)].width = 15
+
+        ws_custo.freeze_panes = 'C2'
 
         # Salvar em memoria
         output = io.BytesIO()

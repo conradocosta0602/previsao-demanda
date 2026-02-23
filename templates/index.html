@@ -351,6 +351,39 @@
                         </div>
                     </div>
 
+                    <!-- Relatório Detalhado em Valor de Custo (CUE) -->
+                    <div id="relatorioCustoSection" class="card-compact" style="display: none; margin-top: 20px;">
+                        <h3 style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; padding: 12px; border-radius: 8px; margin: -15px -15px 15px -15px;">
+                            💰 Relatório Detalhado em Valor de Custo (CUE)
+                        </h3>
+
+                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto; width: 100%;">
+                            <table id="relatorioCustoTable" style="width: max-content; min-width: 100%; border-collapse: collapse; font-size: 0.8em;">
+                                <thead id="relatorioCustoHeader" style="position: sticky; top: 0; background: white; z-index: 10;">
+                                </thead>
+                                <tbody id="relatorioCustoBody">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div id="resumoRelatorioCusto" style="margin-top: 15px; padding: 12px; background: #eff6ff; border-radius: 6px; border: 1px solid #bfdbfe; display: none;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; text-align: center;">
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">Custo Total Previsto</div>
+                                    <div id="resumoCustoTotal" style="font-size: 1.4em; font-weight: bold; color: #1d4ed8;">-</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">Custo Ano Anterior</div>
+                                    <div id="resumoCustoAnoAnt" style="font-size: 1.4em; font-weight: bold; color: #495057;">-</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.75em; color: #666;">Variação Custo</div>
+                                    <div id="resumoCustoVariacao" style="font-size: 1.4em; font-weight: bold; color: #495057;">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Botões de Ação -->
                     <div class="download-section-compact" style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
                         <button id="downloadBtn" class="btn-download-compact" onclick="exportarRelatorioItens()" disabled
@@ -375,6 +408,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v={{ range(1000,9999) | random }}"></script>
 </body>
 </html>

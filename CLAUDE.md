@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.12** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.13** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -392,6 +392,31 @@ python jobs/calcular_demanda_diaria.py --manual
 
 **Importante**: Apos importar dados, sempre executar o job de recalculo de demanda para atualizar a tabela `demanda_pre_calculada`.
 
+### 12. Tabela de Custo (CUE) na Tela de Demanda (V28)
+
+**Arquivos**: `app/blueprints/previsao.py`, `static/js/app.js`, `templates/index.html`
+
+Tabela espelhada abaixo da tabela de quantidade na Tela de Demanda, exibindo valores em R$ (quantidade x CUE).
+
+**CUE (Custo Unitario de Estoque)**:
+- Armazenado em `estoque_posicao_atual.cue` por item x loja
+- Para dados multi-loja: **media ponderada pelo estoque** (`SUM(cue * estoque) / SUM(estoque)`)
+- Se estoque = 0 em todas as lojas: usa `MAX(cue)` como fallback
+
+**Comportamento**:
+- Tabela de custo (cabecalho azul) aparece abaixo da tabela de quantidade (cabecalho verde)
+- Valores = previsao_periodo x CUE unitario do item
+- **Somente leitura** - nao ha edicao direta na tabela de custo
+- Ajustes manuais na tabela de quantidade refletem automaticamente na tabela de custo
+- Celulas ajustadas ficam amarelas em ambas as tabelas
+- Itens sem CUE mostram "-" nos valores
+
+**Excel Exportado**:
+- Aba "Relatorio Detalhado": tabela de quantidade + coluna CUE unitario
+- Aba "Custo (CUE)": tabela espelhada com valores em R$
+
+**Ordenacao**: Ambas as tabelas ordenam itens por codigo decrescente (maior para menor).
+
 ## APIs Importantes
 
 | Endpoint | Metodo | Descricao |
@@ -558,6 +583,7 @@ DB_PORT=5432
 - V25: Transferencias otimizadas - doador >90d, faixas prioridade, multiplo embalagem, matching 1:1 (v6.11)
 - V26: Limitador de cobertura 90 dias para itens TSB - evita excesso em demanda intermitente (v6.12)
 - V27: Completude de dados de embalagem - alerta fornecedores sem multiplo de caixa cadastrado (v6.12)
+- V28: Tabela de Custo (CUE) na Tela de Demanda - tabela espelhada em R$ + coluna CUE no Excel (v6.13)
 
 ## Documentacao Complementar
 
@@ -573,4 +599,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.12)
+**Ultima atualizacao**: Fevereiro 2026 (v6.13)
