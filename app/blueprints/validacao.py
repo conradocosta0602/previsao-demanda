@@ -9,6 +9,7 @@ Data: Fevereiro 2026
 """
 
 import json
+import numpy as np
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request, render_template
 
@@ -19,6 +20,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from core.validador_conformidade import ValidadorConformidade
 from app.utils.db_connection import get_db_connection
+
+
+def _converter_tipos_numpy(obj):
+    """Converte tipos numpy para tipos nativos Python (JSON-serializaveis)."""
+    if isinstance(obj, dict):
+        return {k: _converter_tipos_numpy(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_converter_tipos_numpy(item) for item in obj]
+    elif isinstance(obj, (np.bool_, )):
+        return bool(obj)
+    elif isinstance(obj, (np.integer, )):
+        return int(obj)
+    elif isinstance(obj, (np.floating, )):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
 
 
 validacao_bp = Blueprint('validacao', __name__, url_prefix='/api/validacao')
@@ -50,7 +68,7 @@ def executar_checklist():
 
         return jsonify({
             'sucesso': True,
-            'resultado': resultado
+            'resultado': _converter_tipos_numpy(resultado)
         })
 
     except Exception as e:
