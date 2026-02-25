@@ -89,7 +89,8 @@ ES = Z × Sigma × sqrt(Lead Time Base)
 - Se cobertura pos-pedido > 90 dias na loja, reduz quantidade do pedido
 - Quantidade maxima: `COBERTURA_MAXIMA_POS_PEDIDO * demanda_diaria - estoque_efetivo`
 - Arredonda para BAIXO no multiplo de caixa (para nao ultrapassar 90 dias)
-- Garante minimo de 1 caixa quando ha necessidade real
+- Garante minimo de 1 caixa APENAS quando cobertura atual < 90 dias
+- Se cobertura atual >= 90 dias, pedido = 0 (estoque ja suficiente)
 - Constante: `COBERTURA_MAXIMA_POS_PEDIDO = 90`
 
 **Situacoes que BLOQUEIAM pedido automatico**:
@@ -116,7 +117,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**23 verificacoes** de conformidade com a metodologia documentada:
+**25 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
