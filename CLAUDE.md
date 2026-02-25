@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.15** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.16** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -125,6 +125,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V27: Completude de dados de embalagem por fornecedor
 - V29: Distribuicao de estoque do CD para lojas (DRP)
 - V30: Verificacao de estoque CD para pedidos direto loja
+- V31: Bloqueio de itens sem vendas ha 12+ meses por loja
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -636,7 +637,8 @@ DB_PORT=5432
 - V27: Completude de dados de embalagem - alerta fornecedores sem multiplo de caixa cadastrado (v6.12)
 - V28: Tabela de Custo (CUE) na Tela de Demanda - tabela espelhada em R$ + coluna CUE no Excel (v6.13)
 - V29: Distribuicao de estoque CD para lojas - DRP com ES pooling, multiplos CDs, caixa fechada (v6.14)
-- V30: Verificacao de estoque CD para pedidos direto loja - CD distribui antes de V25, salva em oportunidades_transferencia (v6.15)
+- V30: Verificacao de estoque CD para pedidos direto loja - CD distribui antes de V25, salva em oportunidades_transferencia (v6.16)
+- V31: Bloqueio de itens sem vendas ha 12+ meses por loja - evita reposicao de itens obsoletos localmente (v6.16)
 
 ## Documentacao Complementar
 
@@ -652,4 +654,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.15)
+**Ultima atualizacao**: Fevereiro 2026 (v6.16)

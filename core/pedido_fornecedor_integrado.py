@@ -275,7 +275,12 @@ def calcular_quantidade_pedido(
             cobertura_pos = (estoque_efetivo + quantidade_pedido) / demanda_diaria
             if cobertura_pos > COBERTURA_MAXIMA_POS_PEDIDO:
                 qtd_maxima = max(0, COBERTURA_MAXIMA_POS_PEDIDO * demanda_diaria - estoque_efetivo)
-                quantidade_pedido = max(1, int(qtd_maxima))
+                # Mínimo de 1 APENAS se estoque não cobre 90 dias
+                cobertura_atual_dias = estoque_efetivo / demanda_diaria if demanda_diaria > 0 else 999
+                if int(qtd_maxima) == 0 and cobertura_atual_dias >= COBERTURA_MAXIMA_POS_PEDIDO:
+                    quantidade_pedido = 0
+                else:
+                    quantidade_pedido = max(1, int(qtd_maxima))
                 cobertura_limitada = True
         return {
             'quantidade_pedido': quantidade_pedido,
@@ -283,7 +288,7 @@ def calcular_quantidade_pedido(
             'necessidade_bruta': round(necessidade_bruta, 0),
             'estoque_efetivo': round(estoque_efetivo, 0),
             'demanda_periodo': round(demanda_periodo, 0),
-            'deve_pedir': True,
+            'deve_pedir': quantidade_pedido > 0,
             'ajustado_multiplo': False,
             'arredondamento_decisao': 'sem_multiplo',
             'cobertura_limitada': cobertura_limitada,
@@ -362,8 +367,10 @@ def calcular_quantidade_pedido(
                 qtd_limitada = arredondar_para_multiplo(qtd_maxima, multiplo_caixa, 'baixo')
             else:
                 qtd_limitada = int(qtd_maxima)
-            # Garantir mínimo de 1 caixa se há necessidade real
-            if qtd_limitada == 0 and necessidade_bruta > 0:
+            # Garantir mínimo de 1 caixa APENAS se estoque atual não cobre 90 dias
+            # Se estoque já cobre 90+ dias, pedido deve ser zero
+            cobertura_atual_dias = estoque_efetivo / demanda_diaria if demanda_diaria > 0 else 999
+            if qtd_limitada == 0 and necessidade_bruta > 0 and cobertura_atual_dias < COBERTURA_MAXIMA_POS_PEDIDO:
                 qtd_limitada = multiplo_caixa if multiplo_caixa > 1 else 1
             quantidade_pedido = qtd_limitada
             numero_caixas = quantidade_pedido // multiplo_caixa if multiplo_caixa > 1 else quantidade_pedido

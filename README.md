@@ -1,6 +1,12 @@
-# Sistema de Demanda e Reabastecimento v6.15
+# Sistema de Demanda e Reabastecimento v6.16
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.16 - Bloqueio de Itens sem Vendas 12+ Meses - V31 (Fev/2026):**
+- **V31 - Bloqueio por inatividade**: Itens sem vendas ha 12+ meses em uma loja nao geram pedido automatico para essa loja
+- **Escopo item x loja**: Se o item vende na loja 1 mas nao na loja 3, apenas loja 3 e bloqueada
+- **Visibilidade**: Itens bloqueados aparecem na aba "Itens Bloqueados" com motivo e data da ultima venda
+- **25 verificacoes de conformidade**: Nova V31 valida regra de bloqueio por historico
 
 **Novidades v6.15 - Estoque CD para Direto Loja + Ordem Otimizada - V30 (Fev/2026):**
 - **V30 - CD verifica estoque para TODOS os padroes de compra**: Mesmo fornecedores direto loja agora tem estoque do CD verificado (compras de oportunidade, negociacoes comerciais)
@@ -638,7 +644,17 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v6.15 (Fevereiro 2026) - ATUAL
+### v6.16 (Fevereiro 2026) - ATUAL
+
+**V31 - Bloqueio de Itens sem Vendas 12+ Meses:**
+
+- **Regra**: Itens sem vendas ha 12+ meses em uma loja especifica nao geram pedido automatico para essa loja
+- **Escopo item x loja**: Bloqueio e por combinacao item x loja (nao global)
+- **Visibilidade**: Itens aparecem na aba "Itens Bloqueados" com sit_compra=SH12 e motivo descritivo
+- **Query batch**: Consulta unica MAX(data) por item x loja para performance
+- **25 verificacoes de conformidade**: Nova V31 no checklist
+
+### v6.15 (Fevereiro 2026)
 
 **V30 - Estoque CD para Pedidos Direto Loja:**
 

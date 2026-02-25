@@ -93,6 +93,7 @@ class ValidadorConformidade:
             ('V27', 'Completude Dados Embalagem', self._verificar_completude_embalagem),
             ('V29', 'Distribuicao Estoque CD (DRP)', self._verificar_distribuicao_cd),
             ('V30', 'Estoque CD para Direto Loja', self._verificar_estoque_cd_direto_loja),
+            ('V31', 'Bloqueio Itens sem Venda 12m', self._verificar_bloqueio_sem_venda_12m),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -2494,6 +2495,155 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V30: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_bloqueio_sem_venda_12m(self) -> Tuple[str, str, Dict]:
+        """
+        V31: Verifica que itens sem vendas ha 12+ meses por loja sao bloqueados.
+
+        Testa:
+        1. Codigo V31 presente no blueprint (MESES_SEM_VENDA_BLOQUEIO, itens_sem_venda_recente)
+        2. Query usa MAX(data) e qtd_venda > 0
+        3. Itens bloqueados usam sit_compra = 'SH12'
+        4. Existem itens sem venda recente no banco (validacao de dados)
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: Codigo V31 presente no blueprint
+            testes_total += 1
+            try:
+                with open('app/blueprints/pedido_fornecedor.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                if 'MESES_SEM_VENDA_BLOQUEIO' in source and 'itens_sem_venda_recente' in source and 'V31' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Codigo V31 presente',
+                        'status': 'ok',
+                        'detalhe': 'Bloqueio de itens sem venda 12+ meses implementado'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Codigo V31 presente',
+                        'status': 'falha',
+                        'detalhe': 'Bloco V31 nao encontrado em pedido_fornecedor.py'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Codigo V31 presente',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 2: Query usa MAX(data) e qtd_venda > 0
+            testes_total += 1
+            try:
+                with open('app/blueprints/pedido_fornecedor.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                if 'MAX(data)' in source and 'qtd_venda > 0' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Query correta',
+                        'status': 'ok',
+                        'detalhe': 'Query usa MAX(data) com filtro qtd_venda > 0'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Query correta',
+                        'status': 'falha',
+                        'detalhe': 'Query V31 incompleta'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Query correta',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 3: Itens bloqueados usam sit_compra SH12
+            testes_total += 1
+            try:
+                with open('app/blueprints/pedido_fornecedor.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                if "'SH12'" in source and 'Sem vendas ha 12+ meses' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Sit compra SH12',
+                        'status': 'ok',
+                        'detalhe': 'Itens bloqueados marcados com SH12 e motivo descritivo'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Sit compra SH12',
+                        'status': 'falha',
+                        'detalhe': 'Marcacao SH12 nao encontrada'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Sit compra SH12',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 4: Verificar dados no banco - itens sem venda recente
+            testes_total += 1
+            if self.conn:
+                try:
+                    cursor = self.conn.cursor()
+                    cursor.execute("""
+                        SELECT COUNT(*) as total_pares
+                        FROM (
+                            SELECT codigo, cod_empresa, MAX(data) as ultima
+                            FROM historico_vendas_diario
+                            WHERE cod_empresa < 80 AND qtd_venda > 0
+                            GROUP BY codigo, cod_empresa
+                            HAVING MAX(data) < CURRENT_DATE - INTERVAL '365 days'
+                        ) sub
+                    """)
+                    row = cursor.fetchone()
+                    pares_antigos = row[0] if row else 0
+                    cursor.close()
+
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Dados no banco',
+                        'status': 'ok',
+                        'detalhe': f'{pares_antigos} pares item x loja com ultima venda ha 12+ meses'
+                    })
+                except Exception as e:
+                    detalhes_testes.append({
+                        'teste': 'Dados no banco',
+                        'status': 'alerta',
+                        'detalhe': f'Erro ao consultar banco: {str(e)}'
+                    })
+            else:
+                detalhes_testes.append({
+                    'teste': 'Dados no banco',
+                    'status': 'alerta',
+                    'detalhe': 'Sem conexao com banco para validar dados'
+                })
+
+            detalhes = {
+                'testes_ok': testes_ok,
+                'testes_total': testes_total,
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V31 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V31 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V31 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V31: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

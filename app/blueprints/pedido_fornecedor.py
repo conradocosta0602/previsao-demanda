@@ -5,7 +5,7 @@ Rotas: /pedido_fornecedor_integrado, /api/pedido_fornecedor_integrado, /api/pedi
 
 import os
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 import pandas as pd
 import numpy as np
@@ -401,6 +401,46 @@ def api_pedido_fornecedor_integrado():
             )
             print(f"  [CACHE] Proporcoes por loja calculadas: {len(cache_proporcoes)} registros")
 
+        # ==============================================================================
+        # V31: Verificar ultima venda por item x loja (batch)
+        # Itens sem vendas ha 12+ meses nao devem gerar pedido automatico
+        # ==============================================================================
+        MESES_SEM_VENDA_BLOQUEIO = 12
+        data_limite_v31 = (datetime.now() - timedelta(days=MESES_SEM_VENDA_BLOQUEIO * 30)).date()
+        itens_sem_venda_recente = set()  # set de (codigo, cod_loja)
+        ultima_venda_map = {}  # {(codigo, loja): date}
+
+        if codigos_produtos and lojas_demanda:
+            try:
+                conn_v31 = get_db_connection()
+                cursor_v31 = conn_v31.cursor()
+                cursor_v31.execute("""
+                    SELECT codigo, cod_empresa, MAX(data) as ultima_venda
+                    FROM historico_vendas_diario
+                    WHERE codigo = ANY(%s)
+                      AND cod_empresa = ANY(%s)
+                      AND qtd_venda > 0
+                    GROUP BY codigo, cod_empresa
+                """, (codigos_produtos, list(lojas_demanda)))
+
+                for row_v31 in cursor_v31.fetchall():
+                    ultima_venda_map[(int(row_v31[0]), int(row_v31[1]))] = row_v31[2]
+
+                # Identificar itens sem venda recente por loja
+                for cod in codigos_produtos:
+                    for loja in lojas_demanda:
+                        ultima = ultima_venda_map.get((cod, loja))
+                        if ultima is None or ultima < data_limite_v31:
+                            itens_sem_venda_recente.add((cod, loja))
+
+                cursor_v31.close()
+                conn_v31.close()
+
+                if itens_sem_venda_recente:
+                    print(f"  [V31] {len(itens_sem_venda_recente)} combinacoes item x loja sem vendas ha 12+ meses")
+            except Exception as e_v31:
+                print(f"  [V31] Erro ao verificar historico de vendas: {e_v31}")
+
         resultados = []
         itens_sem_historico = 0
         itens_sem_demanda = 0
@@ -436,6 +476,59 @@ def api_pedido_fornecedor_integrado():
 
                     for loja_cod in lojas_demanda:
                         loja_nome = mapa_nomes_lojas.get(loja_cod, f"Loja {loja_cod}")
+
+                        # V31: Verificar se item tem vendas recentes nesta loja
+                        if (codigo, loja_cod) in itens_sem_venda_recente:
+                            produto_v31 = processador.buscar_dados_produto(codigo)
+                            estoque_v31 = processador.buscar_estoque_atual(codigo, loja_cod)
+                            ultima_data = ultima_venda_map.get((codigo, loja_cod))
+
+                            preco_custo_v31 = 0
+                            if estoque_v31:
+                                preco_custo_v31 = estoque_v31.get('cue', 0) or 0
+                            if not preco_custo_v31 and produto_v31:
+                                preco_custo_v31 = produto_v31.get('cue', 0) or produto_v31.get('preco_custo', 0) or 0
+
+                            curva_v31 = estoque_v31.get('curva_abc', 'B') if estoque_v31 else 'B'
+                            if not curva_v31 or curva_v31 == 'B':
+                                curva_v31 = produto_v31.get('curva_abc', 'B') if produto_v31 else 'B'
+
+                            motivo_v31 = 'Sem vendas ha 12+ meses nesta loja'
+                            if ultima_data:
+                                motivo_v31 += f' (ultima: {ultima_data.strftime("%d/%m/%Y")})'
+                            else:
+                                motivo_v31 += ' (nunca vendeu)'
+
+                            resultados.append({
+                                'codigo': codigo,
+                                'descricao': produto_v31.get('descricao', '') if produto_v31 else f'Produto {codigo}',
+                                'categoria': produto_v31.get('categoria', '') if produto_v31 else '',
+                                'cod_empresa': loja_cod,
+                                'cod_loja': loja_cod,
+                                'nome_loja': loja_nome,
+                                'bloqueado': True,
+                                'sit_compra': 'SH12',
+                                'motivo_bloqueio': motivo_v31,
+                                'permite_compra_manual': True,
+                                'cor_alerta': '#6c757d',
+                                'icone_bloqueio': '📊',
+                                'quantidade_pedido': 0,
+                                'valor_pedido': 0,
+                                'deve_pedir': False,
+                                'codigo_fornecedor': row.get('codigo_fornecedor', ''),
+                                'nome_fornecedor': row.get('nome_fornecedor', ''),
+                                'curva_abc': curva_v31,
+                                'linha1': produto_v31.get('linha1', '') if produto_v31 else '',
+                                'linha3': produto_v31.get('linha3', '') if produto_v31 else '',
+                                'estoque_atual': estoque_v31.get('estoque_disponivel', 0) if estoque_v31 else 0,
+                                'estoque_efetivo': estoque_v31.get('estoque_efetivo', 0) if estoque_v31 else 0,
+                                'estoque_transito': estoque_v31.get('estoque_transito', 0) if estoque_v31 else 0,
+                                'preco_custo': preco_custo_v31,
+                                'cue': preco_custo_v31,
+                                'demanda_prevista_diaria': 0,
+                                'demanda_diaria': 0
+                            })
+                            continue  # Pula para proxima loja
 
                         # Buscar proporcao de vendas desta loja para este produto
                         proporcao_loja = cache_proporcoes.get((str(codigo), loja_cod))
@@ -514,6 +607,59 @@ def api_pedido_fornecedor_integrado():
 
                         resultados.append(resultado)
                 else:
+                    # V31: Verificar se item tem vendas recentes nesta loja
+                    if (codigo, cod_destino) in itens_sem_venda_recente:
+                        produto_v31 = processador.buscar_dados_produto(codigo)
+                        estoque_v31 = processador.buscar_estoque_atual(codigo, cod_destino)
+                        ultima_data = ultima_venda_map.get((codigo, cod_destino))
+
+                        preco_custo_v31 = 0
+                        if estoque_v31:
+                            preco_custo_v31 = estoque_v31.get('cue', 0) or 0
+                        if not preco_custo_v31 and produto_v31:
+                            preco_custo_v31 = produto_v31.get('cue', 0) or produto_v31.get('preco_custo', 0) or 0
+
+                        curva_v31 = estoque_v31.get('curva_abc', 'B') if estoque_v31 else 'B'
+                        if not curva_v31 or curva_v31 == 'B':
+                            curva_v31 = produto_v31.get('curva_abc', 'B') if produto_v31 else 'B'
+
+                        motivo_v31 = 'Sem vendas ha 12+ meses nesta loja'
+                        if ultima_data:
+                            motivo_v31 += f' (ultima: {ultima_data.strftime("%d/%m/%Y")})'
+                        else:
+                            motivo_v31 += ' (nunca vendeu)'
+
+                        resultados.append({
+                            'codigo': codigo,
+                            'descricao': produto_v31.get('descricao', '') if produto_v31 else f'Produto {codigo}',
+                            'categoria': produto_v31.get('categoria', '') if produto_v31 else '',
+                            'cod_empresa': cod_destino,
+                            'cod_loja': cod_destino,
+                            'nome_loja': nome_destino,
+                            'bloqueado': True,
+                            'sit_compra': 'SH12',
+                            'motivo_bloqueio': motivo_v31,
+                            'permite_compra_manual': True,
+                            'cor_alerta': '#6c757d',
+                            'icone_bloqueio': '📊',
+                            'quantidade_pedido': 0,
+                            'valor_pedido': 0,
+                            'deve_pedir': False,
+                            'codigo_fornecedor': row.get('codigo_fornecedor', ''),
+                            'nome_fornecedor': row.get('nome_fornecedor', ''),
+                            'curva_abc': curva_v31,
+                            'linha1': produto_v31.get('linha1', '') if produto_v31 else '',
+                            'linha3': produto_v31.get('linha3', '') if produto_v31 else '',
+                            'estoque_atual': estoque_v31.get('estoque_disponivel', 0) if estoque_v31 else 0,
+                            'estoque_efetivo': estoque_v31.get('estoque_efetivo', 0) if estoque_v31 else 0,
+                            'estoque_transito': estoque_v31.get('estoque_transito', 0) if estoque_v31 else 0,
+                            'preco_custo': preco_custo_v31,
+                            'cue': preco_custo_v31,
+                            'demanda_prevista_diaria': 0,
+                            'demanda_diaria': 0
+                        })
+                        continue  # Pula para proximo item
+
                     # PRIORIDADE 1: Usar demanda pre-calculada do CACHE (otimizado)
                     # Para mono-loja, buscar consolidado (cod_empresa=None)
                     demanda_diaria, desvio_padrao, metadata = obter_demanda_do_cache(
