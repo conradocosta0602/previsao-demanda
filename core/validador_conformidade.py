@@ -92,6 +92,7 @@ class ValidadorConformidade:
             ('V26', 'Limitador Cobertura 90d TSB', self._verificar_limitador_cobertura_e_rede),
             ('V27', 'Completude Dados Embalagem', self._verificar_completude_embalagem),
             ('V29', 'Distribuicao Estoque CD (DRP)', self._verificar_distribuicao_cd),
+            ('V30', 'Estoque CD para Direto Loja', self._verificar_estoque_cd_direto_loja),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -2346,6 +2347,153 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V29: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_estoque_cd_direto_loja(self) -> Tuple[str, str, Dict]:
+        """
+        V30: Verifica que o sistema verifica estoque dos CDs mesmo para pedidos direto loja.
+
+        Testa:
+        1. Codigo de deteccao V30 existe em pedido_fornecedor.py (not is_destino_cd)
+        2. Transferencias CD sao salvas em oportunidades_transferencia
+        3. Ordem correta: CD distribui ANTES de V25 (loja<->loja)
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: Codigo V30 presente no blueprint
+            testes_total += 1
+            try:
+                import inspect
+                from app.blueprints.pedido_fornecedor import pedido_fornecedor_bp
+                source_file = inspect.getfile(pedido_fornecedor_bp.__class__)
+                with open('app/blueprints/pedido_fornecedor.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                if 'not is_destino_cd' in source and 'cod_empresa >= 80' in source and 'CD V30' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Codigo V30 presente',
+                        'status': 'ok',
+                        'detalhe': 'Deteccao de estoque CD para direto loja implementada'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Codigo V30 presente',
+                        'status': 'falha',
+                        'detalhe': 'Bloco V30 nao encontrado em pedido_fornecedor.py'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Codigo V30 presente',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 2: Ordem correta - CD distribui ANTES de V25
+            testes_total += 1
+            try:
+                with open('app/blueprints/pedido_fornecedor.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                pos_cd = source.find('ETAPA 2: DISTRIBUICAO DO ESTOQUE DO CD')
+                pos_v25 = source.find('ETAPA 3: TRANSFERENCIAS ENTRE LOJAS')
+
+                if pos_cd > 0 and pos_v25 > 0 and pos_cd < pos_v25:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Ordem CD antes V25',
+                        'status': 'ok',
+                        'detalhe': 'CD distribui (Etapa 2) ANTES de transferencias loja<->loja (Etapa 3)'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Ordem CD antes V25',
+                        'status': 'falha',
+                        'detalhe': f'Ordem incorreta: CD pos={pos_cd}, V25 pos={pos_v25}'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Ordem CD antes V25',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 3: Transferencias CD salvas no banco
+            testes_total += 1
+            try:
+                with open('app/blueprints/pedido_fornecedor.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                if 'transferencias_cd' in source and 'SALVAR TRANSFERENCIAS CD' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Persistencia transferencias CD',
+                        'status': 'ok',
+                        'detalhe': 'Transferencias CD->lojas salvas em oportunidades_transferencia'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Persistencia transferencias CD',
+                        'status': 'falha',
+                        'detalhe': 'Salvamento de transferencias CD nao encontrado'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Persistencia transferencias CD',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 4: Estoque em CDs existe no banco
+            testes_total += 1
+            if self.conn:
+                cursor = self.conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(DISTINCT cod_empresa) as num_cds,
+                           COUNT(DISTINCT codigo) as itens_com_estoque,
+                           SUM(estoque) as estoque_total
+                    FROM estoque_posicao_atual
+                    WHERE cod_empresa >= 80 AND COALESCE(estoque, 0) > 0
+                """)
+                row = cursor.fetchone()
+                num_cds = row[0] if row else 0
+                itens_estoque = row[1] if row else 0
+                estoque_total = float(row[2]) if row and row[2] else 0
+                cursor.close()
+
+                if num_cds > 0:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Estoque CDs no banco',
+                        'status': 'ok',
+                        'detalhe': f'{num_cds} CD(s) com estoque, {itens_estoque} itens, total={estoque_total:,.0f} un'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Estoque CDs no banco',
+                        'status': 'alerta',
+                        'detalhe': 'Nenhum CD com estoque > 0 no banco'
+                    })
+
+            detalhes = {
+                'testes_ok': testes_ok,
+                'testes_total': testes_total,
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V30 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V30 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V30 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V30: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

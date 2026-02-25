@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.14** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.15** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -124,6 +124,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V26: Limitador de Cobertura 90 dias para itens TSB
 - V27: Completude de dados de embalagem por fornecedor
 - V29: Distribuicao de estoque do CD para lojas (DRP)
+- V30: Verificacao de estoque CD para pedidos direto loja
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -187,22 +188,26 @@ nova_qtd = arredondar_para_multiplo(55, 12, 'cima')  # = 60 (5 caixas)
 
 **Importante**: As sugestoes de transferencia sao recalculadas a cada execucao do pedido. Dados antigos (>24h) sao automaticamente limpos.
 
-### 5b. Distribuicao de Estoque do CD para Lojas (V29)
+### 5b. Distribuicao de Estoque do CD para Lojas (V29/V30)
 
 **Arquivos**: `app/blueprints/pedido_fornecedor.py`, `core/pedido_fornecedor_integrado.py`
 
-Apos transferencias loja<->loja (V25), o sistema distribui o estoque do CD para lojas com falta, reduzindo o pedido ao fornecedor. Aplica-se quando o padrao de compra direciona para CD (cod_empresa >= 80).
+O sistema distribui estoque do CD para lojas com falta, reduzindo o pedido ao fornecedor.
+Roda **ANTES** das transferencias loja<->loja (V25) — estoque no CD e improdutivo, prioriza-se esvaziá-lo.
+
+**V30**: A verificacao de estoque do CD funciona para **todos os padroes de compra** (centralizado E direto loja). Mesmo fornecedores com padrao direto loja podem ter estoque nos CDs (negociacoes comerciais, compras de oportunidade).
 
 **Fluxo Completo**:
 ```
 1. Calcular pedido por LOJA (demanda rateada)
-2. ETAPA 2: Transferencias LOJA<->LOJA (V25)
-3. ETAPA 3: Distribuicao CD->LOJAS (V29)
-4. Pedido = Sum(pedidos residuais) + buffer transferencia
+2. ETAPA 2: Distribuicao CD->LOJAS (V29/V30) - CD primeiro
+3. ETAPA 3: Transferencias LOJA<->LOJA (V25, se multiloja) - lojas depois
+4. Pedido = Sum(pedidos residuais)
 ```
 
 **Deteccao de CDs**:
-- Consulta `padrao_compra_item` filtrando `cod_empresa_venda < 80 AND cod_empresa_destino >= 80`
+- **Modo centralizado** (`is_destino_cd`): mapeia todos itens ao CD destino selecionado
+- **Modo direto loja** (V30): consulta `estoque_posicao_atual WHERE cod_empresa >= 80 AND estoque > 0`
 - Suporta **multiplos CDs** (80, 81, 82, etc.) - cada item mapeado ao seu CD especifico
 - Dict `cd_por_item`: {codigo_item: cod_cd}
 
@@ -217,11 +222,16 @@ ES_cd = Z × sigma_total × sqrt(LT_fornecedor)
 
 **Distribuicao**:
 - CD como "super-doador" sem restricao de grupo regional
-- Distribui para lojas que AINDA tem pedido > 0 apos etapa 2
+- Distribui para lojas que tem pedido > 0
 - Prioridade: RUPTURA > CRITICA > ALTA > MEDIA (mesma logica V25)
 - Caixa fechada: arredonda para BAIXO (nao envia caixa incompleta)
 - Pedido residual re-arredondado para CIMA (multiplo de caixa)
 - Estoque distribuivel = estoque_CD - ES_pooling_CD
+
+**Persistencia**:
+- Transferencias CD->lojas sao salvas em `oportunidades_transferencia` (mesma tabela V25)
+- Origem identificada como `loja_origem >= 80` (CD MDC, CD OBC, etc.)
+- Aparecem na tela de transferencias e no arquivo Excel de exportacao
 
 **Badge na Tela**:
 - Badge verde `CD X un` quando loja recebe distribuicao do CD
@@ -626,6 +636,7 @@ DB_PORT=5432
 - V27: Completude de dados de embalagem - alerta fornecedores sem multiplo de caixa cadastrado (v6.12)
 - V28: Tabela de Custo (CUE) na Tela de Demanda - tabela espelhada em R$ + coluna CUE no Excel (v6.13)
 - V29: Distribuicao de estoque CD para lojas - DRP com ES pooling, multiplos CDs, caixa fechada (v6.14)
+- V30: Verificacao de estoque CD para pedidos direto loja - CD distribui antes de V25, salva em oportunidades_transferencia (v6.15)
 
 ## Documentacao Complementar
 
@@ -641,4 +652,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.14)
+**Ultima atualizacao**: Fevereiro 2026 (v6.15)

@@ -1,15 +1,20 @@
-# Sistema de Demanda e Reabastecimento v6.14
+# Sistema de Demanda e Reabastecimento v6.15
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v6.14 - Distribuicao de Estoque do CD para Lojas - V29 (Fev/2026):**
-- **V29 - DRP (Distribution Requirements Planning)**: O sistema agora distribui o estoque do CD para lojas com falta antes de calcular o pedido ao fornecedor
+**Novidades v6.15 - Estoque CD para Direto Loja + Ordem Otimizada - V30 (Fev/2026):**
+- **V30 - CD verifica estoque para TODOS os padroes de compra**: Mesmo fornecedores direto loja agora tem estoque do CD verificado (compras de oportunidade, negociacoes comerciais)
+- **Ordem otimizada**: CD distribui ANTES de transferencias loja<->loja (V25). Estoque no CD e improdutivo, prioriza-se esvaziá-lo
+- **Transferencias CD persistidas**: Transferencias CD->lojas salvas em `oportunidades_transferencia`, visiveis na tela e Excel de transferencias
+- **24 verificacoes de conformidade**: Nova V30 valida deteccao de CDs, ordem e persistencia
+
+**Novidades v6.14 - Distribuicao de Estoque do CD para Lojas - V29:**
+- **V29 - DRP (Distribution Requirements Planning)**: O sistema distribui o estoque do CD para lojas com falta antes de calcular o pedido ao fornecedor
 - **Suporte a multiplos CDs**: Cada item e mapeado ao seu CD via `padrao_compra_item` (loja >= 80)
 - **ES Pooling (Chopra & Meindl)**: Estoque de seguranca do CD usa efeito pooling (sigma_total = sqrt(sum(sigma^2))), reduzindo ~65% vs soma individual
 - **Distribuicao em caixa fechada**: Arredonda para baixo no multiplo de embalagem
 - **Prioridade V25**: Mesma logica de faixas (RUPTURA > CRITICA > ALTA > MEDIA)
 - **Badge CD na tela**: Mostra quantidade distribuida do CD para cada loja
-- **23 verificacoes de conformidade**: Nova V29 valida logica de distribuicao CD
 
 **Novidades v5.7 - Fator de Tendencia YoY e Botao Salvar Demanda (Fev/2026):**
 - **Fator de Tendencia YoY**: Corrige subestimacao em fornecedores com crescimento historico (ex: ZAGONEL +29% real, modelo previa -18% → agora preve +20%)
@@ -633,11 +638,20 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v6.14 (Fevereiro 2026) - ATUAL
+### v6.15 (Fevereiro 2026) - ATUAL
+
+**V30 - Estoque CD para Pedidos Direto Loja:**
+
+- **Deteccao universal de CDs**: Verifica estoque em todos os CDs (cod_empresa >= 80) para qualquer padrao de compra, nao apenas centralizado
+- **Ordem otimizada**: CD distribui (Etapa 2) ANTES de transferencias loja<->loja V25 (Etapa 3) — estoque no CD e improdutivo
+- **Persistencia**: Transferencias CD->lojas salvas em `oportunidades_transferencia` — aparecem na tela e no Excel de transferencias
+- **24 verificacoes de conformidade**: Nova V30 no checklist
+
+### v6.14 (Fevereiro 2026)
 
 **V29 - Distribuicao de Estoque do CD para Lojas (DRP):**
 
-- **Etapa 3 no fluxo de pedido**: Apos transferencias loja<->loja (V25), distribui estoque do CD para lojas com falta
+- **Distribuicao CD->lojas**: Distribui estoque do CD para lojas com falta, reduzindo pedido ao fornecedor
 - **Multiplos CDs**: Suporta CDs 80, 81, 82, 83, 92, 93, 94 - cada item mapeado ao seu CD via `padrao_compra_item`
 - **ES Pooling**: Estoque de seguranca do CD calculado com efeito risk pooling (Chopra & Meindl, 2019)
 - **Distribuicao em caixa fechada**: Arredonda para baixo no multiplo de embalagem
