@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.16** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.18** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -62,9 +62,16 @@ previsao-demanda/
 
 **Formula de cobertura**:
 ```
-Lead Time Efetivo = Lead Time Fornecedor + Delay Operacional (5d)
+Lead Time Base = Lead Time Fornecedor + Transit Time CD (se centralizado)
+Lead Time Efetivo = Lead Time Base + Delay Operacional (5d)
 Cobertura = Lead Time Efetivo + Ciclo (7d) + Seguranca ABC
 ```
+
+**Transit Time CD->Loja** (v6.18): Para pedidos centralizados (destino CD),
+o transit time (parametro `dias_transferencia_padrao_compra`, default 10 dias)
+e somado ao lead time do fornecedor no **backend**, incorporando-se ao calculo
+de cobertura que desconta estoque existente. Antes era adicionado no frontend
+como `demanda × dias`, o que inflava pedidos.
 
 **Delay Operacional**: 5 dias adicionados ao lead time para compensar
 tempo entre calculo do pedido e envio ao fornecedor (aprovacoes, consolidacao).
@@ -117,7 +124,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**26 verificacoes** de conformidade com a metodologia documentada:
+**29 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
@@ -128,6 +135,9 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V30: Verificacao de estoque CD para pedidos direto loja
 - V31: Bloqueio de itens sem vendas ha 12+ meses por loja
 - V32: Rateio proporcional zero para lojas sem vendas historicas
+- V33: Transit time CD->loja no backend (em vez de frontend)
+- V34: Fair Share Allocation na distribuicao do CD
+- V35: Semantica correta de qtd_pend_transf no CD
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -652,6 +662,9 @@ DB_PORT=5432
 - V30: Verificacao de estoque CD para pedidos direto loja - CD distribui antes de V25, salva em oportunidades_transferencia (v6.16)
 - V31: Bloqueio de itens sem vendas ha 12+ meses por loja - evita reposicao de itens obsoletos localmente (v6.16)
 - V32: Rateio proporcional zero - lojas sem vendas recebem demanda 0 em vez de rateio uniforme (v6.17)
+- V33: Transit time CD->loja no backend - incorporado ao lead time em vez de ajuste no frontend (v6.18)
+- V34: Fair Share Allocation na distribuicao do CD - proporcional por faixa em vez de sequencial (v6.18)
+- V35: Semantica qtd_pend_transf no CD - subtrair do estoque (mercadoria comprometida) em vez de somar (v6.18)
 
 ## Documentacao Complementar
 
@@ -667,4 +680,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.17)
+**Ultima atualizacao**: Fevereiro 2026 (v6.18)

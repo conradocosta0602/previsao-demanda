@@ -1,12 +1,12 @@
-# Sistema de Demanda e Reabastecimento v6.17
+# Sistema de Demanda e Reabastecimento v6.18
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v6.17 - Correcao Rateio Proporcional + V29 Centralizado (Fev/2026):**
-- **V32 - Rateio proporcional zero**: Lojas sem vendas historicas de um item recebem demanda=0 em vez de rateio uniforme. Evita inflacao de demanda total quando outras lojas ja cobrem 100% via proporcao
-- **V29 ajuste centralizado**: Pedidos centralizados (destino CD) nao retêm ES pooling — todo estoque do CD e distribuido para lojas. CD e ponto de passagem, fornecedor repoe
-- **Estoque total inclui CD**: Na tela de pedido centralizado, "Estoque Total" agora soma estoque lojas + estoque CD
-- **26 verificacoes de conformidade**: Nova V32 valida protecao contra rateio uniforme indevido
+**Novidades v6.18 - Transit Time Backend + Fair Share CD + Correcao qtd_pend_transf (Fev/2026):**
+- **V33 - Transit time no backend**: Transit time CD->loja (+10d) incorporado ao lead time no backend, onde o calculo de cobertura desconta estoque. Antes era adicionado no frontend como `demanda × dias`, inflando pedidos
+- **V34 - Fair Share Allocation**: Distribuicao de estoque do CD proporcional dentro de cada faixa de prioridade. Antes era sequencial (primeira loja recebia 100% antes da segunda)
+- **V35 - Semantica qtd_pend_transf**: No CD, `qtd_pend_transf` e mercadoria ja comprometida (saindo). Subtraida do estoque disponivel em vez de somada (evita dupla contagem)
+- **29 verificacoes de conformidade**: Novas V33, V34, V35
 
 **Novidades v6.16 - Bloqueio de Itens sem Vendas 12+ Meses - V31 (Fev/2026):**
 - **V31 - Bloqueio por inatividade**: Itens sem vendas ha 12+ meses em uma loja nao geram pedido automatico para essa loja
@@ -650,7 +650,17 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v6.17 (Fevereiro 2026) - ATUAL
+### v6.18 (Fevereiro 2026) - ATUAL
+
+**V33/V34/V35 - Transit Time Backend + Fair Share CD + Correcao qtd_pend_transf:**
+
+- **V33 - Transit time CD->loja no backend**: O transit time (parametro `dias_transferencia_padrao_compra`, default 10d) e somado ao lead time do fornecedor no backend para pedidos centralizados. O calculo de cobertura desconta estoque existente, evitando inflacao. Removidos 3 blocos de ajuste do frontend
+- **V34 - Fair Share Allocation**: Distribuicao de estoque do CD proporcional dentro de cada faixa de prioridade (RUPTURA > CRITICA > ALTA > MEDIA). Se estoque insuficiente na faixa, distribui `fracao = estoque / total_necessidade`. Sobra de arredondamento vai ao mais necessitado
+- **V35 - Semantica qtd_pend_transf no CD**: `qtd_pend_transf` no CD = mercadoria ja comprometida (separada/faturada para lojas). Agora subtraida do estoque disponivel (`estoque - qtd_pend_transf`) em vez de somada (que causava dupla contagem). CD 80 tinha 3.435 un comprometidas
+- **29 verificacoes de conformidade**: Novas V33, V34, V35
+- Arquivos modificados: `pedido_fornecedor.py`, `pedido_fornecedor_integrado.html`, `validador_conformidade.py`
+
+### v6.17 (Fevereiro 2026)
 
 **V32 - Correcao Rateio Proporcional + V29 Centralizado:**
 

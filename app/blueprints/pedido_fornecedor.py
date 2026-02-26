@@ -19,6 +19,7 @@ from app.utils.demanda_pre_calculada import (
     obter_demanda_do_cache,
     calcular_proporcoes_vendas_por_loja
 )
+from core.padrao_compra import get_dias_transferencia
 
 pedido_fornecedor_bp = Blueprint('pedido_fornecedor', __name__)
 
@@ -445,6 +446,16 @@ def api_pedido_fornecedor_integrado():
             except Exception as e_v31:
                 print(f"  [V31] Erro ao verificar historico de vendas: {e_v31}")
 
+        # ==============================================================================
+        # TRANSIT TIME CD→LOJA (Proposta A)
+        # Para pedidos centralizados, adicionar transit time ao lead time do fornecedor
+        # no backend (antes era feito no frontend, inflando o pedido)
+        # ==============================================================================
+        dias_transferencia_cd = 0
+        if is_destino_cd:
+            dias_transferencia_cd = get_dias_transferencia(conn)
+            print(f"  [TRANSIT TIME] Destino CD: +{dias_transferencia_cd}d transit time adicionado ao lead time")
+
         resultados = []
         itens_sem_historico = 0
         itens_sem_demanda = 0
@@ -576,7 +587,7 @@ def api_pedido_fornecedor_integrado():
                             previsao_diaria=demanda_diaria,
                             desvio_padrao=desvio_padrao,
                             cobertura_dias=cobertura_dias,
-                            lead_time_dias=lead_time_forn,
+                            lead_time_dias=lead_time_forn + dias_transferencia_cd,
                             ciclo_pedido_dias=ciclo_pedido_forn,
                             pedido_minimo_valor=pedido_min_forn,
                             aplicar_limitador_cobertura=is_tsb
@@ -611,7 +622,8 @@ def api_pedido_fornecedor_integrado():
                         resultado['proporcao_loja'] = metadata.get('proporcao_loja')  # 0.0 a 1.0
                         resultado['lojas_consideradas'] = 1
                         resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
-                        resultado['lead_time_usado'] = lead_time_forn
+                        resultado['lead_time_usado'] = lead_time_forn + dias_transferencia_cd
+                        resultado['dias_transferencia_cd'] = dias_transferencia_cd
                         resultado['ciclo_pedido_usado'] = ciclo_pedido_forn
                         resultado['pedido_minimo_fornecedor'] = pedido_min_forn
                         resultado['sem_demanda_loja'] = demanda_diaria <= 0
@@ -714,7 +726,7 @@ def api_pedido_fornecedor_integrado():
                         previsao_diaria=demanda_diaria,
                         desvio_padrao=desvio_padrao,
                         cobertura_dias=cobertura_dias,
-                        lead_time_dias=lead_time_forn,
+                        lead_time_dias=lead_time_forn + dias_transferencia_cd,
                         ciclo_pedido_dias=ciclo_pedido_forn,
                         pedido_minimo_valor=pedido_min_forn
                     )
@@ -727,7 +739,8 @@ def api_pedido_fornecedor_integrado():
                         resultado['fonte_demanda'] = metadata.get('fonte', 'tempo_real')  # pre_calculada ou tempo_real
                         resultado['lojas_consideradas'] = len(lojas_demanda)
                         resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
-                        resultado['lead_time_usado'] = lead_time_forn
+                        resultado['lead_time_usado'] = lead_time_forn + dias_transferencia_cd
+                        resultado['dias_transferencia_cd'] = dias_transferencia_cd
                         resultado['ciclo_pedido_usado'] = ciclo_pedido_forn
                         resultado['pedido_minimo_fornecedor'] = pedido_min_forn
                         resultados.append(resultado)
@@ -913,7 +926,9 @@ def api_pedido_fornecedor_integrado():
 
             for codigo, itens_loja in itens_por_codigo_cd.items():
                 info_cd = estoque_cd.get(codigo, {})
-                estoque_cd_disp = info_cd.get('estoque', 0) + info_cd.get('qtd_pend_transf', 0)
+                # V35: qtd_pend_transf no CD = mercadoria ja comprometida (separada/faturada para lojas)
+                # Subtrair do estoque disponivel, nao somar (evita dupla contagem)
+                estoque_cd_disp = max(0, info_cd.get('estoque', 0) - info_cd.get('qtd_pend_transf', 0))
                 cd_do_item = cd_por_item.get(codigo)
 
                 if estoque_cd_disp <= 0 or not cd_do_item:
@@ -985,66 +1000,120 @@ def api_pedido_fornecedor_integrado():
                 # Ordenar por prioridade (RUPTURA primeiro), depois por cobertura
                 receptores_cd.sort(key=lambda x: (x['prioridade'], x['cobertura_dias']))
 
-                # Distribuir estoque do CD
+                # V34: Fair Share Allocation - distribuir proporcionalmente dentro de cada faixa
                 estoque_restante_cd = estoque_distribuivel
                 multiplo_emb = embalagens_multiplo_cd.get(codigo, 1)
 
-                for receptor in receptores_cd:
+                # Agrupar receptores por faixa de prioridade
+                faixas_ordem = [0, 1, 2, 3]  # RUPTURA, CRITICA, ALTA, MEDIA
+                receptores_por_faixa = {}
+                for r in receptores_cd:
+                    p = r['prioridade']
+                    if p not in receptores_por_faixa:
+                        receptores_por_faixa[p] = []
+                    receptores_por_faixa[p].append(r)
+
+                for faixa_prio in faixas_ordem:
                     if estoque_restante_cd <= 0:
                         break
-
-                    qtd_bruta = min(receptor['necessidade_restante'], estoque_restante_cd)
-                    # Arredondar para BAIXO (caixa fechada)
-                    if multiplo_emb > 1:
-                        qtd_distribuir = (int(qtd_bruta) // multiplo_emb) * multiplo_emb
-                    else:
-                        qtd_distribuir = int(qtd_bruta)
-
-                    if qtd_distribuir <= 0:
+                    recs = receptores_por_faixa.get(faixa_prio, [])
+                    if not recs:
                         continue
 
-                    # Reduzir pedido da loja
-                    item_dest = receptor['item_ref']
-                    qtd_antes = float(item_dest.get('quantidade_pedido', 0) or 0)
-                    nova_qtd = max(0, qtd_antes - qtd_distribuir)
-                    # Re-arredondar para multiplo de caixa (para cima)
-                    if multiplo_emb > 1:
-                        nova_qtd = arredondar_para_multiplo(nova_qtd, multiplo_emb, 'cima')
-                    item_dest['quantidade_pedido'] = nova_qtd
-                    cue_item = float(item_dest.get('cue', 0) or item_dest.get('preco_custo', 0) or 0)
-                    item_dest['valor_pedido'] = round(float(nova_qtd) * cue_item, 2)
+                    total_necessidade_faixa = sum(r['necessidade_restante'] for r in recs)
+                    if total_necessidade_faixa <= 0:
+                        continue
 
-                    # Marcar distribuicao do CD no item
-                    if 'transferencias_cd' not in item_dest:
-                        item_dest['transferencias_cd'] = []
-                    item_dest['transferencias_cd'].append({
-                        'cd_origem': cd_do_item,
-                        'qtd': qtd_distribuir
-                    })
+                    if estoque_restante_cd >= total_necessidade_faixa:
+                        # Estoque suficiente: atender 100% de cada receptor na faixa
+                        for receptor in recs:
+                            qtd_bruta = receptor['necessidade_restante']
+                            if multiplo_emb > 1:
+                                qtd_distribuir = (int(qtd_bruta) // multiplo_emb) * multiplo_emb
+                            else:
+                                qtd_distribuir = int(qtd_bruta)
+                            if qtd_distribuir <= 0:
+                                continue
+                            receptor['_qtd_distribuir'] = qtd_distribuir
+                    else:
+                        # Fair Share: distribuir proporcionalmente
+                        fracao = estoque_restante_cd / total_necessidade_faixa
+                        sobra_arredondamento = 0
+                        for receptor in recs:
+                            qtd_proporcional = receptor['necessidade_restante'] * fracao
+                            if multiplo_emb > 1:
+                                qtd_distribuir = (int(qtd_proporcional) // multiplo_emb) * multiplo_emb
+                                sobra_arredondamento += qtd_proporcional - qtd_distribuir
+                            else:
+                                qtd_distribuir = int(qtd_proporcional)
+                                sobra_arredondamento += qtd_proporcional - qtd_distribuir
+                            receptor['_qtd_distribuir'] = qtd_distribuir
 
-                    if nova_qtd == 0:
-                        item_dest['deve_pedir'] = False
+                        # Distribuir sobra de arredondamento ao receptor mais necessitado
+                        if sobra_arredondamento >= multiplo_emb and multiplo_emb > 0:
+                            caixas_sobra = int(sobra_arredondamento) // multiplo_emb
+                            # Ordenar por necessidade (maior primeiro)
+                            recs_ordenados = sorted(recs, key=lambda r: r['necessidade_restante'], reverse=True)
+                            for r in recs_ordenados:
+                                if caixas_sobra <= 0:
+                                    break
+                                r['_qtd_distribuir'] = r.get('_qtd_distribuir', 0) + multiplo_emb
+                                caixas_sobra -= 1
 
-                    estoque_restante_cd -= qtd_distribuir
-                    total_distribuido_cd += qtd_distribuir
-                    valor_economia_cd += qtd_distribuir * cue_item
+                    # Aplicar distribuicao da faixa
+                    for receptor in recs:
+                        qtd_distribuir = receptor.get('_qtd_distribuir', 0)
+                        if qtd_distribuir <= 0:
+                            continue
+                        # Nao distribuir mais que o estoque restante
+                        qtd_distribuir = min(qtd_distribuir, estoque_restante_cd)
+                        if multiplo_emb > 1:
+                            qtd_distribuir = (int(qtd_distribuir) // multiplo_emb) * multiplo_emb
+                        if qtd_distribuir <= 0:
+                            continue
 
-                    transferencias_cd.append({
-                        'cod_produto': codigo,
-                        'descricao': item_dest.get('descricao', ''),
-                        'curva_abc': item_dest.get('curva_abc', ''),
-                        'cd_origem': cd_do_item,
-                        'loja_destino': receptor['cod_loja'],
-                        'nome_loja_destino': receptor['nome_loja'],
-                        'estoque_destino': int(receptor.get('item_ref', {}).get('estoque_atual', 0) or 0),
-                        'cobertura_destino_dias': round(receptor.get('cobertura_dias', 0), 1),
-                        'qtd_distribuida': qtd_distribuir,
-                        'urgencia': receptor['faixa'],
-                        'cue': cue_item
-                    })
+                        # Reduzir pedido da loja
+                        item_dest = receptor['item_ref']
+                        qtd_antes = float(item_dest.get('quantidade_pedido', 0) or 0)
+                        nova_qtd = max(0, qtd_antes - qtd_distribuir)
+                        # Re-arredondar para multiplo de caixa (para cima)
+                        if multiplo_emb > 1:
+                            nova_qtd = arredondar_para_multiplo(nova_qtd, multiplo_emb, 'cima')
+                        item_dest['quantidade_pedido'] = nova_qtd
+                        cue_item = float(item_dest.get('cue', 0) or item_dest.get('preco_custo', 0) or 0)
+                        item_dest['valor_pedido'] = round(float(nova_qtd) * cue_item, 2)
 
-                    if qtd_antes != nova_qtd:
-                        total_itens_distribuidos += 1
+                        # Marcar distribuicao do CD no item
+                        if 'transferencias_cd' not in item_dest:
+                            item_dest['transferencias_cd'] = []
+                        item_dest['transferencias_cd'].append({
+                            'cd_origem': cd_do_item,
+                            'qtd': qtd_distribuir
+                        })
+
+                        if nova_qtd == 0:
+                            item_dest['deve_pedir'] = False
+
+                        estoque_restante_cd -= qtd_distribuir
+                        total_distribuido_cd += qtd_distribuir
+                        valor_economia_cd += qtd_distribuir * cue_item
+
+                        transferencias_cd.append({
+                            'cod_produto': codigo,
+                            'descricao': item_dest.get('descricao', ''),
+                            'curva_abc': item_dest.get('curva_abc', ''),
+                            'cd_origem': cd_do_item,
+                            'loja_destino': receptor['cod_loja'],
+                            'nome_loja_destino': receptor['nome_loja'],
+                            'estoque_destino': int(receptor.get('item_ref', {}).get('estoque_atual', 0) or 0),
+                            'cobertura_destino_dias': round(receptor.get('cobertura_dias', 0), 1),
+                            'qtd_distribuida': qtd_distribuir,
+                            'urgencia': receptor['faixa'],
+                            'cue': cue_item
+                        })
+
+                        if qtd_antes != nova_qtd:
+                            total_itens_distribuidos += 1
 
             info_distribuicao_cd = {
                 'total_distribuido': total_distribuido_cd,
@@ -1613,6 +1682,7 @@ def api_pedido_fornecedor_integrado():
             'tem_distribuicao_cd': len(transferencias_cd) > 0,
             'resumo_distribuicao_cd': info_distribuicao_cd if info_distribuicao_cd else None,
             'is_destino_cd': is_destino_cd,
+            'dias_transferencia_cd': dias_transferencia_cd,
             'cds_detectados_v29': sorted(cds_detectados) if cds_detectados else [],
             'cd_por_item': {str(k): v for k, v in cd_por_item.items()} if cd_por_item else None,
             'estoque_cd_info': {

@@ -1946,8 +1946,8 @@
                         // Status do item (pedir, ok, bloqueado, ruptura) - usar o primeiro
                         _status: item._status || 'pedir',
                         motivo_bloqueio: item.motivo_bloqueio || item.sit_compra || '',
-                        // Lead time do destino + dias transferencia
-                        lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
+                        // Lead time efetivo (transit time ja incluso no backend)
+                        lead_time_efetivo: item.lead_time_usado || item.lead_time || 0,
                         // CUE (preco) - usar o primeiro encontrado
                         cue: item.cue || item.preco || 0,
                         // Multiplo de caixa (para re-arredondamento apos ajuste de transferencia)
@@ -2010,41 +2010,8 @@
                 }
             });
 
-            // =====================================================================
-            // AJUSTE DE COBERTURA: Adicionar +dias de transferencia para itens centralizados
-            // Formula: quantidade_ajustada = quantidade_original + (demanda_total * dias_transferencia)
-            // =====================================================================
-            Object.values(itensAgregados).forEach(item => {
-                // Verificar se e centralizado (destino diferente de TODAS as lojas de origem)
-                const isCentralizado = item.lojas_origem.some(loja => String(loja) !== String(item.destino));
-
-                if (isCentralizado && item.demanda_total > 0) {
-                    // Calcular quantidade adicional para cobrir os dias de transferencia
-                    const qtdAdicional = Math.ceil(item.demanda_total * diasTransferenciaGlobal);
-                    const qtdOriginal = item.quantidade_pedido;
-
-                    // Adicionar a quantidade extra
-                    let qtdNova = item.quantidade_pedido + qtdAdicional;
-
-                    // Re-arredondar para multiplo de caixa (para cima)
-                    const mult = item.multiplo_caixa || 1;
-                    if (mult > 1) {
-                        qtdNova = Math.ceil(qtdNova / mult) * mult;
-                    }
-
-                    item.quantidade_pedido = qtdNova;
-
-                    // Recalcular valor do pedido
-                    if (item.cue > 0) {
-                        item.valor_pedido = item.quantidade_pedido * item.cue;
-                    }
-
-                    // Guardar info do ajuste para exibicao
-                    item.qtd_original = qtdOriginal;
-                    item.qtd_adicional_transferencia = item.quantidade_pedido - qtdOriginal;
-                    item.ajustado_transferencia = true;
-                }
-            });
+            // Transit time CD→loja agora e calculado no backend (incluso no lead time)
+            // Nao e mais necessario ajustar quantidade no frontend
 
             // Converter para array
             const itensArray = Object.values(itensAgregados);
@@ -2368,20 +2335,8 @@
                 statusInfo += `<span style="background: #fef3c7; color: #92400e; padding: 1px 4px; border-radius: 3px; font-size: 0.65em; margin-left: 4px;" title="Item sem padrao de compra">⚠️</span>`;
             }
 
-            // Formatacao da quantidade - mostrar ajuste de transferencia se houver
-            let qtdCell = '';
-            if (item.ajustado_transferencia) {
-                const tooltipAjuste = `Original: ${item.qtd_original.toLocaleString('pt-BR')} un\n+${item.qtd_adicional_transferencia.toLocaleString('pt-BR')} un (${diasTransferenciaGlobal} dias transf.)`;
-                qtdCell = `
-                    <span style="font-weight: 600;" title="${tooltipAjuste}">
-                        ${item.quantidade_pedido.toLocaleString('pt-BR')}
-                        <span style="color: #059669; font-size: 0.75em; font-weight: normal;">
-                            (+${item.qtd_adicional_transferencia.toLocaleString('pt-BR')})
-                        </span>
-                    </span>`;
-            } else {
-                qtdCell = `<span style="font-weight: 600;">${item.quantidade_pedido.toLocaleString('pt-BR')}</span>`;
-            }
+            // Formatacao da quantidade
+            let qtdCell = `<span style="font-weight: 600;">${item.quantidade_pedido.toLocaleString('pt-BR')}</span>`;
 
             return `
                 <tr class="${rowClass}">
@@ -2451,7 +2406,7 @@
                             cue: item.cue || item.preco || 0,
                             valor_pedido: 0,
                             demanda_total: 0,
-                            lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
+                            lead_time_efetivo: item.lead_time_usado || item.lead_time || 0,
                             lojas_origem: [],
                             criticas: [],
                             multiplo_caixa: item.multiplo_caixa || 1
@@ -2475,23 +2430,7 @@
                         }
                     }
                 });
-
-                // Ajuste de transferencia para itens centralizados
-                Object.values(itensAgrupados).forEach(item => {
-                    const isCentralizado = item.lojas_origem.some(loja => String(loja) !== String(item.cod_empresa_destino));
-                    if (isCentralizado && item.demanda_total > 0) {
-                        const qtdAdicional = Math.ceil(item.demanda_total * diasTransferenciaGlobal);
-                        let qtdNova = item.quantidade_pedido + qtdAdicional;
-                        const mult = item.multiplo_caixa || 1;
-                        if (mult > 1) {
-                            qtdNova = Math.ceil(qtdNova / mult) * mult;
-                        }
-                        item.quantidade_pedido = qtdNova;
-                        if (item.cue > 0) {
-                            item.valor_pedido = item.quantidade_pedido * item.cue;
-                        }
-                    }
-                });
+                // Transit time ja incluso no backend - sem ajuste frontend
 
                 // Converter para array e formatar para exportacao
                 const linhasExcel = Object.values(itensAgrupados).map(item => ({
@@ -2677,7 +2616,7 @@
                                 cue: item.cue || item.preco || 0,
                                 valor_pedido: 0,
                                 demanda_total: 0,
-                                lead_time_efetivo: (item.lead_time || 0) + diasTransferenciaGlobal,
+                                lead_time_efetivo: item.lead_time_usado || item.lead_time || 0,
                                 lojas_origem: [],
                                 criticas: [],
                                 multiplo_caixa: item.multiplo_caixa || 1
@@ -2692,23 +2631,7 @@
                         }
                     });
 
-                    // Ajuste de transferencia: adicionar dias de transferencia para itens centralizados
-                    Object.values(itensAgrupados).forEach(item => {
-                        const isCentralizado = item.lojas_origem.some(loja => String(loja) !== String(item.cod_empresa_destino));
-                        if (isCentralizado && item.demanda_total > 0) {
-                            const qtdAdicional = Math.ceil(item.demanda_total * diasTransferenciaGlobal);
-                            let qtdNova = item.quantidade_pedido + qtdAdicional;
-                            const mult = item.multiplo_caixa || 1;
-                            if (mult > 1) {
-                                qtdNova = Math.ceil(qtdNova / mult) * mult;
-                            }
-                            item.quantidade_pedido = qtdNova;
-                            if (item.cue > 0) {
-                                item.valor_pedido = item.quantidade_pedido * item.cue;
-                            }
-                        }
-                    });
-
+                    // V33: Transit time ja incluso no backend (dias_transferencia_cd no lead_time)
                     // Converter para array
                     const linhasExcel = Object.values(itensAgrupados).map(item => ({
                         ...item,

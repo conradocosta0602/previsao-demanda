@@ -95,6 +95,9 @@ class ValidadorConformidade:
             ('V29', 'Distribuicao Estoque CD (DRP)', self._verificar_distribuicao_cd),
             ('V30', 'Estoque CD para Direto Loja', self._verificar_estoque_cd_direto_loja),
             ('V31', 'Bloqueio Itens sem Venda 12m', self._verificar_bloqueio_sem_venda_12m),
+            ('V33', 'Transit Time CD no Backend', self._verificar_transit_time_backend),
+            ('V34', 'Fair Share Distribuicao CD', self._verificar_fair_share_cd),
+            ('V35', 'Semantica qtd_pend_transf CD', self._verificar_qtd_pend_transf_cd),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -2760,6 +2763,332 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V32: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    # =========================================================================
+    # V33: Transit Time CD no Backend
+    # =========================================================================
+
+    def _verificar_transit_time_backend(self) -> Tuple[str, str, Dict]:
+        """
+        V33: Verifica que o transit time CD->loja e adicionado no backend (lead time),
+        nao no frontend.
+
+        Testes:
+        1. Funcao get_dias_transferencia existe e retorna valor > 0
+        2. processar_item recebe lead_time_dias com transit time incluso para centralizado
+        3. Frontend nao adiciona diasTransferenciaGlobal ao pedido
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: get_dias_transferencia existe e retorna valor
+            testes_total += 1
+            try:
+                from core.padrao_compra import get_dias_transferencia
+                if self.conn:
+                    dias = get_dias_transferencia(self.conn)
+                    if dias > 0:
+                        testes_ok += 1
+                        detalhes_testes.append({
+                            'teste': 'get_dias_transferencia retorna valor',
+                            'status': 'ok',
+                            'detalhe': f'Transit time = {dias} dias'
+                        })
+                    else:
+                        detalhes_testes.append({
+                            'teste': 'get_dias_transferencia retorna valor',
+                            'status': 'alerta',
+                            'detalhe': f'Transit time = {dias} dias (zero ou negativo)'
+                        })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'get_dias_transferencia retorna valor',
+                        'status': 'falha',
+                        'detalhe': 'Sem conexao com banco'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'get_dias_transferencia retorna valor',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 2: Verificar que pedido_fornecedor importa get_dias_transferencia
+            testes_total += 1
+            try:
+                import inspect
+                from app.blueprints import pedido_fornecedor as pf_module
+                source = inspect.getsource(pf_module)
+                if 'get_dias_transferencia' in source and 'dias_transferencia_cd' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Backend usa transit time no lead time',
+                        'status': 'ok',
+                        'detalhe': 'pedido_fornecedor importa get_dias_transferencia e usa dias_transferencia_cd'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Backend usa transit time no lead time',
+                        'status': 'falha',
+                        'detalhe': 'Transit time nao encontrado no backend'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Backend usa transit time no lead time',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 3: Verificar que frontend NAO adiciona diasTransferenciaGlobal ao pedido
+            testes_total += 1
+            try:
+                import os
+                template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                            'templates', 'pedido_fornecedor_integrado.html')
+                with open(template_path, 'r', encoding='utf-8') as f:
+                    conteudo = f.read()
+                # Contar blocos de ajuste de transferencia (qtdAdicional = Math.ceil)
+                import re
+                ajustes_frontend = len(re.findall(r'qtdAdicional\s*=\s*Math\.ceil', conteudo))
+                if ajustes_frontend == 0:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Frontend sem ajuste de transferencia',
+                        'status': 'ok',
+                        'detalhe': 'Nenhum bloco de ajuste qtdAdicional encontrado no frontend'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Frontend sem ajuste de transferencia',
+                        'status': 'falha',
+                        'detalhe': f'{ajustes_frontend} blocos de ajuste ainda presentes no frontend'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Frontend sem ajuste de transferencia',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            detalhes = {
+                'testes_ok': testes_ok,
+                'testes_total': testes_total,
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V33 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V33 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V33 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V33: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    # =========================================================================
+    # V34: Fair Share Allocation na Distribuicao do CD
+    # =========================================================================
+
+    def _verificar_fair_share_cd(self) -> Tuple[str, str, Dict]:
+        """
+        V34: Verifica que a distribuicao de estoque do CD usa Fair Share Allocation
+        (proporcional dentro de cada faixa de prioridade) em vez de sequencial.
+
+        Testes:
+        1. Codigo de distribuicao agrupa receptores por faixa de prioridade
+        2. Calcula fracao proporcional quando estoque insuficiente
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: Verificar agrupamento por faixa
+            testes_total += 1
+            try:
+                import inspect
+                from app.blueprints import pedido_fornecedor as pf_module
+                source = inspect.getsource(pf_module)
+                if 'receptores_por_faixa' in source and 'faixas_ordem' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Agrupamento por faixa de prioridade',
+                        'status': 'ok',
+                        'detalhe': 'Distribuicao CD agrupa receptores por faixa (RUPTURA, CRITICA, ALTA, MEDIA)'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Agrupamento por faixa de prioridade',
+                        'status': 'falha',
+                        'detalhe': 'Distribuicao CD nao agrupa por faixa — pode ser sequencial'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Agrupamento por faixa de prioridade',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 2: Verificar calculo proporcional
+            testes_total += 1
+            try:
+                import inspect
+                from app.blueprints import pedido_fornecedor as pf_module
+                source = inspect.getsource(pf_module)
+                if 'total_necessidade_faixa' in source and 'fracao' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Calculo proporcional (Fair Share)',
+                        'status': 'ok',
+                        'detalhe': 'Usa fracao = estoque / total_necessidade_faixa para distribuicao proporcional'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Calculo proporcional (Fair Share)',
+                        'status': 'falha',
+                        'detalhe': 'Nao encontrado calculo de fracao proporcional'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Calculo proporcional (Fair Share)',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            detalhes = {
+                'testes_ok': testes_ok,
+                'testes_total': testes_total,
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V34 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V34 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V34 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V34: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    # =========================================================================
+    # V35: Semantica qtd_pend_transf no CD
+    # =========================================================================
+
+    def _verificar_qtd_pend_transf_cd(self) -> Tuple[str, str, Dict]:
+        """
+        V35: Verifica que qtd_pend_transf no CD e SUBTRAIDA do estoque disponivel
+        (mercadoria ja comprometida para lojas, nao disponivel para redistribuicao).
+
+        Testes:
+        1. Codigo subtrai qtd_pend_transf em vez de somar para CDs
+        2. Dados de CDs no banco — verificar se ha valores significativos
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: Verificar que codigo subtrai qtd_pend_transf
+            testes_total += 1
+            try:
+                import inspect
+                from app.blueprints import pedido_fornecedor as pf_module
+                source = inspect.getsource(pf_module)
+                # Procurar o padrao correto: estoque - qtd_pend_transf
+                if "info_cd.get('estoque', 0) - info_cd.get('qtd_pend_transf', 0)" in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Subtracao de qtd_pend_transf no CD',
+                        'status': 'ok',
+                        'detalhe': 'estoque_cd_disp = estoque - qtd_pend_transf (correto)'
+                    })
+                elif "info_cd.get('estoque', 0) + info_cd.get('qtd_pend_transf', 0)" in source:
+                    detalhes_testes.append({
+                        'teste': 'Subtracao de qtd_pend_transf no CD',
+                        'status': 'falha',
+                        'detalhe': 'ERRO: estoque + qtd_pend_transf (dupla contagem!)'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Subtracao de qtd_pend_transf no CD',
+                        'status': 'alerta',
+                        'detalhe': 'Padrao nao reconhecido no codigo'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Subtracao de qtd_pend_transf no CD',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 2: Verificar dados no banco
+            testes_total += 1
+            try:
+                if self.conn:
+                    cursor = self.conn.cursor()
+                    cursor.execute("""
+                        SELECT cod_empresa, COUNT(*) as total,
+                               SUM(COALESCE(qtd_pend_transf, 0)) as total_pend
+                        FROM estoque_posicao_atual
+                        WHERE cod_empresa >= 80
+                        GROUP BY cod_empresa
+                        ORDER BY cod_empresa
+                    """)
+                    rows = cursor.fetchall()
+                    cursor.close()
+                    cds_com_pend = [(r[0], float(r[2])) for r in rows if float(r[2]) > 0]
+                    testes_ok += 1
+                    if cds_com_pend:
+                        info = ', '.join([f'CD {cd}: {pend:.0f} un' for cd, pend in cds_com_pend])
+                        detalhes_testes.append({
+                            'teste': 'Dados qtd_pend_transf nos CDs',
+                            'status': 'ok',
+                            'detalhe': f'CDs com pendente: {info} (subtraido do disponivel)'
+                        })
+                    else:
+                        detalhes_testes.append({
+                            'teste': 'Dados qtd_pend_transf nos CDs',
+                            'status': 'ok',
+                            'detalhe': 'Nenhum CD com qtd_pend_transf > 0 (sem impacto atual)'
+                        })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Dados qtd_pend_transf nos CDs',
+                        'status': 'falha',
+                        'detalhe': 'Sem conexao com banco'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Dados qtd_pend_transf nos CDs',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            detalhes = {
+                'testes_ok': testes_ok,
+                'testes_total': testes_total,
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V35 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V35 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V35 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V35: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 
