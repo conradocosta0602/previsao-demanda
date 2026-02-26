@@ -117,7 +117,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**25 verificacoes** de conformidade com a metodologia documentada:
+**26 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
@@ -127,6 +127,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V29: Distribuicao de estoque do CD para lojas (DRP)
 - V30: Verificacao de estoque CD para pedidos direto loja
 - V31: Bloqueio de itens sem vendas ha 12+ meses por loja
+- V32: Rateio proporcional zero para lojas sem vendas historicas
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -221,6 +222,9 @@ ES_cd = Z × sigma_total × sqrt(LT_fornecedor)
 - Funcao: `calcular_es_pooling_cd()` em `core/pedido_fornecedor_integrado.py`
 - Reducao tipica: ~65% vs soma dos ES individuais
 - Usa `desvio_padrao_diario` de cada loja e `lead_time_usado` (LT base, sem delay)
+- **Pedido centralizado** (`is_destino_cd`): ES pooling **desativado** — CD e ponto de passagem,
+  prioridade e abastecer lojas; fornecedor repoe o CD. Todo estoque CD e distribuivel.
+- **Pedido direto loja** (V30): ES pooling **ativo** — CD precisa manter reserva
 
 **Distribuicao**:
 - CD como "super-doador" sem restricao de grupo regional
@@ -255,13 +259,20 @@ demanda_loja = demanda_consolidada × proporcao_loja
 
 **Metodos de Rateio**:
 - **Proporcional**: Quando ha historico de vendas (usa ultimos 365 dias)
-- **Uniforme**: Fallback quando nao ha historico (demanda / num_lojas)
+- **Proporcional Zero** (V32): Loja sem vendas recebe demanda=0 quando outras lojas tem proporcao
+- **Uniforme**: Fallback quando NENHUMA loja tem historico (demanda / num_lojas)
+
+**V32 - Protecao contra rateio uniforme indevido**:
+Quando um item tem proporcoes calculadas para algumas lojas (soma=100%), lojas sem vendas
+nao devem receber rateio uniforme (1/N), pois isso inflaria a demanda total acima de 100%.
+O sistema forca `proporcao_loja=0.0` para essas lojas, resultando em demanda zero.
 
 **Beneficios**:
 - Demanda reflete perfil real de vendas de cada loja
 - Evita excesso em lojas de baixo giro
 - Reducao de rupturas em lojas de alto giro
 - Proporcao visivel no tooltip da interface
+- Evita inflacao de demanda total por rateio uniforme indevido (V32)
 
 **Verificacao V14**: Valida calculo de proporcoes, soma = 1.0, e preservacao do total.
 
@@ -637,9 +648,10 @@ DB_PORT=5432
 - V26: Limitador de cobertura 90 dias para itens TSB - evita excesso em demanda intermitente (v6.12)
 - V27: Completude de dados de embalagem - alerta fornecedores sem multiplo de caixa cadastrado (v6.12)
 - V28: Tabela de Custo (CUE) na Tela de Demanda - tabela espelhada em R$ + coluna CUE no Excel (v6.13)
-- V29: Distribuicao de estoque CD para lojas - DRP com ES pooling, multiplos CDs, caixa fechada (v6.14)
+- V29: Distribuicao de estoque CD para lojas - DRP multiplos CDs, caixa fechada, sem ES pooling para centralizado (v6.14)
 - V30: Verificacao de estoque CD para pedidos direto loja - CD distribui antes de V25, salva em oportunidades_transferencia (v6.16)
 - V31: Bloqueio de itens sem vendas ha 12+ meses por loja - evita reposicao de itens obsoletos localmente (v6.16)
+- V32: Rateio proporcional zero - lojas sem vendas recebem demanda 0 em vez de rateio uniforme (v6.17)
 
 ## Documentacao Complementar
 
@@ -655,4 +667,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.16)
+**Ultima atualizacao**: Fevereiro 2026 (v6.17)

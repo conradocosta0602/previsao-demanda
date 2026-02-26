@@ -228,8 +228,14 @@ def obter_demanda_do_cache(
                 # Variancia rateia linearmente, desvio padrao rateia pela raiz
                 desvio = desvio * np.sqrt(proporcao_loja)
                 metodo_rateio = 'proporcional'
+            elif proporcao_loja is not None and proporcao_loja == 0:
+                # Loja sem vendas do item - demanda zero (nao usar rateio uniforme)
+                demanda_diaria = 0
+                desvio = 0
+                metodo_rateio = 'proporcional_zero'
             elif num_lojas > 1:
                 # RATEIO UNIFORME (fallback): divide igualmente
+                # Usado apenas quando NAO ha proporcoes calculadas para nenhuma loja
                 demanda_diaria = demanda_diaria / num_lojas
                 # Desvio: usa raiz quadrada do numero de lojas
                 desvio = desvio / np.sqrt(num_lojas)

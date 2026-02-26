@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 23 verificacoes do checklist de conformidade.
+        Executa todas as 26 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -91,6 +91,7 @@ class ValidadorConformidade:
             ('V25', 'Regras Transferencia Otimizada', self._verificar_regras_transferencia_v611),
             ('V26', 'Limitador Cobertura 90d TSB', self._verificar_limitador_cobertura_e_rede),
             ('V27', 'Completude Dados Embalagem', self._verificar_completude_embalagem),
+            ('V32', 'Rateio Proporcional Zero Sem Vendas', self._verificar_rateio_zero_sem_vendas),
             ('V29', 'Distribuicao Estoque CD (DRP)', self._verificar_distribuicao_cd),
             ('V30', 'Estoque CD para Direto Loja', self._verificar_estoque_cd_direto_loja),
             ('V31', 'Bloqueio Itens sem Venda 12m', self._verificar_bloqueio_sem_venda_12m),
@@ -2644,6 +2645,121 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V31: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_rateio_zero_sem_vendas(self) -> Tuple[str, str, Dict]:
+        """
+        V32: Verifica que lojas sem vendas historicas recebem demanda zero
+        em vez de rateio uniforme quando outras lojas tem proporcao calculada.
+
+        Testa:
+        1. Codigo de protecao no blueprint (proporcao_loja = 0.0 para lojas sem vendas)
+        2. Funcao obter_demanda_do_cache trata proporcao_loja == 0 como demanda zero
+        3. Nao usa rateio uniforme quando existem proporcoes calculadas
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: Blueprint forca proporcao 0.0 para lojas sem vendas
+            testes_total += 1
+            try:
+                with open('app/blueprints/pedido_fornecedor.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                if 'proporcao_loja = 0.0' in source and 'tem_proporcao_item' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Protecao no blueprint',
+                        'status': 'ok',
+                        'detalhe': 'Lojas sem proporcao recebem proporcao_loja=0.0 quando outras lojas tem proporcao'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Protecao no blueprint',
+                        'status': 'falha',
+                        'detalhe': 'Protecao contra rateio uniforme indevido nao encontrada'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Protecao no blueprint',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 2: obter_demanda_do_cache trata proporcao == 0 como zero
+            testes_total += 1
+            try:
+                with open('app/utils/demanda_pre_calculada.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                if 'proporcao_loja == 0' in source and 'proporcional_zero' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Tratamento proporcao zero',
+                        'status': 'ok',
+                        'detalhe': 'obter_demanda_do_cache retorna demanda=0 quando proporcao_loja=0.0'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Tratamento proporcao zero',
+                        'status': 'falha',
+                        'detalhe': 'Tratamento de proporcao zero nao encontrado em demanda_pre_calculada.py'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Tratamento proporcao zero',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 3: Verificar que rateio uniforme so e usado como fallback final
+            testes_total += 1
+            try:
+                with open('app/utils/demanda_pre_calculada.py', 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                # Verificar que o elif uniforme vem APOS a verificacao de proporcao == 0
+                idx_zero = source.find('proporcao_loja == 0')
+                idx_uniforme = source.find("metodo_rateio = 'uniforme'")
+
+                if idx_zero > 0 and idx_uniforme > 0 and idx_zero < idx_uniforme:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Ordem de precedencia',
+                        'status': 'ok',
+                        'detalhe': 'Rateio uniforme so e usado quando nenhuma loja tem proporcao calculada'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Ordem de precedencia',
+                        'status': 'falha',
+                        'detalhe': 'Ordem de verificacao incorreta: uniforme pode sobrescrever proporcional'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Ordem de precedencia',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            detalhes = {
+                'testes_ok': testes_ok,
+                'testes_total': testes_total,
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V32 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V32 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V32 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V32: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

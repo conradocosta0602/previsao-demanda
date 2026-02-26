@@ -1,6 +1,12 @@
-# Sistema de Demanda e Reabastecimento v6.16
+# Sistema de Demanda e Reabastecimento v6.17
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.17 - Correcao Rateio Proporcional + V29 Centralizado (Fev/2026):**
+- **V32 - Rateio proporcional zero**: Lojas sem vendas historicas de um item recebem demanda=0 em vez de rateio uniforme. Evita inflacao de demanda total quando outras lojas ja cobrem 100% via proporcao
+- **V29 ajuste centralizado**: Pedidos centralizados (destino CD) nao retêm ES pooling — todo estoque do CD e distribuido para lojas. CD e ponto de passagem, fornecedor repoe
+- **Estoque total inclui CD**: Na tela de pedido centralizado, "Estoque Total" agora soma estoque lojas + estoque CD
+- **26 verificacoes de conformidade**: Nova V32 valida protecao contra rateio uniforme indevido
 
 **Novidades v6.16 - Bloqueio de Itens sem Vendas 12+ Meses - V31 (Fev/2026):**
 - **V31 - Bloqueio por inatividade**: Itens sem vendas ha 12+ meses em uma loja nao geram pedido automatico para essa loja
@@ -644,7 +650,17 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v6.16 (Fevereiro 2026) - ATUAL
+### v6.17 (Fevereiro 2026) - ATUAL
+
+**V32 - Correcao Rateio Proporcional + V29 Centralizado:**
+
+- **Rateio proporcional zero**: Lojas sem vendas historicas de um item recebem `proporcao_loja=0.0` (demanda=0) quando outras lojas tem proporcao calculada. Antes, caiam no fallback uniforme (1/N), inflando demanda total acima de 100%
+- **V29 sem ES pooling para centralizado**: Pedidos com destino CD (`is_destino_cd=True`) distribuem 100% do estoque CD para lojas. ES pooling mantido apenas para direto-loja (V30)
+- **Estoque total inclui CD no frontend**: Para pedidos centralizados, coluna "Estoque Total" soma estoque de todas as lojas + estoque do CD
+- **26 verificacoes de conformidade**: Nova V32 valida protecao contra rateio uniforme indevido
+- Arquivos modificados: `pedido_fornecedor.py`, `demanda_pre_calculada.py`, `pedido_fornecedor_integrado.html`, `validador_conformidade.py`
+
+### v6.16 (Fevereiro 2026)
 
 **V31 - Bloqueio de Itens sem Vendas 12+ Meses:**
 

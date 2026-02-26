@@ -368,7 +368,11 @@ def api_pedido_fornecedor_integrado():
 
         codigos_produtos = df_produtos['codigo'].astype(int).tolist()
         processador.precarregar_situacoes_compra(codigos_produtos, lojas_demanda)
-        processador.precarregar_estoque(codigos_produtos, lojas_demanda)
+        # Incluir CD destino no pre-carregamento de estoque para pedido centralizado
+        lojas_estoque = list(lojas_demanda)
+        if is_destino_cd and cod_destino not in lojas_estoque:
+            lojas_estoque.append(cod_destino)
+        processador.precarregar_estoque(codigos_produtos, lojas_estoque)
         processador.precarregar_historico_vendas(codigos_produtos, lojas_demanda)
         processador.precarregar_embalagens(codigos_produtos)
         processador.precarregar_produtos(codigos_produtos)
@@ -532,6 +536,19 @@ def api_pedido_fornecedor_integrado():
 
                         # Buscar proporcao de vendas desta loja para este produto
                         proporcao_loja = cache_proporcoes.get((str(codigo), loja_cod))
+
+                        # Se nao ha proporcao para esta loja mas OUTRAS lojas tem proporcao,
+                        # significa que esta loja nao vende o item.
+                        # Nao usar rateio uniforme - demanda deve ser 0.
+                        if proporcao_loja is None and is_pedido_multiloja:
+                            # Verificar se alguma outra loja tem proporcao para este item
+                            tem_proporcao_item = any(
+                                cache_proporcoes.get((str(codigo), l)) is not None
+                                for l in lojas_demanda if l != loja_cod
+                            )
+                            if tem_proporcao_item:
+                                # Forcar proporcao 0 para evitar rateio uniforme
+                                proporcao_loja = 0.0
 
                         # PRIORIDADE 1: Usar demanda pre-calculada do CACHE (otimizado)
                         # Se nao encontrar por loja, usa consolidado rateado PROPORCIONALMENTE
@@ -902,21 +919,26 @@ def api_pedido_fornecedor_integrado():
                 if estoque_cd_disp <= 0 or not cd_do_item:
                     continue
 
-                # Calcular ES do CD com efeito pooling
-                desvios_lojas = []
-                curva_item = 'B'
-                lead_time_item = 15  # default
-                for item in itens_loja:
-                    desvio = item.get('desvio_padrao_diario', 0) or 0
-                    desvios_lojas.append(desvio)
-                    curva_item = item.get('curva_abc', 'B') or 'B'
-                    lead_time_item = item.get('lead_time_usado', 15) or 15
+                # Calcular estoque distribuivel do CD
+                if is_destino_cd:
+                    # Pedido centralizado: CD e ponto de passagem, nao precisa reter ES.
+                    # Prioridade e abastecer as lojas; fornecedor vai repor o CD.
+                    estoque_distribuivel = estoque_cd_disp
+                    es_cd_valor = 0
+                else:
+                    # V30 (direto loja): CD precisa manter reserva (ES pooling)
+                    desvios_lojas = []
+                    curva_item = 'B'
+                    lead_time_item = 15  # default
+                    for item in itens_loja:
+                        desvio = item.get('desvio_padrao_diario', 0) or 0
+                        desvios_lojas.append(desvio)
+                        curva_item = item.get('curva_abc', 'B') or 'B'
+                        lead_time_item = item.get('lead_time_usado', 15) or 15
 
-                es_cd_info = calcular_es_pooling_cd(desvios_lojas, lead_time_item, curva_item)
-                es_cd_valor = es_cd_info['es_cd']
-
-                # Estoque distribuivel = estoque CD - ES do CD (reserva minima)
-                estoque_distribuivel = max(0, estoque_cd_disp - es_cd_valor)
+                    es_cd_info = calcular_es_pooling_cd(desvios_lojas, lead_time_item, curva_item)
+                    es_cd_valor = es_cd_info['es_cd']
+                    estoque_distribuivel = max(0, estoque_cd_disp - es_cd_valor)
 
                 if estoque_distribuivel <= 0:
                     continue

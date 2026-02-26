@@ -1962,6 +1962,15 @@
                 itensAgregados[chaveAgregacao].transito_total += (item.estoque_transito || 0);
                 itensAgregados[chaveAgregacao].demanda_total += (item.demanda_prevista_diaria || item.demanda_diaria || 0);
 
+                // Pedido centralizado: somar estoque do CD ao total (apenas 1x por item)
+                if (data.is_destino_cd && data.estoque_cd_info && !itensAgregados[chaveAgregacao]._cd_estoque_somado) {
+                    const cdInfo = data.estoque_cd_info[String(item.codigo)];
+                    if (cdInfo) {
+                        itensAgregados[chaveAgregacao].estoque_total += (cdInfo.estoque || 0);
+                        itensAgregados[chaveAgregacao]._cd_estoque_somado = true;
+                    }
+                }
+
                 if (item.ruptura_iminente || item._status === 'ruptura') {
                     itensAgregados[chaveAgregacao].tem_ruptura = true;
                     itensAgregados[chaveAgregacao]._status = 'ruptura';
