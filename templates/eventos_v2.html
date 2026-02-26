@@ -707,16 +707,42 @@
                     </div>
 
                     <div class="form-section">
-                        <div class="form-section-title">
-                            Filtros de Aplicacao
-                            <button type="button" class="btn btn-sm btn-secondary" onclick="adicionarFiltro()">
-                                + Adicionar Filtro
-                            </button>
-                        </div>
+                        <div class="form-section-title">Filtros de Aplicacao</div>
                         <small style="color: #888; display: block; margin-bottom: 10px;">
-                            Sem filtros = aplica a todos os itens. Adicione filtros para restringir.
+                            Deixe em branco para aplicar a todos. Preencha para restringir.
                         </small>
-                        <div id="filtrosContainer"></div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Fornecedor</label>
+                                <select id="filtroFornecedor">
+                                    <option value="">Todos</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Loja</label>
+                                <select id="filtroLoja">
+                                    <option value="">Todas</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Linha 1 (Categoria)</label>
+                                <select id="filtroLinha1">
+                                    <option value="">Todas</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Linha 3 (Subcategoria)</label>
+                                <select id="filtroLinha3">
+                                    <option value="">Todas</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Codigo Item</label>
+                            <input type="number" id="filtroItem" placeholder="Ex: 123456 (opcional)">
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -783,6 +809,13 @@
         document.addEventListener('DOMContentLoaded', function() {
             carregarAlertas();
             carregarEventos();
+            carregarDadosFiltros();
+
+            // Cascata: Linha1 filtra Linha3
+            document.getElementById('filtroLinha1').addEventListener('change', function() {
+                carregarLinha3(this.value || null);
+                document.getElementById('filtroLinha3').value = '';
+            });
         });
 
         // =====================================================================
@@ -905,7 +938,12 @@
             document.getElementById('modalTitulo').textContent = 'Novo Evento';
             document.getElementById('formEvento').reset();
             document.getElementById('eventoId').value = '';
-            document.getElementById('filtrosContainer').innerHTML = '';
+            // Limpar filtros
+            document.getElementById('filtroFornecedor').value = '';
+            document.getElementById('filtroLoja').value = '';
+            document.getElementById('filtroLinha1').value = '';
+            document.getElementById('filtroLinha3').value = '';
+            document.getElementById('filtroItem').value = '';
             atualizarPreviewImpacto();
             abrirModal('modalCadastro');
         }
@@ -928,10 +966,22 @@
                     document.getElementById('recorrente').checked = e.recorrente_anual === 1;
                     document.getElementById('descricao').value = e.descricao || '';
 
-                    // Carregar filtros
-                    document.getElementById('filtrosContainer').innerHTML = '';
+                    // Carregar filtros nos selects
+                    document.getElementById('filtroFornecedor').value = '';
+                    document.getElementById('filtroLoja').value = '';
+                    document.getElementById('filtroLinha1').value = '';
+                    document.getElementById('filtroLinha3').value = '';
+                    document.getElementById('filtroItem').value = '';
                     if (e.filtros && e.filtros.length > 0) {
-                        e.filtros.forEach(f => adicionarFiltro(f));
+                        const f = e.filtros[0];
+                        if (f.cod_fornecedor) document.getElementById('filtroFornecedor').value = f.cod_fornecedor;
+                        if (f.cod_empresa) document.getElementById('filtroLoja').value = f.cod_empresa;
+                        if (f.linha1) {
+                            document.getElementById('filtroLinha1').value = f.linha1;
+                            await carregarLinha3(f.linha1);
+                        }
+                        if (f.linha3) document.getElementById('filtroLinha3').value = f.linha3;
+                        if (f.codigo_item) document.getElementById('filtroItem').value = f.codigo_item;
                     }
 
                     atualizarPreviewImpacto();
@@ -963,26 +1013,24 @@
                 return;
             }
 
-            // Coletar filtros
+            // Coletar filtros dos selects fixos
             const filtros = [];
-            document.querySelectorAll('.filtro-item').forEach(item => {
-                const filtro = {};
-                const codigoItem = item.querySelector('[name="codigo_item"]').value;
-                const codEmpresa = item.querySelector('[name="cod_empresa"]').value;
-                const codFornecedor = item.querySelector('[name="cod_fornecedor"]').value;
-                const linha1 = item.querySelector('[name="linha1"]').value;
-                const linha3 = item.querySelector('[name="linha3"]').value;
+            const filtro = {};
+            const fornecedorVal = document.getElementById('filtroFornecedor').value;
+            const lojaVal = document.getElementById('filtroLoja').value;
+            const linha1Val = document.getElementById('filtroLinha1').value;
+            const linha3Val = document.getElementById('filtroLinha3').value;
+            const itemVal = document.getElementById('filtroItem').value;
 
-                if (codigoItem) filtro.codigo_item = parseInt(codigoItem);
-                if (codEmpresa) filtro.cod_empresa = parseInt(codEmpresa);
-                if (codFornecedor) filtro.cod_fornecedor = parseInt(codFornecedor);
-                if (linha1) filtro.linha1 = linha1;
-                if (linha3) filtro.linha3 = linha3;
+            if (fornecedorVal) filtro.cod_fornecedor = fornecedorVal;
+            if (lojaVal) filtro.cod_empresa = parseInt(lojaVal);
+            if (linha1Val) filtro.linha1 = linha1Val;
+            if (linha3Val) filtro.linha3 = linha3Val;
+            if (itemVal) filtro.codigo_item = parseInt(itemVal);
 
-                if (Object.keys(filtro).length > 0) {
-                    filtros.push(filtro);
-                }
-            });
+            if (Object.keys(filtro).length > 0) {
+                filtros.push(filtro);
+            }
 
             const dados = {
                 nome,
@@ -1023,41 +1071,74 @@
             }
         }
 
-        function adicionarFiltro(dados = {}) {
-            const container = document.getElementById('filtrosContainer');
-            const idx = container.children.length;
+        // Carregar dados dos dropdowns de filtro via APIs existentes
+        async function carregarDadosFiltros() {
+            try {
+                // Carregar fornecedores
+                const resForn = await fetch('/api/fornecedores');
+                const dataForn = await resForn.json();
+                const selForn = document.getElementById('filtroFornecedor');
+                selForn.innerHTML = '<option value="">Todos</option>';
+                (dataForn.fornecedores || []).forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.cnpj_fornecedor;
+                    opt.textContent = f.nome_fornecedor;
+                    selForn.appendChild(opt);
+                });
 
-            const html = `
-                <div class="filtro-item">
-                    <button type="button" class="remove-filtro" onclick="this.parentElement.remove()">x</button>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Codigo Item</label>
-                            <input type="number" name="codigo_item" value="${dados.codigo_item || ''}" placeholder="Ex: 123456">
-                        </div>
-                        <div class="form-group">
-                            <label>Filial</label>
-                            <input type="number" name="cod_empresa" value="${dados.cod_empresa || ''}" placeholder="Ex: 1, 2, 3...">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Fornecedor</label>
-                            <input type="number" name="cod_fornecedor" value="${dados.cod_fornecedor || ''}" placeholder="Codigo fornecedor">
-                        </div>
-                        <div class="form-group">
-                            <label>Linha 1</label>
-                            <input type="text" name="linha1" value="${dados.linha1 || ''}" placeholder="Ex: TINTAS">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>Linha 3</label>
-                        <input type="text" name="linha3" value="${dados.linha3 || ''}" placeholder="Ex: ACRILICA">
-                    </div>
-                </div>
-            `;
+                // Carregar lojas (apenas filiais, sem CDs)
+                const resLojas = await fetch('/api/lojas');
+                const dataLojas = await resLojas.json();
+                const selLoja = document.getElementById('filtroLoja');
+                selLoja.innerHTML = '<option value="">Todas</option>';
+                (dataLojas.lojas || []).forEach(l => {
+                    if (l.cod_empresa < 80) {
+                        const opt = document.createElement('option');
+                        opt.value = l.cod_empresa;
+                        opt.textContent = l.nome_loja;
+                        selLoja.appendChild(opt);
+                    }
+                });
 
-            container.insertAdjacentHTML('beforeend', html);
+                // Carregar Linha 1
+                const resLinhas = await fetch('/api/linhas');
+                const dataLinhas = await resLinhas.json();
+                const selL1 = document.getElementById('filtroLinha1');
+                selL1.innerHTML = '<option value="">Todas</option>';
+                (dataLinhas.linhas || []).forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l;
+                    opt.textContent = l;
+                    selL1.appendChild(opt);
+                });
+
+                // Carregar Linha 3 (todas inicialmente)
+                await carregarLinha3();
+            } catch (erro) {
+                console.error('Erro ao carregar dados dos filtros:', erro);
+            }
+        }
+
+        async function carregarLinha3(categoria) {
+            try {
+                let url = '/api/sublinhas';
+                if (categoria) url += '?categoria=' + encodeURIComponent(categoria);
+                const res = await fetch(url);
+                const data = await res.json();
+                const sel = document.getElementById('filtroLinha3');
+                const valorAtual = sel.value;
+                sel.innerHTML = '<option value="">Todas</option>';
+                (data.sublinhas || []).forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.codigo || s.descricao || s;
+                    opt.textContent = s.descricao || s.codigo || s;
+                    sel.appendChild(opt);
+                });
+                // Restaurar valor se ainda existir
+                if (valorAtual) sel.value = valorAtual;
+            } catch (erro) {
+                console.error('Erro ao carregar Linha 3:', erro);
+            }
         }
 
         function atualizarPreviewImpacto() {

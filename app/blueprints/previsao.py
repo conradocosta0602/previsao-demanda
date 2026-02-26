@@ -788,6 +788,58 @@ def _api_gerar_previsao_banco_v2_interno():
                 previsoes_agregadas_por_periodo[data_prev] += previsao_periodo_int
                 total_previsao_item += previsao_periodo_int
 
+            # =====================================================
+            # APLICAR EVENTOS (promocoes, sazonais, etc.)
+            # Ajusta a previsao de cada periodo pelo fator do evento
+            # =====================================================
+            try:
+                from core.event_manager_v2 import EventManagerV2
+                _evt_mgr = EventManagerV2()
+                cnpj_forn = item.get('cnpj_fornecedor')
+                cat_item = item.get('categoria')
+                linha3_item = item.get('descricao_linha')
+
+                total_previsao_item = 0  # Recalcular com eventos
+                for pp in previsao_item_periodos:
+                    try:
+                        data_prev_str = pp['periodo']
+                        if granularidade == 'mensal':
+                            data_inicio_evt = dt.strptime(data_prev_str, '%Y-%m-%d').date()
+                            dias_mes = monthrange(data_inicio_evt.year, data_inicio_evt.month)[1]
+                            data_fim_evt = data_inicio_evt.replace(day=dias_mes)
+                        else:
+                            data_inicio_evt = dt.strptime(data_prev_str[:10], '%Y-%m-%d').date()
+                            data_fim_evt = data_inicio_evt + timedelta(days=6)
+
+                        resultado_evt = _evt_mgr.calcular_fator_eventos(
+                            codigo=int(cod_produto),
+                            cod_empresa=0,
+                            cod_fornecedor=cnpj_forn,
+                            linha1=cat_item,
+                            linha3=linha3_item,
+                            data_inicio=data_inicio_evt,
+                            data_fim=data_fim_evt
+                        )
+                        fator_evt = resultado_evt.get('fator_total', 1.0)
+                        if fator_evt != 1.0:
+                            pp['previsao_original'] = pp['previsao']
+                            pp['previsao'] = round(pp['previsao'] * fator_evt)
+                            pp['evento_fator'] = fator_evt
+                            pp['evento_nomes'] = ', '.join(
+                                e.get('nome', '') for e in resultado_evt.get('eventos_aplicados', [])
+                            )
+                    except Exception:
+                        pass
+                    total_previsao_item += pp['previsao']
+
+                # Atualizar agregado por periodo
+                for pp in previsao_item_periodos:
+                    if pp.get('evento_fator') and pp.get('previsao_original') is not None:
+                        diff = pp['previsao'] - pp['previsao_original']
+                        previsoes_agregadas_por_periodo[pp['periodo']] += diff
+            except Exception as e_evt:
+                print(f"[EVENTOS] Erro ao aplicar eventos para item {cod_produto}: {e_evt}")
+
             # Mapeamento de metodos para nomes simplificados
             mapeamento_metodos = {
                 'media_simples': 'SMA',
