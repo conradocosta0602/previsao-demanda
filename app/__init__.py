@@ -110,3 +110,7 @@ def _register_blueprints(app):
     # Blueprint: Gerenciamento de Demanda Pre-Calculada
     from app.blueprints.demanda_job import demanda_job_bp
     app.register_blueprint(demanda_job_bp)
+
+    # Blueprint: Compra Planejada (Forward Buying)
+    from app.blueprints.compra_planejada import compra_planejada_bp
+    app.register_blueprint(compra_planejada_bp)

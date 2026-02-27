@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.18** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.19** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -19,6 +19,7 @@ previsao-demanda/
 │   ├── blueprints/           # Rotas organizadas por modulo
 │   │   ├── previsao.py       # API de previsao de demanda
 │   │   ├── pedido_fornecedor.py  # API de pedido integrado
+│   │   ├── compra_planejada.py   # API de compra planejada (forward buying)
 │   │   ├── demanda_job.py    # API de demanda pre-calculada
 │   │   └── validacao.py      # API de checklist de conformidade
 │   └── utils/
@@ -491,6 +492,63 @@ Tabela espelhada abaixo da tabela de quantidade na Tela de Demanda, exibindo val
 
 **Ordenacao**: Ambas as tabelas ordenam itens por codigo decrescente (maior para menor).
 
+### 13. Compra Planejada - Forward Buying (v6.19)
+
+**Arquivos**: `app/blueprints/compra_planejada.py`, `templates/compra_planejada.html`
+
+Tela para planejamento de compras futuras com multiplas datas de entrega, usada para
+negociacao antecipada com fornecedores (blanket orders / forward buying).
+
+**Rota**: `/compra_planejada`
+
+**Conceito**: O usuario define N datas de entrega futuras e o sistema calcula o pedido
+para cada fase, mantendo uma cobertura-alvo de estoque ao longo do tempo.
+
+**Modelo Order-Up-To-Level (OUL)**:
+```
+Fase 1 (1a entrega): Identico ao pedido de reabastecimento normal
+  - Chama internamente /api/pedido_fornecedor_integrado via test_client()
+  - Herda TODAS as regras: V25, V29, V30, V31, V32, V34, V35
+
+Fases 2+ (entregas seguintes): Modelo OUL
+  - estoque_projetado = estoque_hoje + pedidos_anteriores - (demanda_diaria × dias_ate_entrega)
+  - target_estoque = demanda_diaria × cobertura_alvo
+  - necessidade = max(0, target_estoque - estoque_projetado)
+  - qtd_pedido = arredondar(necessidade, multiplo_caixa)
+```
+
+**Cobertura-alvo**: Vem do seletor da tela (ABC automatica, 60, 90, 120 dias).
+Quando ABC automatica: `LT_max + Transit_CD + Delay(5) + Ciclo(7) + Seguranca(4)`.
+
+**Demanda sazonal**: Para cada fase, a demanda diaria e ponderada pelos meses cobertos,
+usando a demanda pre-calculada com fatores sazonais. Funcao `_calcular_demanda_diaria_periodo()`.
+
+**Exemplo pratico** (cobertura 90d, entregas a cada 30d):
+- Pedido 1 (13/04): reabastecimento normal, garante 90 dias
+- Pedido 2 (13/05): repoe ~30 dias consumidos desde Pedido 1 para voltar a 90
+- Pedido 3 (12/06): repoe ~30 dias consumidos para voltar a 90
+- Pedido 4 (12/07): repoe ~30 dias consumidos para voltar a 90
+- Nota: Pedido 2 inclui mais itens que Pedido 1 (itens OK na Fase 1 que consomem estoque)
+
+**Caches importantes** (para fases 2+):
+- `estoque_consolidado`: estoque de HOJE por item (pedido + OK)
+- `pedidos_acumulados`: soma dos pedidos de fases anteriores por item
+- `demanda_diaria_cache`: demanda diaria por item (pode variar por sazonalidade)
+- `embalagens_cache`: multiplo de caixa por item
+- `cue_cache`: CUE por item para calculo de valor
+
+**Exportacao Excel**: 4 abas por padrao:
+1. Resumo (totais por fase)
+2-N. Fase 1 (Completo), Fase 2...N (Projetado)
+N+1. Consolidado (todos itens × todas fases)
+
+**APIs**:
+| Endpoint | Metodo | Descricao |
+|----------|--------|-----------|
+| `/api/compra_planejada/calcular` | POST | Calcula compra planejada |
+| `/api/compra_planejada/exportar` | POST | Exporta Excel |
+| `/api/compra_planejada/lead_time` | GET | Lead time para data padrao |
+
 ## APIs Importantes
 
 | Endpoint | Metodo | Descricao |
@@ -503,6 +561,9 @@ Tabela espelhada abaixo da tabela de quantidade na Tela de Demanda, exibindo val
 | `/api/kpis/dashboard` | GET | Dashboard de KPIs |
 | `/api/kpis/evolucao` | GET | Evolucao temporal dos KPIs |
 | `/api/kpis/ranking` | GET | Ranking de itens por ruptura |
+| `/api/compra_planejada/calcular` | POST | Calcula compra planejada (forward buying) |
+| `/api/compra_planejada/exportar` | POST | Exporta compra planejada para Excel |
+| `/api/compra_planejada/lead_time` | GET | Lead time para data padrao de entrega |
 
 ## Tabelas Principais
 
@@ -597,6 +658,7 @@ DB_PORT=5432
 ## Fluxo de Trabalho Tipico
 
 ```
+Fluxo 1 - Reabastecimento:
 1. Usuario acessa Tela de Demanda (/index)
 2. Seleciona fornecedor, periodo
 3. Sistema usa demanda pre-calculada (ou calcula em tempo real)
@@ -604,6 +666,13 @@ DB_PORT=5432
 5. Usuario acessa Pedido Fornecedor (/pedido_fornecedor_integrado)
 6. Sistema usa demanda salva para calcular pedido
 7. Exporta Excel com itens a pedir
+
+Fluxo 2 - Compra Planejada (Forward Buying):
+1. Usuario acessa Compra Planejada (/compra_planejada)
+2. Seleciona fornecedor, destino, cobertura
+3. Define N datas de entrega futuras
+4. Sistema calcula Fase 1 (identico reabastecimento) + Fases 2+ (OUL)
+5. Exporta Excel consolidado para negociacao com fornecedor
 ```
 
 ## Problemas Comuns e Solucoes
@@ -665,6 +734,7 @@ DB_PORT=5432
 - V33: Transit time CD->loja no backend - incorporado ao lead time em vez de ajuste no frontend (v6.18)
 - V34: Fair Share Allocation na distribuicao do CD - proporcional por faixa em vez de sequencial (v6.18)
 - V35: Semantica qtd_pend_transf no CD - subtrair do estoque (mercadoria comprometida) em vez de somar (v6.18)
+- Compra Planejada (Forward Buying) - Tela de negociacao antecipada com multiplas entregas e modelo OUL (v6.19)
 
 ## Documentacao Complementar
 
@@ -680,4 +750,4 @@ DB_PORT=5432
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.18)
+**Ultima atualizacao**: Fevereiro 2026 (v6.19)

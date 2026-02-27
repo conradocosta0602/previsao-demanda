@@ -1,6 +1,14 @@
-# Sistema de Demanda e Reabastecimento v6.18
+# Sistema de Demanda e Reabastecimento v6.19
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.19 - Compra Planejada (Forward Buying) (Fev/2026):**
+- **Compra Planejada**: Nova tela para planejamento de compras futuras com multiplas datas de entrega
+- **Modelo OUL (Order-Up-To-Level)**: Cada pedido mantem cobertura-alvo configuravel (ABC, 60, 90 ou 120 dias)
+- **Fase 1 identica ao reabastecimento**: Chama internamente a API de pedido ao fornecedor, herdando todas as regras (V25-V35)
+- **Fases 2+ com estoque projetado**: Calcula necessidade baseada em estoque projetado na data de entrega
+- **Demanda sazonal ponderada**: Cada fase usa demanda do mes correspondente (sazonalidade)
+- **Exportacao Excel**: Abas por fase + consolidado para negociacao com fornecedor
 
 **Novidades v6.18 - Transit Time Backend + Fair Share CD + Correcao qtd_pend_transf (Fev/2026):**
 - **V33 - Transit time no backend**: Transit time CD->loja (+10d) incorporado ao lead time no backend, onde o calculo de cobertura desconta estoque. Antes era adicionado no frontend como `demanda × dias`, inflando pedidos
@@ -122,6 +130,7 @@ Novo modulo que integra previsao de demanda com calculo de pedidos:
 | **Validacao Conformidade** | Checklist automatico de metodologia | **Novo v5.6** |
 | **Fator Tendencia YoY** | Corrige subestimacao em crescimento | **Novo v5.7** |
 | **Botao Salvar Demanda** | Persiste demanda da tela no banco | **Novo v5.7** |
+| **Compra Planejada** | Forward buying com modelo OUL multi-fase | **Novo v6.19** |
 | Pedido Manual | Entrada manual de pedidos | Ativo |
 
 ---
@@ -219,6 +228,7 @@ Todas as telas do sistema estao disponiveis nas seguintes URLs (servidor rodando
 | **Menu Principal** | `http://localhost:5001/menu` | Pagina inicial com acesso a todos os modulos |
 | **Previsao de Demanda** | `http://localhost:5001/` | Geracao de previsoes de vendas (Bottom-Up V2) |
 | **Pedido ao Fornecedor** | `http://localhost:5001/pedido_fornecedor_integrado` | Pedido multi-loja com calculo ABC |
+| **Compra Planejada** | `http://localhost:5001/compra_planejada` | Forward buying com multiplas entregas |
 | **Transferencias** | `http://localhost:5001/transferencias` | Gestao de transferencias entre lojas |
 | **Simulador** | `http://localhost:5001/simulador` | Simulacao de cenarios what-if |
 | **Eventos** | `http://localhost:5001/eventos` | Calendario promocional |
@@ -243,6 +253,9 @@ Todas as telas do sistema estao disponiveis nas seguintes URLs (servidor rodando
 | `/api/demanda_job/consultar` | GET | Consulta demanda pre-calculada |
 | `/api/validacao/executar-checklist` | POST | Executa checklist de conformidade |
 | `/api/validacao/dashboard` | GET | Dashboard de metricas de conformidade |
+| `/api/compra_planejada/calcular` | POST | Calcula compra planejada (forward buying) |
+| `/api/compra_planejada/exportar` | POST | Exporta compra planejada para Excel |
+| `/api/compra_planejada/lead_time` | GET | Lead time para data padrao de entrega |
 | `/api/fornecedores` | GET | Lista fornecedores cadastrados |
 | `/api/lojas` | GET | Lista lojas cadastradas |
 | `/api/linhas` | GET | Lista linhas de produtos |
@@ -557,6 +570,7 @@ previsao-demanda/
 |   |-- menu.html                       # Menu principal
 |   |-- index.html                      # Previsao de demanda
 |   |-- pedido_fornecedor_integrado.html # NOVO - Pedido integrado
+|   |-- compra_planejada.html            # NOVO v6.19 - Forward buying
 |   |-- simulador.html                  # Simulador
 |   |-- eventos_simples.html            # Eventos
 |   |-- kpis.html                       # KPIs
@@ -650,7 +664,22 @@ CREATE TABLE parametros_gondola (
 
 ## Changelog
 
-### v6.18 (Fevereiro 2026) - ATUAL
+### v6.19 (Fevereiro 2026) - ATUAL
+
+**Compra Planejada (Forward Buying):**
+
+- **Nova tela `/compra_planejada`**: Planejamento de compras futuras com multiplas datas de entrega para negociacao antecipada com fornecedores
+- **Fase 1 identica ao reabastecimento**: Chama internamente `/api/pedido_fornecedor_integrado` via `test_client()`, herdando todas as regras (V25 transferencias, V29/V30 distribuicao CD, V31 bloqueio 12m, V32 rateio zero, V34 fair share)
+- **Modelo Order-Up-To-Level (OUL)**: Fases 2+ calculam pedido para manter cobertura-alvo (do seletor da tela). Formula: `necessidade = max(0, demanda_diaria × cobertura_alvo - estoque_projetado)`
+- **Estoque projetado**: `estoque_hoje + pedidos_anteriores - (demanda_diaria × dias_ate_entrega)` — desconta consumo ate data de entrega
+- **Demanda sazonal ponderada**: Funcao `_calcular_demanda_diaria_periodo()` pondera demanda por meses cobertos com fatores sazonais
+- **Cobertura-alvo configuravel**: ABC automatica (LT + Transit + Delay + Ciclo + Seguranca), 60, 90 ou 120 dias
+- **Cache de itens OK**: Itens com estoque suficiente (sem pedido na Fase 1) incluidos no cache de estoque para fases futuras
+- **Exportacao Excel**: Aba Resumo + abas por fase + aba Consolidado (item × fase)
+- **API lead time**: `/api/compra_planejada/lead_time` retorna LT maximo para calcular data padrao de entrega
+- Arquivos: `app/blueprints/compra_planejada.py`, `templates/compra_planejada.html`
+
+### v6.18 (Fevereiro 2026)
 
 **V33/V34/V35 - Transit Time Backend + Fair Share CD + Correcao qtd_pend_transf:**
 
@@ -1029,6 +1058,20 @@ R: A quantidade calculada e arredondada para cima ate o proximo multiplo de caix
 **P: Qual a diferenca entre destino Loja e CD?**
 R: "Lojas" processa pedidos para lojas que compram diretamente do fornecedor. "CD" processa pedidos para o Centro de Distribuicao que depois distribui para as lojas.
 
+### Compra Planejada
+
+**P: O que e a Compra Planejada?**
+R: E uma ferramenta para negociacao antecipada com fornecedores. O usuario define multiplas datas de entrega futuras e o sistema calcula quanto pedir em cada fase para manter a cobertura de estoque desejada.
+
+**P: Por que o Pedido 2 e maior que o Pedido 1?**
+R: O Pedido 1 desconta o estoque atual. Muitos itens tem estoque suficiente (sem pedido). Na data do Pedido 2, o estoque desses itens ja se consumiu, entao eles precisam de reposicao pela primeira vez. A partir do Pedido 3, os valores estabilizam.
+
+**P: O que e o modelo OUL (Order-Up-To-Level)?**
+R: E um modelo classico de gestao de estoques onde cada pedido repoe o estoque ate um nivel-alvo. O nivel-alvo e a cobertura selecionada (ex: 90 dias de demanda).
+
+**P: A cobertura-alvo e fixa ou configuravel?**
+R: Configuravel pelo seletor da tela: ABC automatica (calcula pelo lead time), 60, 90 ou 120 dias.
+
 ### Politica de Estoque
 
 **P: Como a curva ABC e definida?**
@@ -1106,17 +1149,17 @@ Para duvidas ou problemas:
 
 ## Features Planejadas
 
+- [x] Compra Planejada (Forward Buying) - v6.19
 - [ ] API REST para integracao com ERP
 - [ ] Dashboard Power BI
-- [ ] Pedido CD -> Lojas integrado
 - [ ] Transferencias automaticas
 - [ ] Exportacao de graficos
 - [ ] Modo batch para grandes volumes
 
 ---
 
-**Versao:** 6.13
+**Versao:** 6.19
 **Status:** Em Producao
-**Ultima Atualizacao:** 23 Fevereiro 2026
+**Ultima Atualizacao:** 27 Fevereiro 2026
 
 **Se este projeto foi util, considere dar uma estrela!**
