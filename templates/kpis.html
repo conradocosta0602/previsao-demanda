@@ -10,9 +10,6 @@
     <style>
         :root {
             --cor-ruptura: #ef4444;
-            --cor-cobertura: #10b981;
-            --cor-wmape: #3b82f6;
-            --cor-bias: #f59e0b;
             --cor-primaria: #667eea;
             --cor-secundaria: #764ba2;
         }
@@ -170,7 +167,7 @@
         /* Cards de KPI */
         .kpi-cards {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(1, 1fr);
             gap: 20px;
             margin-bottom: 25px;
         }
@@ -190,9 +187,6 @@
         }
 
         .kpi-card.ruptura { border-left-color: var(--cor-ruptura); }
-        .kpi-card.cobertura { border-left-color: var(--cor-cobertura); }
-        .kpi-card.wmape { border-left-color: var(--cor-wmape); }
-        .kpi-card.bias { border-left-color: var(--cor-bias); }
 
         .kpi-header {
             display: flex;
@@ -240,7 +234,7 @@
         /* Graficos */
         .charts-section {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr;
             gap: 25px;
             margin-bottom: 25px;
         }
@@ -269,9 +263,6 @@
         }
 
         .chart-title .icon.ruptura { background: var(--cor-ruptura); }
-        .chart-title .icon.cobertura { background: var(--cor-cobertura); }
-        .chart-title .icon.wmape { background: var(--cor-wmape); }
-        .chart-title .icon.bias { background: var(--cor-bias); }
 
         .chart-container {
             position: relative;
@@ -422,15 +413,6 @@
         .py-4 { padding: 2rem 0; }
 
         /* Responsivo */
-        @media (max-width: 1200px) {
-            .kpi-cards {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            .charts-section {
-                grid-template-columns: 1fr;
-            }
-        }
-
         @media (max-width: 768px) {
             .kpi-cards {
                 grid-template-columns: 1fr;
@@ -464,7 +446,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
                 <div>
                     <h1>Painel de KPIs</h1>
-                    <p>Acompanhamento de Ruptura, Cobertura, WMAPE e BIAS</p>
+                    <p>Acompanhamento de Ruptura</p>
                 </div>
                 <div style="display: flex; gap: 10px;">
                     <a href="/menu" style="background: rgba(255,255,255,0.2); color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.9em;">
@@ -550,33 +532,6 @@
                 <div class="kpi-valor" id="kpi-ruptura-valor">-</div>
                 <div class="kpi-tendencia" id="kpi-ruptura-tendencia">-</div>
             </div>
-
-            <div class="kpi-card cobertura">
-                <div class="kpi-header">
-                    <span class="kpi-label">Cobertura Ponderada</span>
-                    <span class="kpi-badge badge-cinza" id="kpi-cobertura-badge">Meta: 30d</span>
-                </div>
-                <div class="kpi-valor" id="kpi-cobertura-valor">-</div>
-                <div class="kpi-tendencia" id="kpi-cobertura-tendencia">-</div>
-            </div>
-
-            <div class="kpi-card wmape">
-                <div class="kpi-header">
-                    <span class="kpi-label">WMAPE</span>
-                    <span class="kpi-badge badge-cinza" id="kpi-wmape-badge">-</span>
-                </div>
-                <div class="kpi-valor" id="kpi-wmape-valor">-</div>
-                <div class="kpi-tendencia" id="kpi-wmape-tendencia">-</div>
-            </div>
-
-            <div class="kpi-card bias">
-                <div class="kpi-header">
-                    <span class="kpi-label">BIAS</span>
-                    <span class="kpi-badge badge-cinza" id="kpi-bias-badge">-</span>
-                </div>
-                <div class="kpi-valor" id="kpi-bias-valor">-</div>
-                <div class="kpi-tendencia" id="kpi-bias-tendencia">-</div>
-            </div>
         </div>
 
         <!-- Graficos -->
@@ -588,36 +543,6 @@
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-ruptura"></canvas>
-                </div>
-            </div>
-
-            <div class="chart-card">
-                <div class="chart-title">
-                    <span class="icon cobertura"></span>
-                    Evolucao da Cobertura
-                </div>
-                <div class="chart-container">
-                    <canvas id="chart-cobertura"></canvas>
-                </div>
-            </div>
-
-            <div class="chart-card">
-                <div class="chart-title">
-                    <span class="icon wmape"></span>
-                    Evolucao do WMAPE
-                </div>
-                <div class="chart-container">
-                    <canvas id="chart-wmape"></canvas>
-                </div>
-            </div>
-
-            <div class="chart-card">
-                <div class="chart-title">
-                    <span class="icon bias"></span>
-                    Evolucao do BIAS
-                </div>
-                <div class="chart-container">
-                    <canvas id="chart-bias"></canvas>
                 </div>
             </div>
         </div>
@@ -639,16 +564,13 @@
                         <th class="sortable" data-sort="identificador">Identificador <span class="sort-icon">&#8597;</span></th>
                         <th>Descricao</th>
                         <th class="sortable" data-sort="ruptura">Ruptura <span class="sort-icon">&#8597;</span></th>
-                        <th class="sortable" data-sort="cobertura">Cobertura (dias) <span class="sort-icon">&#8597;</span></th>
-                        <th class="sortable" data-sort="wmape">WMAPE <span class="sort-icon">&#8597;</span></th>
-                        <th class="sortable" data-sort="bias">BIAS <span class="sort-icon">&#8597;</span></th>
                         <th>Total SKUs</th>
                         <th>SKUs Ruptura</th>
                     </tr>
                 </thead>
                 <tbody id="ranking-tbody">
                     <tr>
-                        <td colspan="8" class="text-center text-muted py-4">
+                        <td colspan="5" class="text-center text-muted py-4">
                             Carregando dados...
                         </td>
                     </tr>

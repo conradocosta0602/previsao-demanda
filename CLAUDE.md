@@ -368,12 +368,10 @@ MARGEM_SEGURANCA_PROXIMO_CICLO = 1.20    # 20% margem de seguranca
 
 **Arquivos**: `app/blueprints/kpis.py`, `static/js/kpis.js`, `templates/kpis.html`
 
-Dashboard para monitoramento de indicadores de performance do sistema.
+Dashboard para monitoramento de ruptura de estoque.
 
-**KPIs Disponiveis**:
+**KPI Disponivel**:
 - **Ruptura**: % de pontos de abastecimento sem estoque (meta: < 5%)
-- **Cobertura Ponderada**: Dias de cobertura de estoque (meta: 30 dias)
-- **WMAPE**: Erro percentual ponderado da previsao (meta: < 20%)
 
 **Definicoes**:
 - **Item Ativo para Ruptura**: NAO esta em NC, FL, CO ou EN na situacao de compra
@@ -386,9 +384,11 @@ Dashboard para monitoramento de indicadores de performance do sistema.
 - Periodo configuravel
 - Granularidade: diaria, semanal ou mensal
 
-**Graficos**:
-- Evolucao temporal de Ruptura e Cobertura
-- Linha de meta para referencia
+**Grafico**:
+- Evolucao temporal da Ruptura com melhor historico como referencia
+
+**Indicadores removidos** (planejados para versao futura):
+- Cobertura Ponderada, WMAPE, BIAS
 
 ### 10. Relatorio de Itens Bloqueados na Exportacao
 

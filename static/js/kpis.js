@@ -28,9 +28,6 @@ let filtrosData = {};  // Dados dos filtros carregados
 // Cores padrão para os gráficos
 const CORES = {
     ruptura: '#ef4444',
-    cobertura: '#10b981',
-    wmape: '#3b82f6',
-    bias: '#f59e0b',
     melhorHistorico: '#9ca3af'
 };
 
@@ -39,13 +36,6 @@ const FAIXAS = {
     ruptura: {
         verde: 5,      // < 5%
         amarelo: 10    // 5-10%, > 10% = vermelho
-    },
-    wmape: {
-        azul: 20,      // < 20%
-        verde: 50      // 20-50%, >= 50% = vermelho
-    },
-    cobertura: {
-        meta: 30       // Meta de 30 dias de cobertura
     }
 };
 
@@ -305,15 +295,6 @@ function carregarRanking() {
 function atualizarCardsKPI(data) {
     // Ruptura
     atualizarCardKPI('ruptura', data.ruptura, '%', getCorRuptura);
-
-    // Cobertura
-    atualizarCardKPI('cobertura', data.cobertura, ' dias', getCorCobertura);
-
-    // WMAPE
-    atualizarCardKPI('wmape', data.wmape, '%', getCorWMAPE);
-
-    // BIAS
-    atualizarCardKPI('bias', data.bias, '%', getCorBIAS);
 }
 
 function atualizarCardKPI(id, dados, sufixo, getCorFunc) {
@@ -350,14 +331,8 @@ function atualizarCardKPI(id, dados, sufixo, getCorFunc) {
         // Para ruptura e WMAPE, diminuir é bom
         // Para cobertura, aumentar é bom
         if (dados.variacao !== undefined && dados.variacao !== 0) {
-            if (id === 'ruptura' || id === 'wmape') {
-                tendenciaEl.classList.add(dados.variacao <= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
-            } else if (id === 'cobertura') {
-                tendenciaEl.classList.add(dados.variacao >= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
-            } else {
-                // BIAS - quanto mais próximo de 0, melhor
-                tendenciaEl.classList.add(Math.abs(dados.variacao) <= 5 ? 'tendencia-positiva' : 'tendencia-negativa');
-            }
+            // Para ruptura, diminuir é bom
+            tendenciaEl.classList.add(dados.variacao <= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
         }
     }
 
@@ -375,27 +350,6 @@ function getCorRuptura(valor) {
     return 'vermelho';
 }
 
-function getCorCobertura(valor) {
-    if (valor === null || valor === undefined) return 'cinza';
-    if (valor >= FAIXAS.cobertura.meta) return 'verde';
-    if (valor >= FAIXAS.cobertura.meta * 0.7) return 'amarelo';
-    return 'vermelho';
-}
-
-function getCorWMAPE(valor) {
-    if (valor === null || valor === undefined) return 'cinza';
-    if (valor < FAIXAS.wmape.azul) return 'azul';
-    if (valor < FAIXAS.wmape.verde) return 'verde';
-    return 'vermelho';
-}
-
-function getCorBIAS(valor) {
-    if (valor === null || valor === undefined) return 'cinza';
-    const absValor = Math.abs(valor);
-    if (absValor < 10) return 'verde';
-    if (absValor < 25) return 'amarelo';
-    return 'vermelho';
-}
 
 function getTextoStatus(cor) {
     const textos = {
@@ -438,9 +392,6 @@ function atualizarGraficos(data) {
 
     // Criar novos gráficos
     criarGraficoRuptura(data.ruptura || []);
-    criarGraficoCobertura(data.cobertura || []);
-    criarGraficoWMAPE(data.wmape || []);
-    criarGraficoBIAS(data.bias || []);
 }
 
 function criarGraficoRuptura(dados) {
@@ -483,140 +434,6 @@ function criarGraficoRuptura(dados) {
     });
 }
 
-function criarGraficoCobertura(dados) {
-    const ctx = document.getElementById('chart-cobertura');
-    if (!ctx || !dados.length) return;
-
-    const labels = dados.map(d => d.periodo);
-    const valores = dados.map(d => d.valor);
-    const melhorHistorico = dados.map(d => d.melhor_historico);
-
-    // Adicionar linha de meta
-    const meta = dados.map(() => FAIXAS.cobertura.meta);
-
-    charts['cobertura'] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'Cobertura (dias)',
-                    data: valores,
-                    borderColor: CORES.cobertura,
-                    backgroundColor: hexToRgba(CORES.cobertura, 0.1),
-                    borderWidth: 3,
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 4,
-                    pointHoverRadius: 6
-                },
-                {
-                    label: 'Meta (30 dias)',
-                    data: meta,
-                    borderColor: '#6366f1',
-                    borderWidth: 2,
-                    borderDash: [10, 5],
-                    tension: 0,
-                    fill: false,
-                    pointRadius: 0
-                },
-                {
-                    label: 'Melhor Histórico',
-                    data: melhorHistorico,
-                    borderColor: CORES.melhorHistorico,
-                    borderWidth: 2,
-                    borderDash: [5, 5],
-                    tension: 0.4,
-                    fill: false,
-                    pointRadius: 0
-                }
-            ]
-        },
-        options: getOptionsGrafico('Cobertura (dias)', true)
-    });
-}
-
-function criarGraficoWMAPE(dados) {
-    const ctx = document.getElementById('chart-wmape');
-    if (!ctx || !dados.length) return;
-
-    const labels = dados.map(d => d.periodo);
-    const valores = dados.map(d => d.valor);
-    const melhorHistorico = dados.map(d => d.melhor_historico);
-
-    charts['wmape'] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'WMAPE (%)',
-                    data: valores,
-                    borderColor: CORES.wmape,
-                    backgroundColor: hexToRgba(CORES.wmape, 0.1),
-                    borderWidth: 3,
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 4,
-                    pointHoverRadius: 6
-                },
-                {
-                    label: 'Melhor Histórico',
-                    data: melhorHistorico,
-                    borderColor: CORES.melhorHistorico,
-                    borderWidth: 2,
-                    borderDash: [5, 5],
-                    tension: 0.4,
-                    fill: false,
-                    pointRadius: 0
-                }
-            ]
-        },
-        options: getOptionsGrafico('WMAPE (%)', true)
-    });
-}
-
-function criarGraficoBIAS(dados) {
-    const ctx = document.getElementById('chart-bias');
-    if (!ctx || !dados.length) return;
-
-    const labels = dados.map(d => d.periodo);
-    const valores = dados.map(d => d.valor);
-
-    // Linha de referência no zero
-    const zeroLine = dados.map(() => 0);
-
-    charts['bias'] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'BIAS (%)',
-                    data: valores,
-                    borderColor: CORES.bias,
-                    backgroundColor: hexToRgba(CORES.bias, 0.1),
-                    borderWidth: 3,
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 4,
-                    pointHoverRadius: 6
-                },
-                {
-                    label: 'Referência (0)',
-                    data: zeroLine,
-                    borderColor: CORES.melhorHistorico,
-                    borderWidth: 2,
-                    borderDash: [5, 5],
-                    tension: 0,
-                    fill: false,
-                    pointRadius: 0
-                }
-            ]
-        },
-        options: getOptionsGrafico('BIAS (%)', false)
-    });
-}
 
 function getOptionsGrafico(titulo, beginAtZero = true) {
     return {
@@ -683,7 +500,7 @@ function atualizarTabelaRanking(data) {
     if (!data || !data.itens || data.itens.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" class="text-center text-muted py-4">
+                <td colspan="5" class="text-center text-muted py-4">
                     Nenhum dado encontrado para os filtros selecionados
                 </td>
             </tr>
@@ -697,9 +514,7 @@ function atualizarTabelaRanking(data) {
     data.itens.forEach((item, index) => {
         const tr = document.createElement('tr');
 
-        // Determinar status baseado nos valores
         const statusRuptura = getCorRuptura(item.ruptura);
-        const statusWMAPE = getCorWMAPE(item.wmape);
 
         tr.innerHTML = `
             <td class="fw-medium">${item.identificador || '-'}</td>
@@ -707,11 +522,6 @@ function atualizarTabelaRanking(data) {
             <td>
                 <span class="badge badge-${statusRuptura}">${item.ruptura !== null ? item.ruptura.toFixed(1) + '%' : '-'}</span>
             </td>
-            <td>${item.cobertura !== null ? item.cobertura.toFixed(1) : '-'}</td>
-            <td>
-                <span class="badge badge-${statusWMAPE}">${item.wmape !== null ? item.wmape.toFixed(1) + '%' : '-'}</span>
-            </td>
-            <td>${item.bias !== null ? (item.bias > 0 ? '+' : '') + item.bias.toFixed(1) + '%' : '-'}</td>
             <td>${item.total_skus || '-'}</td>
             <td>${item.skus_ruptura || '-'}</td>
         `;
