@@ -853,9 +853,15 @@ def _api_gerar_previsao_banco_v2_interno():
                 'ema': 'EMA',
                 'wma_adaptativo_estavel': 'WMA',
                 'wma_adaptativo_crescente': 'Regressao com Tendencia',
-                'wma_adaptativo_decrescente': 'Regressao com Tendencia'
+                'wma_adaptativo_decrescente': 'Regressao com Tendencia',
+                'tsb_intermitente_extremo': 'TSB',
+                'sma': 'SMA',
+                'tendencia_linear': 'Tendencia',
+                'sazonal_decomposicao': 'Sazonal'
             }
-            metodo_exibicao = mapeamento_metodos.get(metodo_usado, metodo_usado)
+            # Se metodo composto (ex: ruptura_saneada+tsb), extrai apenas o metodo estatistico
+            chave_metodo = metodo_usado.split('+')[-1] if '+' in metodo_usado else metodo_usado
+            metodo_exibicao = mapeamento_metodos.get(chave_metodo, mapeamento_metodos.get(metodo_usado, chave_metodo.upper()))
 
             # Calcular variacao percentual
             variacao_pct = 0

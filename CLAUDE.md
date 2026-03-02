@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.19** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.20** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -139,6 +139,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V33: Transit time CD->loja no backend (em vez de frontend)
 - V34: Fair Share Allocation na distribuicao do CD
 - V35: Semantica correta de qtd_pend_transf no CD
+- V36: Pedido minimo 1 caixa para lojas em ruptura sem transferencia mapeada
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -735,6 +736,9 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V34: Fair Share Allocation na distribuicao do CD - proporcional por faixa em vez de sequencial (v6.18)
 - V35: Semantica qtd_pend_transf no CD - subtrair do estoque (mercadoria comprometida) em vez de somar (v6.18)
 - Compra Planejada (Forward Buying) - Tela de negociacao antecipada com multiplas entregas e modelo OUL (v6.19)
+- V36: Pedido minimo para lojas em ruptura - garante 1 caixa para lojas com estoque=0 sem transferencia mapeada; V26 nao bloqueia ruptura real (v6.20)
+- Remocao da tela Pedido Manual - funcionalidade descontinuada, arquivos removidos (v6.20)
+- Fix exibicao metodo estatistico no relatorio detalhado - extrai metodo puro de valores compostos como ruptura_saneada+tsb (v6.20)
 
 ## Documentacao Complementar
 
@@ -750,4 +754,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Fevereiro 2026 (v6.19)
+**Ultima atualizacao**: Marco 2026 (v6.20)

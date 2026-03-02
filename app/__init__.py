@@ -67,10 +67,6 @@ def _register_blueprints(app):
     from app.blueprints.transferencias import transferencias_bp
     app.register_blueprint(transferencias_bp)
 
-    # Blueprint: Pedido Manual
-    from app.blueprints.pedido_manual import pedido_manual_bp
-    app.register_blueprint(pedido_manual_bp)
-
     # Blueprint: KPIs
     from app.blueprints.kpis import kpis_bp
     app.register_blueprint(kpis_bp)
