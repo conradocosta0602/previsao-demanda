@@ -382,7 +382,8 @@ def api_pedido_fornecedor_integrado():
         processador.precarregar_produtos(codigos_produtos)
 
         # PRE-CARREGAR DEMANDA EM LOTE (otimizacao: 1 query em vez de N queries)
-        # Usar data_referencia se fornecida (ex: Compra Planejada passa mes da entrega)
+        # Usar demanda do mes de entrega estimado (nao do mes atual)
+        # data_referencia explicita (Compra Planejada) ou calculo automatico pelo lead time
         ano_ref = None
         mes_ref = None
         if data_referencia_str:
@@ -391,7 +392,20 @@ def api_pedido_fornecedor_integrado():
                 dt_ref = _dt.strptime(data_referencia_str, '%Y-%m-%d').date()
                 ano_ref = dt_ref.year
                 mes_ref = dt_ref.month
-                print(f"  [CACHE] Usando demanda de referencia: {ano_ref}/{mes_ref:02d} (data_entrega={data_referencia_str})")
+                print(f"  [CACHE] Demanda referencia (explicita): {ano_ref}/{mes_ref:02d}")
+            except Exception:
+                pass
+        else:
+            # V42: Calcular automaticamente o mes de entrega esperado
+            # Data entrega = hoje + lead_time_max + delay(5d)
+            try:
+                from datetime import date as _date
+                lt_max = int(df_produtos['lead_time_dias'].max()) if not df_produtos.empty else 15
+                dias_ate_entrega = lt_max + 5  # lead time + delay operacional
+                dt_entrega_est = _date.today() + timedelta(days=dias_ate_entrega)
+                ano_ref = dt_entrega_est.year
+                mes_ref = dt_entrega_est.month
+                print(f"  [CACHE] Demanda referencia (auto LT={lt_max}+5d): {ano_ref}/{mes_ref:02d} (entrega ~{dt_entrega_est})")
             except Exception:
                 pass
 
