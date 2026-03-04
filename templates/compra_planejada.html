@@ -234,21 +234,29 @@
                 <!-- Destino -->
                 <div class="form-group">
                     <label>Destino</label>
-                    <select id="destinoTipo">
+                    <select id="destinoTipo" onchange="onDestinoChange()">
                         <option value="LOJA">Lojas (Direto)</option>
                         <option value="CD">CD (Centralizado)</option>
                     </select>
                 </div>
 
-                <!-- Lojas -->
+                <!-- CD Destino (so aparece quando destino = CD) -->
+                <div class="form-group" id="cdDestinoGroup" style="display:none;">
+                    <label>CD Destino</label>
+                    <select id="cdDestino">
+                        <!-- Populado via JS com lojas >= 80 -->
+                    </select>
+                </div>
+
+                <!-- Lojas de Origem -->
                 <div class="form-group">
-                    <label>Lojas</label>
+                    <label>Lojas de Origem</label>
                     <div class="multi-select-actions">
                         <button onclick="marcarTodos('lojasContainer')">Marcar Todos</button>
                         <button onclick="desmarcarTodos('lojasContainer')">Desmarcar Todos</button>
                     </div>
                     <div class="multi-select-container" id="lojasContainer">
-                        <!-- Populado via JS -->
+                        <!-- Populado via JS (apenas lojas fisicas < 80) -->
                     </div>
                 </div>
 
@@ -400,16 +408,35 @@
         try {
             const res = await fetch('/api/lojas');
             const data = await res.json();
+            const todasLojas = data.lojas || [];
+
+            // Lojas fisicas (< 80) no container de origem
             const container = document.getElementById('lojasContainer');
             container.innerHTML = '';
-            (data.lojas || []).forEach(l => {
+            todasLojas.filter(l => l.cod_empresa < 80).forEach(l => {
                 container.innerHTML += `
                     <label>
                         <input type="checkbox" value="${l.cod_empresa}" checked>
                         ${l.nome_loja}
                     </label>`;
             });
+
+            // CDs (>= 80) no seletor de CD destino
+            const cdSelect = document.getElementById('cdDestino');
+            cdSelect.innerHTML = '';
+            todasLojas.filter(l => l.cod_empresa >= 80).forEach(l => {
+                cdSelect.innerHTML += `<option value="${l.cod_empresa}">${l.nome_loja}</option>`;
+            });
+            // Fallback se nao houver CDs cadastrados
+            if (cdSelect.options.length === 0) {
+                cdSelect.innerHTML = '<option value="80">CD 80 - MDC</option>';
+            }
         } catch(e) { console.error('Erro ao carregar lojas:', e); }
+    }
+
+    function onDestinoChange() {
+        const destino = document.getElementById('destinoTipo').value;
+        document.getElementById('cdDestinoGroup').style.display = destino === 'CD' ? '' : 'none';
     }
 
     async function carregarFornecedores() {
@@ -611,16 +638,24 @@
             return;
         }
 
-        // Coletar lojas
+        // Coletar lojas fisicas marcadas
         const lojaChecks = document.querySelectorAll('#lojasContainer input[type="checkbox"]:checked');
-        const lojas = Array.from(lojaChecks).map(c => parseInt(c.value));
+        const lojasFisicas = Array.from(lojaChecks).map(c => parseInt(c.value));
+
+        // Se destino CD, incluir o CD selecionado na lista de cod_empresa
+        const destinoTipo = document.getElementById('destinoTipo').value;
+        let lojas = lojasFisicas;
+        if (destinoTipo === 'CD') {
+            const cdVal = parseInt(document.getElementById('cdDestino').value);
+            if (!isNaN(cdVal)) lojas = lojasFisicas.concat([cdVal]);
+        }
 
         const coberturaVal = document.getElementById('coberturaDias').value;
 
         const payload = {
             fornecedor: fornecedores,
             cod_empresa: lojas.length > 0 ? lojas : 'TODAS',
-            destino_tipo: document.getElementById('destinoTipo').value,
+            destino_tipo: destinoTipo,
             datas_entrega: datas,
             linha1: document.getElementById('linha1').value,
             linha3: document.getElementById('linha3').value,
