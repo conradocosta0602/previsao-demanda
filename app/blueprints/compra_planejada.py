@@ -545,29 +545,58 @@ def api_compra_planejada_calcular():
         demanda_diaria_cache = {}
         es_cache = {}  # ES por item (para modo negociacao)
 
-        # Itens com pedido (fase 1)
-        for item in itens_fase1:
-            cod = item['codigo']
-            estoque_consolidado[cod] = float(item.get('estoque_atual', 0) or 0)
-            pedidos_acumulados[cod] = float(item.get('quantidade_pedido', 0) or 0)
-            demanda_diaria_cache[cod] = float(item.get('demanda_diaria', 0) or 0)
-            es_cache[cod] = float(item.get('estoque_seguranca', 0) or 0)
-
-        # Itens OK (sem pedido mas com estoque) - CRUCIAL para fases 2+
         if is_pedido_multiloja_resp:
-            ok_por_codigo = {}
+            # V38: Para pedidos multiloja (destino CD), o estoque consolidado deve
+            # somar TODAS as lojas — tanto as que precisam pedir (itens_pedido_normal)
+            # quanto as que ja tem estoque suficiente (itens_ok_normal).
+            # Bug anterior: itens_fase1 ja agrupava por codigo (soma das lojas com pedido),
+            # mas ignorava o estoque das lojas OK para o mesmo item.
+            # Solucao: agrupar todos os registros por codigo antes de montar os caches.
+            todos_por_codigo = {}
+            for item in itens_pedido_normal:
+                cod = int(item.get('codigo', 0))
+                if cod not in todos_por_codigo:
+                    todos_por_codigo[cod] = []
+                todos_por_codigo[cod].append(item)
             for item in itens_ok_normal:
                 cod = int(item.get('codigo', 0))
-                if cod not in ok_por_codigo:
-                    ok_por_codigo[cod] = []
-                ok_por_codigo[cod].append(item)
-            for cod, itens in ok_por_codigo.items():
-                if cod not in estoque_consolidado:
-                    estoque_consolidado[cod] = sum(float(i.get('estoque_efetivo', i.get('estoque_atual', 0)) or 0) for i in itens)
+                if cod not in todos_por_codigo:
+                    todos_por_codigo[cod] = []
+                todos_por_codigo[cod].append(item)
+
+            for cod, registros in todos_por_codigo.items():
+                # Estoque: soma de TODAS as lojas (pedido + ok)
+                estoque_consolidado[cod] = sum(
+                    float(i.get('estoque_efetivo', i.get('estoque_atual', 0)) or 0)
+                    for i in registros
+                )
+                # Demanda: soma de todas as lojas
+                demanda_diaria_cache[cod] = sum(
+                    float(i.get('demanda_prevista_diaria', i.get('demanda_diaria', 0)) or 0)
+                    for i in registros
+                )
+                # ES: soma de todas as lojas
+                es_cache[cod] = sum(float(i.get('estoque_seguranca', 0) or 0) for i in registros)
+
+            # Pedidos acumulados: apenas itens com pedido (fase 1 via API reabastecimento)
+            for item in itens_fase1:
+                cod = item['codigo']
+                pedidos_acumulados[cod] = float(item.get('quantidade_pedido', 0) or 0)
+            # Itens OK nao tem pedido acumulado
+            for item in itens_ok_normal:
+                cod = int(item.get('codigo', 0))
+                if cod not in pedidos_acumulados:
                     pedidos_acumulados[cod] = 0
-                    demanda_diaria_cache[cod] = sum(float(i.get('demanda_prevista_diaria', i.get('demanda_diaria', 0)) or 0) for i in itens)
-                    es_cache[cod] = sum(float(i.get('estoque_seguranca', 0) or 0) for i in itens)
+
         else:
+            # Pedido mono-loja: logica simples como antes
+            for item in itens_fase1:
+                cod = item['codigo']
+                estoque_consolidado[cod] = float(item.get('estoque_atual', 0) or 0)
+                pedidos_acumulados[cod] = float(item.get('quantidade_pedido', 0) or 0)
+                demanda_diaria_cache[cod] = float(item.get('demanda_diaria', 0) or 0)
+                es_cache[cod] = float(item.get('estoque_seguranca', 0) or 0)
+
             for item in itens_ok_normal:
                 cod = int(item.get('codigo', 0))
                 if cod not in estoque_consolidado:
@@ -576,7 +605,7 @@ def api_compra_planejada_calcular():
                     demanda_diaria_cache[cod] = float(item.get('demanda_prevista_diaria', item.get('demanda_diaria', 0)) or 0)
                     es_cache[cod] = float(item.get('estoque_seguranca', 0) or 0)
 
-        print(f"  Cache: {len(estoque_consolidado)} itens ({len(itens_fase1)} pedido + {len(estoque_consolidado) - len(itens_fase1)} OK)")
+        print(f"  Cache: {len(estoque_consolidado)} itens ({len(itens_fase1)} pedido + {len([c for c in estoque_consolidado if c not in {i['codigo'] for i in itens_fase1}])} OK)")
 
         # Buscar demanda do mes da 1a entrega (fallback)
         mes_fase1_key = (datas_entrega[0].year, datas_entrega[0].month)
