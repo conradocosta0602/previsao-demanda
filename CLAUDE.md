@@ -757,6 +757,9 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - Modo Negociacao Comercial na Compra Planejada - toggle OUL direto em todas as fases para blanket orders/forward buying (v6.22)
 - V38: Correcao estoque consolidado modo Negociacao Comercial (multiloja/CD) - estoque_consolidado agora soma TODAS as lojas (pedido+ok), evitando pedidos inflados para itens com estoque suficiente nas lojas restantes (v6.22)
 - V39: OUL por loja na Compra Planejada (modos Negociacao e Reabastecimento) - necessidade calculada loja a loja sem compensacao cruzada; excesso de uma filial nao mascara deficit de outra (v6.23)
+- V40: Correcao cod_destino na Compra Planejada - quando destino=CD e lojas fisicas selecionadas, usa CD 80 como cod_empresa no payload da API (nao a primeira loja fisica) (v6.23)
+- V41: Demanda do mes de entrega no Pedido 1 da Compra Planejada - passa data_referencia=datas_entrega[0] para API usar demanda de Abril (entrega) e nao Marco (hoje) (v6.23)
+- V42: Demanda do mes de entrega no Reabastecimento normal - calcula automaticamente mes entrega = hoje + lead_time_max + 5d; alinha ambas as telas com o mesmo principio (v6.23)
 
 ## Documentacao Complementar
 
