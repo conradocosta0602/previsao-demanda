@@ -748,8 +748,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - Remocao da tela Pedido Manual - funcionalidade descontinuada, arquivos removidos (v6.20)
 - Fix exibicao metodo estatistico no relatorio detalhado - extrai metodo puro de valores compostos como ruptura_saneada+tsb (v6.20)
 - Salvar Demanda agora grava valores da tela (nao re-executa cronjob) - campo ajuste_manual protege contra sobrescrita automatica (v6.21)
-- V37: Consumo durante lead time descontado do estoque - necessidade calculada sobre estoque projetado na data de entrega, nao estoque hoje (v6.22)
-- Modo Negociacao Comercial na Compra Planejada - toggle OUL direto em todas as fases para blanket orders/forward buying (v6.22)
+- Fix Compra Planejada: consumo_ate_entrega calculado mes a mes com demanda sazonal correta via _calcular_consumo_total_periodo() - elimina spike de pedido em meses de alta sazonalidade (v6.21)
 
 ## Documentacao Complementar
 

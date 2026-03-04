@@ -2,12 +2,12 @@
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v6.21 - Salvar Demanda agora grava valores da tela (Mar/2026):**
+**Novidades v6.21 - Salvar Demanda + Fix Compra Planejada (Mar/2026):**
 - **Fonte unica de verdade**: Botao "Salvar Demanda" agora envia os valores exibidos na Tela de Demanda diretamente para `demanda_pre_calculada`, em vez de re-executar o cronjob
 - **Protecao via ajuste_manual**: Registros salvos pela tela recebem `ajuste_manual IS NOT NULL`, impedindo sobrescrita pelo calculo automatico noturno
 - **Novo endpoint** `POST /api/demanda/salvar_tela`: recebe `relatorio_detalhado.itens` do frontend e faz upsert item a item com `UPDATE` + `INSERT`
 - **Cronjob preserva ajustes**: O job diario identifica chaves ja com `ajuste_manual` e as exclui do batch de INSERT, evitando colisao de chave
-- **Impacto**: Pedido Fornecedor e Compra Planejada passam a usar exatamente os valores validados pelo usuario na tela
+- **Fix spike Compra Planejada**: `consumo_ate_entrega` agora calculado mes a mes com demanda sazonal correta (funcao `_calcular_consumo_total_periodo`). Antes usava demanda do mes-alvo multiplicada por todos os dias, superestimando o consumo em periodos pre-sazonais e gerando pedidos irreais (ex: R$6M em Junho)
 
 **Novidades v6.20 - Pedido Minimo para Ruptura + Remocao Pedido Manual (Mar/2026):**
 - **V36 - Pedido minimo em ruptura**: Lojas com estoque=0 sem transferencia mapeada recebem pedido minimo de 1 caixa (V26 nao bloqueia ruptura real)
