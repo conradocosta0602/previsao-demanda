@@ -120,6 +120,7 @@ def api_compra_planejada_calcular():
         cod_empresa = dados.get('cod_empresa', 'TODAS')
         datas_entrega_raw = dados.get('datas_entrega', [])
         cobertura_dias = dados.get('cobertura_dias', None)  # None = ABC automatica
+        modo_calculo = dados.get('modo_calculo', 'reabastecimento')  # 'reabastecimento' ou 'negociacao'
 
         # Validar datas de entrega
         if not datas_entrega_raw or len(datas_entrega_raw) == 0:
@@ -162,6 +163,7 @@ def api_compra_planejada_calcular():
         print(f"{'='*60}")
         print(f"  Fornecedor: {fornecedor_filtro}")
         print(f"  Destino: {destino_tipo}")
+        print(f"  Modo: {modo_calculo.upper()}")
         print(f"  Datas de entrega: {[d.isoformat() for d in datas_entrega]}")
         print(f"  Cobertura: {cobertura_dias if cobertura_dias else 'ABC (automatica)'}")
 
@@ -536,19 +538,12 @@ def api_compra_planejada_calcular():
             cobertura_display = cobertura_ultima_fase
 
         # ================================================================
-        # FASES 2+: Modelo Order-Up-To-Level (OUL)
+        # MONTAR CACHES COMUNS (usados em ambos os modos)
         # ================================================================
-        # Cada pedido repoe estoque para manter cobertura-alvo (do seletor da tela)
-        # target_estoque = demanda_diaria × cobertura_alvo
-        # necessidade = max(0, target_estoque - estoque_projetado)
-        target_cobertura = cobertura_display  # Mesma cobertura do Pedido 1
-        print(f"  [FASES 2+] Modelo OUL: cobertura-alvo = {target_cobertura} dias")
-
-        # Montar cache de estoque atual consolidado por item (todas as lojas)
-        # IMPORTANTE: Incluir itens_ok (estoque suficiente) e itens_pedido
         estoque_consolidado = {}
         pedidos_acumulados = {}
         demanda_diaria_cache = {}
+        es_cache = {}  # ES por item (para modo negociacao)
 
         # Itens com pedido (fase 1)
         for item in itens_fase1:
@@ -556,11 +551,10 @@ def api_compra_planejada_calcular():
             estoque_consolidado[cod] = float(item.get('estoque_atual', 0) or 0)
             pedidos_acumulados[cod] = float(item.get('quantidade_pedido', 0) or 0)
             demanda_diaria_cache[cod] = float(item.get('demanda_diaria', 0) or 0)
+            es_cache[cod] = float(item.get('estoque_seguranca', 0) or 0)
 
         # Itens OK (sem pedido mas com estoque) - CRUCIAL para fases 2+
-        # Sem isso, estoque desses itens = 0 nas fases futuras, inflando pedidos
         if is_pedido_multiloja_resp:
-            # Agrupar itens_ok por codigo
             ok_por_codigo = {}
             for item in itens_ok_normal:
                 cod = int(item.get('codigo', 0))
@@ -572,6 +566,7 @@ def api_compra_planejada_calcular():
                     estoque_consolidado[cod] = sum(float(i.get('estoque_efetivo', i.get('estoque_atual', 0)) or 0) for i in itens)
                     pedidos_acumulados[cod] = 0
                     demanda_diaria_cache[cod] = sum(float(i.get('demanda_prevista_diaria', i.get('demanda_diaria', 0)) or 0) for i in itens)
+                    es_cache[cod] = sum(float(i.get('estoque_seguranca', 0) or 0) for i in itens)
         else:
             for item in itens_ok_normal:
                 cod = int(item.get('codigo', 0))
@@ -579,19 +574,20 @@ def api_compra_planejada_calcular():
                     estoque_consolidado[cod] = float(item.get('estoque_efetivo', item.get('estoque_atual', 0)) or 0)
                     pedidos_acumulados[cod] = 0
                     demanda_diaria_cache[cod] = float(item.get('demanda_prevista_diaria', item.get('demanda_diaria', 0)) or 0)
+                    es_cache[cod] = float(item.get('estoque_seguranca', 0) or 0)
 
-        print(f"  [FASES 2+] Cache: {len(estoque_consolidado)} itens com estoque ({len(itens_fase1)} pedido + {len(estoque_consolidado) - len(itens_fase1)} OK)")
+        print(f"  Cache: {len(estoque_consolidado)} itens ({len(itens_fase1)} pedido + {len(estoque_consolidado) - len(itens_fase1)} OK)")
 
-        # Buscar demanda do mes da 1a entrega (fallback para fases 2+)
-        mes_fase1 = (datas_entrega[0].year, datas_entrega[0].month)
-        cache_demanda_fase1 = cache_demanda_por_mes.get(mes_fase1, {})
+        # Buscar demanda do mes da 1a entrega (fallback)
+        mes_fase1_key = (datas_entrega[0].year, datas_entrega[0].month)
+        cache_demanda_fase1 = cache_demanda_por_mes.get(mes_fase1_key, {})
         if not cache_demanda_fase1:
             for chave_mes in sorted(cache_demanda_por_mes.keys()):
                 if cache_demanda_por_mes[chave_mes]:
                     cache_demanda_fase1 = cache_demanda_por_mes[chave_mes]
                     break
 
-        # Carregar embalagens que podem faltar no cache (itens OK que nao tem pedido)
+        # Carregar embalagens que podem faltar no cache
         if not embalagens_cache:
             try:
                 cursor_emb = conn.cursor()
@@ -605,124 +601,247 @@ def api_compra_planejada_calcular():
             except Exception:
                 pass
 
-        fases_resultado = [{
-            'fase': 1,
-            'data_entrega': periodos[0]['data_entrega'].isoformat(),
-            'data_fim_cobertura': periodos[0]['data_fim_cobertura'].isoformat(),
-            'periodo_dias': cobertura_display,
-            'tipo_calculo': 'completo',
-            'itens': itens_fase1,
-            'total_valor': sum(i.get('valor_total', 0) for i in itens_fase1),
-            'total_itens': len([i for i in itens_fase1 if i.get('quantidade_pedido', 0) > 0]),
-            'total_quantidade': sum(i.get('quantidade_pedido', 0) for i in itens_fase1),
-        }]
+        # ================================================================
+        # MODO NEGOCIACAO COMERCIAL
+        # Todas as fases: demanda do periodo - estoque projetado + ES proporcional
+        # Estoque projetado = max(0, estoque_hoje + pedidos_ant - consumo_ate_entrega)
+        # Negativo = zero (nao soma deficit passado)
+        # ================================================================
+        if modo_calculo == 'negociacao':
+            # Cobertura-alvo definida pelo usuario (ou ABC automatica)
+            cobertura_alvo = cobertura_display
+            print(f"  [NEGOCIACAO] Cobertura-alvo = {cobertura_alvo} dias (apos cada entrega)")
 
-        for fase_idx in range(1, len(periodos)):
-            periodo = periodos[fase_idx]
-            itens_fase = []
+            # Buscar curva ABC dos itens (para exibicao)
+            abc_cache = {}
+            for item in itens_fase1 + itens_ok_normal:
+                cod = int(item.get('codigo', 0))
+                abc_cache[cod] = item.get('curva_abc', 'B') or 'B'
 
-            # Dias desde hoje ate a data de entrega desta fase
-            dias_ate_entrega = (periodo['data_entrega'] - hoje).days
+            fases_resultado = []
 
-            for idx, row in df_produtos.iterrows():
-                codigo = int(row['codigo'])
-                cnpj_forn = row.get('codigo_fornecedor', '')
+            for fase_idx, periodo in enumerate(periodos):
+                itens_fase = []
+                dias_ate_entrega = (periodo['data_entrega'] - hoje).days
+                dias_periodo = periodo['dias']
 
-                # Pular itens bloqueados
-                if codigo in itens_bloqueados:
-                    continue
+                for idx, row in df_produtos.iterrows():
+                    codigo = int(row['codigo'])
+                    cnpj_forn = row.get('codigo_fornecedor', '')
 
-                # Demanda diaria para este periodo (ponderada por mes/sazonalidade)
-                demanda_diaria_periodo = _calcular_demanda_diaria_periodo(
-                    cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                    str(codigo), periodo, lojas_demanda, is_pedido_multiloja
-                )
+                    # Pular itens bloqueados
+                    if codigo in itens_bloqueados:
+                        continue
 
-                if demanda_diaria_periodo <= 0:
-                    continue
+                    # Demanda diaria para este periodo (com sazonalidade)
+                    demanda_diaria_periodo = _calcular_demanda_diaria_periodo(
+                        cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                        str(codigo), periodo, lojas_demanda, is_pedido_multiloja
+                    )
 
-                # Atualizar cache de demanda diaria (pode variar por sazonalidade)
-                if codigo not in demanda_diaria_cache:
-                    demanda_diaria_cache[codigo] = demanda_diaria_periodo
+                    if demanda_diaria_periodo <= 0:
+                        continue
 
-                multiplo = embalagens_cache.get(codigo, 1)
-                if multiplo <= 0:
-                    multiplo = 1
+                    multiplo = embalagens_cache.get(codigo, 1)
+                    if multiplo <= 0:
+                        multiplo = 1
 
-                # === Modelo Order-Up-To-Level (OUL) ===
-                # Estoque projetado na data de entrega desta fase
-                estoque_atual = estoque_consolidado.get(codigo, 0)
-                pedidos_ant = pedidos_acumulados.get(codigo, 0)
-                dem_diaria_media = demanda_diaria_cache.get(codigo, demanda_diaria_periodo)
-                consumo_ate_entrega = dem_diaria_media * dias_ate_entrega
-                estoque_projetado = estoque_atual + pedidos_ant - consumo_ate_entrega
+                    # Estoque projetado na data de entrega
+                    # Consumo calculado mes a mes (sazonal) de hoje ate a entrega,
+                    # evitando usar a demanda do mes-alvo para todos os dias anteriores
+                    estoque_hoje = estoque_consolidado.get(codigo, 0)
+                    pedidos_ant = pedidos_acumulados.get(codigo, 0)
+                    consumo_ate_entrega = _calcular_consumo_total_periodo(
+                        cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                        str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
+                        lojas_demanda, is_pedido_multiloja
+                    )
+                    estoque_projetado = max(0, estoque_hoje + pedidos_ant - consumo_ate_entrega)
 
-                # Target = estoque necessario para manter cobertura-alvo
-                target_estoque = demanda_diaria_periodo * target_cobertura
+                    # OUL: apos cada entrega, estoque deve atingir cobertura-alvo
+                    target_estoque = demanda_diaria_periodo * cobertura_alvo
+                    necessidade = target_estoque - estoque_projetado
 
-                # Necessidade = quanto falta para atingir o target
-                necessidade = target_estoque - max(0, estoque_projetado)
+                    if necessidade <= 0:
+                        qtd_pedido = 0
+                    else:
+                        qtd_pedido = math.ceil(necessidade / multiplo) * multiplo
 
-                if necessidade <= 0:
-                    qtd_pedido = 0
-                else:
-                    qtd_pedido = math.ceil(necessidade / multiplo) * multiplo
+                    order_cap_aplicado = False  # mantido para compatibilidade frontend
 
-                # Debug para primeiros itens (apenas na fase 2 para diagnostico)
-                if fase_idx == 1 and len(itens_fase) < 3 and qtd_pedido > 0:
-                    print(f"    [OUL F{fase_idx+1}] cod={codigo}: est_hoje={estoque_atual:.0f} + ped_ant={pedidos_ant:.0f} - consumo({dem_diaria_media:.1f}x{dias_ate_entrega}d={consumo_ate_entrega:.0f}) = est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} | nec={necessidade:.0f} -> pedido={qtd_pedido}")
+                    # Debug primeiros itens de todas as fases
+                    if len(itens_fase) < 3:
+                        print(f"    [NEG F{fase_idx+1}] cod={codigo}: est_hoje={estoque_hoje:.0f} + ped_ant={pedidos_ant:.0f} - consumo({demanda_diaria_periodo:.2f}x{dias_ate_entrega}d={consumo_ate_entrega:.0f}) = est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} ({cobertura_alvo}d) | nec={necessidade:.0f} -> pedido={qtd_pedido}")
 
-                cue = cue_cache.get(codigo, 0)
+                    cue = cue_cache.get(codigo, 0)
 
-                # Fator sazonal
-                fator_saz = 1.0
-                mes_principal = (periodo['data_entrega'].year, periodo['data_entrega'].month)
-                cache_mes_p = cache_demanda_por_mes.get(mes_principal, {})
-                if cache_mes_p:
-                    key_saz = (str(codigo), None)
-                    dados_saz = cache_mes_p.get(key_saz, {})
-                    if dados_saz:
-                        fator_saz = dados_saz.get('fator_sazonal', 1.0) or 1.0
+                    # Fator sazonal para exibicao
+                    fator_saz = 1.0
+                    mes_principal = (periodo['data_entrega'].year, periodo['data_entrega'].month)
+                    cache_mes_p = cache_demanda_por_mes.get(mes_principal, {})
+                    if cache_mes_p:
+                        dados_saz = cache_mes_p.get((str(codigo), None), {})
+                        if dados_saz:
+                            fator_saz = dados_saz.get('fator_sazonal', 1.0) or 1.0
 
-                # Demanda bruta para exibicao (demanda do intervalo entre entregas)
-                demanda_bruta_display = demanda_diaria_periodo * periodo['dias']
+                    # Demanda do periodo para exibicao
+                    demanda_periodo_display = demanda_diaria_periodo * dias_periodo
 
-                itens_fase.append({
-                    'codigo': codigo,
-                    'descricao': row.get('descricao', ''),
-                    'cnpj_fornecedor': cnpj_forn,
-                    'nome_fornecedor': row.get('nome_fornecedor', ''),
-                    'curva_abc': 'B',
-                    'metodo': '',
-                    'demanda_diaria': round(demanda_diaria_periodo, 2),
-                    'demanda_periodo': round(demanda_bruta_display, 0),
-                    'estoque_atual': round(max(0, estoque_projetado), 0),
-                    'estoque_seguranca': 0,
-                    'quantidade_pedido': qtd_pedido,
-                    'multiplo_caixa': multiplo,
-                    'numero_caixas': math.ceil(qtd_pedido / multiplo) if qtd_pedido > 0 else 0,
-                    'cue': round(cue, 2),
-                    'valor_total': round(qtd_pedido * cue, 2),
-                    'fator_sazonal': fator_saz,
-                    'tipo_calculo': 'projetado',
+                    itens_fase.append({
+                        'codigo': codigo,
+                        'descricao': row.get('descricao', ''),
+                        'cnpj_fornecedor': cnpj_forn,
+                        'nome_fornecedor': row.get('nome_fornecedor', ''),
+                        'curva_abc': abc_cache.get(codigo, 'B'),
+                        'metodo': '',
+                        'demanda_diaria': round(demanda_diaria_periodo, 4),
+                        'demanda_periodo': round(demanda_periodo_display, 0),
+                        'estoque_projetado': round(estoque_projetado, 0),
+                        'estoque_atual': round(estoque_projetado, 0),  # compatibilidade com frontend
+                        'estoque_seguranca': round(target_estoque, 0),  # exibe target como referencia
+                        'quantidade_pedido': qtd_pedido,
+                        'multiplo_caixa': multiplo,
+                        'numero_caixas': math.ceil(qtd_pedido / multiplo) if qtd_pedido > 0 else 0,
+                        'cue': round(cue, 2),
+                        'valor_total': round(qtd_pedido * cue, 2),
+                        'fator_sazonal': round(fator_saz, 3),
+                        'tipo_calculo': 'negociacao',
+                        'order_cap_aplicado': order_cap_aplicado,
+                    })
+
+                    # Acumular pedido para proximas fases
+                    pedidos_acumulados[codigo] = pedidos_ant + qtd_pedido
+
+                print(f"  [FASE {fase_idx + 1}] {len([i for i in itens_fase if i['quantidade_pedido'] > 0])} itens com pedido (negociacao OUL, cobertura={cobertura_alvo}d)")
+
+                fases_resultado.append({
+                    'fase': fase_idx + 1,
+                    'data_entrega': periodo['data_entrega'].isoformat(),
+                    'data_fim_cobertura': periodo['data_fim_cobertura'].isoformat(),
+                    'periodo_dias': dias_periodo,
+                    'cobertura_alvo': cobertura_alvo,
+                    'tipo_calculo': 'negociacao',
+                    'itens': itens_fase,
+                    'total_valor': sum(i.get('valor_total', 0) for i in itens_fase),
+                    'total_itens': len([i for i in itens_fase if i.get('quantidade_pedido', 0) > 0]),
+                    'total_quantidade': sum(i.get('quantidade_pedido', 0) for i in itens_fase),
                 })
 
-                # Acumular pedido desta fase para as proximas
-                pedidos_acumulados[codigo] = pedidos_ant + qtd_pedido
+        # ================================================================
+        # MODO REABASTECIMENTO (comportamento original)
+        # Fase 1 = pedido normal via API. Fases 2+ = OUL cobertura-alvo
+        # ================================================================
+        else:
+            target_cobertura = cobertura_display
+            print(f"  [FASES 2+] Modelo OUL: cobertura-alvo = {target_cobertura} dias")
 
-            print(f"  [FASE {fase_idx + 1}] {len(itens_fase)} itens calculados (OUL target={target_cobertura}d, intervalo={periodo['dias']}d)")
+            fases_resultado = [{
+                'fase': 1,
+                'data_entrega': periodos[0]['data_entrega'].isoformat(),
+                'data_fim_cobertura': periodos[0]['data_fim_cobertura'].isoformat(),
+                'periodo_dias': cobertura_display,
+                'tipo_calculo': 'completo',
+                'itens': itens_fase1,
+                'total_valor': sum(i.get('valor_total', 0) for i in itens_fase1),
+                'total_itens': len([i for i in itens_fase1 if i.get('quantidade_pedido', 0) > 0]),
+                'total_quantidade': sum(i.get('quantidade_pedido', 0) for i in itens_fase1),
+            }]
 
-            fases_resultado.append({
-                'fase': fase_idx + 1,
-                'data_entrega': periodo['data_entrega'].isoformat(),
-                'data_fim_cobertura': periodo['data_fim_cobertura'].isoformat(),
-                'periodo_dias': target_cobertura,
-                'tipo_calculo': 'projetado',
-                'itens': itens_fase,
-                'total_valor': sum(i.get('valor_total', 0) for i in itens_fase),
-                'total_itens': len([i for i in itens_fase if i.get('quantidade_pedido', 0) > 0]),
-                'total_quantidade': sum(i.get('quantidade_pedido', 0) for i in itens_fase),
-            })
+            for fase_idx in range(1, len(periodos)):
+                periodo = periodos[fase_idx]
+                itens_fase = []
+
+                dias_ate_entrega = (periodo['data_entrega'] - hoje).days
+
+                for idx, row in df_produtos.iterrows():
+                    codigo = int(row['codigo'])
+                    cnpj_forn = row.get('codigo_fornecedor', '')
+
+                    if codigo in itens_bloqueados:
+                        continue
+
+                    demanda_diaria_periodo = _calcular_demanda_diaria_periodo(
+                        cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                        str(codigo), periodo, lojas_demanda, is_pedido_multiloja
+                    )
+
+                    if demanda_diaria_periodo <= 0:
+                        continue
+
+                    if codigo not in demanda_diaria_cache:
+                        demanda_diaria_cache[codigo] = demanda_diaria_periodo
+
+                    multiplo = embalagens_cache.get(codigo, 1)
+                    if multiplo <= 0:
+                        multiplo = 1
+
+                    estoque_atual = estoque_consolidado.get(codigo, 0)
+                    pedidos_ant = pedidos_acumulados.get(codigo, 0)
+                    dem_diaria_media = demanda_diaria_cache.get(codigo, demanda_diaria_periodo)
+                    consumo_ate_entrega = dem_diaria_media * dias_ate_entrega
+                    estoque_projetado = estoque_atual + pedidos_ant - consumo_ate_entrega
+
+                    target_estoque = demanda_diaria_periodo * target_cobertura
+                    necessidade = target_estoque - max(0, estoque_projetado)
+
+                    if necessidade <= 0:
+                        qtd_pedido = 0
+                    else:
+                        qtd_pedido = math.ceil(necessidade / multiplo) * multiplo
+
+                    order_cap_aplicado = False  # mantido para compatibilidade frontend
+
+                    if fase_idx == 1 and len(itens_fase) < 3 and qtd_pedido > 0:
+                        print(f"    [OUL F{fase_idx+1}] cod={codigo}: est_hoje={estoque_atual:.0f} + ped_ant={pedidos_ant:.0f} - consumo({dem_diaria_media:.1f}x{dias_ate_entrega}d={consumo_ate_entrega:.0f}) = est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} | nec={necessidade:.0f} -> pedido={qtd_pedido}")
+
+                    cue = cue_cache.get(codigo, 0)
+
+                    fator_saz = 1.0
+                    mes_principal = (periodo['data_entrega'].year, periodo['data_entrega'].month)
+                    cache_mes_p = cache_demanda_por_mes.get(mes_principal, {})
+                    if cache_mes_p:
+                        dados_saz = cache_mes_p.get((str(codigo), None), {})
+                        if dados_saz:
+                            fator_saz = dados_saz.get('fator_sazonal', 1.0) or 1.0
+
+                    demanda_bruta_display = demanda_diaria_periodo * periodo['dias']
+
+                    itens_fase.append({
+                        'codigo': codigo,
+                        'descricao': row.get('descricao', ''),
+                        'cnpj_fornecedor': cnpj_forn,
+                        'nome_fornecedor': row.get('nome_fornecedor', ''),
+                        'curva_abc': 'B',
+                        'metodo': '',
+                        'demanda_diaria': round(demanda_diaria_periodo, 2),
+                        'demanda_periodo': round(demanda_bruta_display, 0),
+                        'estoque_atual': round(max(0, estoque_projetado), 0),
+                        'estoque_seguranca': 0,
+                        'quantidade_pedido': qtd_pedido,
+                        'multiplo_caixa': multiplo,
+                        'numero_caixas': math.ceil(qtd_pedido / multiplo) if qtd_pedido > 0 else 0,
+                        'cue': round(cue, 2),
+                        'valor_total': round(qtd_pedido * cue, 2),
+                        'fator_sazonal': fator_saz,
+                        'tipo_calculo': 'projetado',
+                        'order_cap_aplicado': order_cap_aplicado,
+                    })
+
+                    pedidos_acumulados[codigo] = pedidos_ant + qtd_pedido
+
+                print(f"  [FASE {fase_idx + 1}] {len(itens_fase)} itens calculados (OUL target={target_cobertura}d, intervalo={periodo['dias']}d)")
+
+                fases_resultado.append({
+                    'fase': fase_idx + 1,
+                    'data_entrega': periodo['data_entrega'].isoformat(),
+                    'data_fim_cobertura': periodo['data_fim_cobertura'].isoformat(),
+                    'periodo_dias': target_cobertura,
+                    'tipo_calculo': 'projetado',
+                    'itens': itens_fase,
+                    'total_valor': sum(i.get('valor_total', 0) for i in itens_fase),
+                    'total_itens': len([i for i in itens_fase if i.get('quantidade_pedido', 0) > 0]),
+                    'total_quantidade': sum(i.get('quantidade_pedido', 0) for i in itens_fase),
+                })
 
         conn.close()
 
@@ -772,12 +891,63 @@ def api_compra_planejada_calcular():
             'is_pedido_multiloja': is_pedido_multiloja,
             'is_destino_cd': is_destino_cd,
             'fornecedores': fornecedores_a_processar,
+            'modo_calculo': modo_calculo,
         })
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'erro': str(e)}), 500
+
+
+def _calcular_consumo_total_periodo(
+    cache_demanda_por_mes, cache_proporcoes, cache_fallback,
+    cod_produto, dt_inicio, dt_fim, lojas_demanda, is_multiloja
+):
+    """
+    Calcula o consumo TOTAL (unidades) de dt_inicio ate dt_fim,
+    iterando mes a mes com a demanda sazonal de cada mes.
+
+    Usado para projetar o consumo ate a data de entrega de cada fase,
+    evitando usar a demanda do mes-alvo para todos os dias anteriores.
+    """
+    if dt_inicio > dt_fim:
+        return 0.0
+
+    consumo_total = 0.0
+    dt_atual = dt_inicio
+
+    while dt_atual <= dt_fim:
+        ultimo_dia_mes = monthrange(dt_atual.year, dt_atual.month)[1]
+        fim_segmento = min(dt_fim, date(dt_atual.year, dt_atual.month, ultimo_dia_mes))
+        dias_segmento = (fim_segmento - dt_atual).days + 1
+
+        cache_mes = cache_demanda_por_mes.get((dt_atual.year, dt_atual.month), {})
+        if not cache_mes:
+            cache_mes = cache_fallback
+
+        if is_multiloja:
+            demanda_diaria_seg = 0
+            num_lojas = len(lojas_demanda)
+            for loja in lojas_demanda:
+                prop = cache_proporcoes.get((cod_produto, loja))
+                dd, _, _ = obter_demanda_do_cache(
+                    cache_mes, cod_produto, cod_empresa=loja,
+                    num_lojas=num_lojas, proporcao_loja=prop
+                )
+                demanda_diaria_seg += dd
+        else:
+            demanda_diaria_seg, _, _ = obter_demanda_do_cache(cache_mes, cod_produto)
+
+        consumo_total += demanda_diaria_seg * dias_segmento
+
+        # Avançar para o próximo mês
+        if dt_atual.month == 12:
+            dt_atual = date(dt_atual.year + 1, 1, 1)
+        else:
+            dt_atual = date(dt_atual.year, dt_atual.month + 1, 1)
+
+    return consumo_total
 
 
 def _calcular_demanda_diaria_periodo(
@@ -968,7 +1138,15 @@ def api_compra_planejada_exportar():
             ws['A2'].font = Font(italic=True, color='666666')
 
             # Headers
-            if tipo == 'completo':
+            header_fill_roxo = PatternFill(start_color='7C3AED', end_color='7C3AED', fill_type='solid')
+            cobertura_alvo_fase = fase.get('cobertura_alvo', cobertura_display if cobertura_dias else cobertura_ultima_fase)
+            if tipo == 'negociacao':
+                headers = ['Cod Item', 'Cod DIG', 'Descricao', 'Fornecedor', 'ABC',
+                           'Demanda/dia', 'Dias Periodo', 'Dem Periodo',
+                           'Est. Projetado', f'Target ({cobertura_alvo_fase}d)',
+                           'Qtd Pedido', 'Caixas', 'CUE (R$)', 'Valor Total (R$)']
+                fill = header_fill_roxo
+            elif tipo == 'completo':
                 headers = ['Cod Item', 'Cod DIG', 'Descricao', 'Fornecedor', 'ABC',
                            'Demanda/dia', 'Demanda Periodo', 'Estoque', 'ES',
                            'Qtd Pedido', 'Caixas', 'CUE (R$)', 'Valor Total (R$)']
@@ -993,7 +1171,19 @@ def api_compra_planejada_exportar():
                 cod_str = str(item.get('codigo', ''))
                 cod_dig = codigos_dig.get(cod_str, '')
 
-                if tipo == 'completo':
+                if tipo == 'negociacao':
+                    valores = [
+                        item.get('codigo', ''), cod_dig, item.get('descricao', ''),
+                        item.get('nome_fornecedor', ''), item.get('curva_abc', ''),
+                        item.get('demanda_diaria', 0), fase.get('periodo_dias', 0),
+                        item.get('demanda_periodo', 0),
+                        item.get('estoque_projetado', item.get('estoque_atual', 0)),
+                        item.get('estoque_seguranca', 0),
+                        item.get('quantidade_pedido', 0),
+                        item.get('numero_caixas', 0), item.get('cue', 0),
+                        item.get('valor_total', 0)
+                    ]
+                elif tipo == 'completo':
                     valores = [
                         item.get('codigo', ''), cod_dig, item.get('descricao', ''),
                         item.get('nome_fornecedor', ''), item.get('curva_abc', ''),
@@ -1017,7 +1207,6 @@ def api_compra_planejada_exportar():
                 for col, val in enumerate(valores, 1):
                     cell = ws.cell(row=row_idx, column=col, value=val)
                     cell.border = border
-                    # Formatar colunas numericas
                     if isinstance(val, float):
                         cell.number_format = moeda_format
 
