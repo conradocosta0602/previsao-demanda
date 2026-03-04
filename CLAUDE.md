@@ -140,6 +140,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V34: Fair Share Allocation na distribuicao do CD
 - V35: Semantica correta de qtd_pend_transf no CD
 - V36: Pedido minimo 1 caixa para lojas em ruptura sem transferencia mapeada
+- V38: Correcao estoque consolidado modo Negociacao - soma TODAS as lojas (pedido + OK)
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -540,7 +541,7 @@ usando a demanda pre-calculada com fatores sazonais. Funcao `_calcular_demanda_d
 - Nota: Pedido 2 inclui mais itens que Pedido 1 (itens OK na Fase 1 que consomem estoque)
 
 **Caches importantes** (para fases 2+):
-- `estoque_consolidado`: estoque de HOJE por item (pedido + OK)
+- `estoque_consolidado`: estoque de HOJE por item — soma de TODAS as lojas (itens_pedido + itens_ok). **V38**: no modo multiloja (destino CD), agrupa todos os registros por codigo antes de preencher o cache, evitando ignorar lojas com estoque OK para um item que tambem tem pedido em outras lojas.
 - `pedidos_acumulados`: soma dos pedidos de fases anteriores por item
 - `demanda_diaria_cache`: demanda diaria por item (pode variar por sazonalidade)
 - `embalagens_cache`: multiplo de caixa por item
@@ -749,6 +750,9 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - Fix exibicao metodo estatistico no relatorio detalhado - extrai metodo puro de valores compostos como ruptura_saneada+tsb (v6.20)
 - Salvar Demanda agora grava valores da tela (nao re-executa cronjob) - campo ajuste_manual protege contra sobrescrita automatica (v6.21)
 - Fix Compra Planejada: consumo_ate_entrega calculado mes a mes com demanda sazonal correta via _calcular_consumo_total_periodo() - elimina spike de pedido em meses de alta sazonalidade (v6.21)
+- V37: Consumo durante lead time descontado do estoque - necessidade calculada sobre estoque projetado na data de entrega, nao estoque hoje (v6.22)
+- Modo Negociacao Comercial na Compra Planejada - toggle OUL direto em todas as fases para blanket orders/forward buying (v6.22)
+- V38: Correcao estoque consolidado modo Negociacao Comercial (multiloja/CD) - estoque_consolidado agora soma TODAS as lojas (pedido+ok), evitando pedidos inflados para itens com estoque suficiente nas lojas restantes (v6.22)
 
 ## Documentacao Complementar
 
