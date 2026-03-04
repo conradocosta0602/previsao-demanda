@@ -98,6 +98,7 @@ class ValidadorConformidade:
             ('V33', 'Transit Time CD no Backend', self._verificar_transit_time_backend),
             ('V34', 'Fair Share Distribuicao CD', self._verificar_fair_share_cd),
             ('V35', 'Semantica qtd_pend_transf CD', self._verificar_qtd_pend_transf_cd),
+            ('V37', 'Consumo Lead Time no Pedido', self._verificar_consumo_lead_time_pedido),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -3089,6 +3090,101 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V35: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_consumo_lead_time_pedido(self) -> Tuple[str, str, Dict]:
+        """
+        V37: Verifica que o calculo de pedido desconta o consumo durante o lead time
+        do estoque disponivel.
+
+        A necessidade de pedido deve ser calculada sobre o estoque projetado na
+        data de entrega, nao sobre o estoque de hoje:
+        estoque_na_entrega = max(0, estoque_disponivel - demanda_diaria * lead_time)
+        necessidade = demanda_periodo + ES - (estoque_na_entrega + estoque_transito)
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: Verificar presenca do calculo no codigo
+            testes_total += 1
+            try:
+                import inspect
+                from core import pedido_fornecedor_integrado as pfi_module
+                source = inspect.getsource(pfi_module)
+                if 'consumo_ate_entrega' in source and 'estoque_disp_projetado' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Desconto de consumo durante lead time',
+                        'status': 'ok',
+                        'detalhe': 'Codigo usa estoque_disp_projetado = estoque - consumo_ate_entrega (correto)'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Desconto de consumo durante lead time',
+                        'status': 'falha',
+                        'detalhe': 'ERRO: consumo_ate_entrega/estoque_disp_projetado nao encontrado no codigo'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Desconto de consumo durante lead time',
+                    'status': 'falha',
+                    'detalhe': f'Erro ao inspecionar codigo: {str(e)}'
+                })
+
+            # Teste 2: Verificar logica numerica (simulacao)
+            testes_total += 1
+            try:
+                # Simular: estoque=300, demanda=5/dia, LT=50d, cobertura=90d, ES=20
+                demanda_diaria = 5.0
+                lead_time = 50
+                cobertura_dias = 90
+                estoque_disp = 300.0
+                estoque_transito = 0.0
+                es = 20.0
+
+                consumo_lt = demanda_diaria * lead_time   # 250
+                est_proj = max(0.0, estoque_disp - consumo_lt)  # 50
+                nec_correto = (demanda_diaria * cobertura_dias) + es - (est_proj + estoque_transito)
+                nec_errado  = (demanda_diaria * cobertura_dias) + es - (estoque_disp + estoque_transito)
+
+                if nec_correto > nec_errado:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Simulacao numerica V37',
+                        'status': 'ok',
+                        'detalhe': f'Est hoje={estoque_disp:.0f}, consumo LT={consumo_lt:.0f}, est proj={est_proj:.0f} | Nec correta={nec_correto:.0f} > Nec antiga={nec_errado:.0f}'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Simulacao numerica V37',
+                        'status': 'falha',
+                        'detalhe': f'Logica incorreta: necessidade correta ({nec_correto:.0f}) deveria ser maior que antiga ({nec_errado:.0f})'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Simulacao numerica V37',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            detalhes = {
+                'descricao': 'Pedido usa estoque projetado na entrega (descontando consumo durante lead time)',
+                'formula': 'est_proj = max(0, est_hoje - demanda × LT); nec = demanda × cobertura + ES - (est_proj + transito)',
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V37 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V37 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V37 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V37: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

@@ -276,8 +276,10 @@ def calcular_quantidade_pedido(
             if cobertura_pos > COBERTURA_MAXIMA_POS_PEDIDO:
                 qtd_maxima = max(0, COBERTURA_MAXIMA_POS_PEDIDO * demanda_diaria - estoque_efetivo)
                 # Mínimo de 1 APENAS se estoque não cobre 90 dias
+                # V36: ruptura (estoque físico = 0) sempre permite 1 unidade mesmo com TSB
                 cobertura_atual_dias = estoque_efetivo / demanda_diaria if demanda_diaria > 0 else 999
-                if int(qtd_maxima) == 0 and cobertura_atual_dias >= COBERTURA_MAXIMA_POS_PEDIDO:
+                em_ruptura = estoque_disponivel == 0
+                if int(qtd_maxima) == 0 and cobertura_atual_dias >= COBERTURA_MAXIMA_POS_PEDIDO and not em_ruptura:
                     quantidade_pedido = 0
                 else:
                     quantidade_pedido = max(1, int(qtd_maxima))
@@ -368,9 +370,10 @@ def calcular_quantidade_pedido(
             else:
                 qtd_limitada = int(qtd_maxima)
             # Garantir mínimo de 1 caixa APENAS se estoque atual não cobre 90 dias
-            # Se estoque já cobre 90+ dias, pedido deve ser zero
+            # V36: ruptura (estoque físico = 0) sempre permite 1 caixa mesmo com TSB
             cobertura_atual_dias = estoque_efetivo / demanda_diaria if demanda_diaria > 0 else 999
-            if qtd_limitada == 0 and necessidade_bruta > 0 and cobertura_atual_dias < COBERTURA_MAXIMA_POS_PEDIDO:
+            em_ruptura = estoque_disponivel == 0
+            if qtd_limitada == 0 and necessidade_bruta > 0 and (cobertura_atual_dias < COBERTURA_MAXIMA_POS_PEDIDO or em_ruptura):
                 qtd_limitada = multiplo_caixa if multiplo_caixa > 1 else 1
             quantidade_pedido = qtd_limitada
             numero_caixas = quantidade_pedido // multiplo_caixa if multiplo_caixa > 1 else quantidade_pedido
@@ -1408,9 +1411,23 @@ class PedidoFornecedorIntegrado:
 
         # 9. Calcular quantidade a pedir (com arredondamento inteligente)
         # V26: Limitador de cobertura pós-pedido de 90 dias (apenas itens TSB)
+        #
+        # V37: Descontar consumo durante lead time do estoque disponível
+        # O pedido só chega após lead_time dias. O estoque atual será parcialmente
+        # consumido até lá. A necessidade deve ser calculada sobre o estoque projetado
+        # na data de entrega, não sobre o estoque de hoje.
+        #
+        # estoque_na_entrega = max(0, estoque_efetivo_hoje - demanda_diaria × lead_time)
+        # necessidade = demanda_periodo + ES - estoque_na_entrega
+        #
+        # Nota: qtd_pendente (pedidos já em trânsito) chega ANTES ou JUNTO com o pedido,
+        # por isso é mantido como "estoque_transito" sem desconto de consumo.
+        consumo_ate_entrega = previsao_diaria * lead_time
+        estoque_disp_projetado = max(0.0, estoque['estoque_disponivel'] - consumo_ate_entrega)
+
         pedido_info = calcular_quantidade_pedido(
             demanda_periodo=demanda_periodo,
-            estoque_disponivel=estoque['estoque_disponivel'],
+            estoque_disponivel=estoque_disp_projetado,
             estoque_transito=estoque['estoque_transito'],
             estoque_seguranca=es_info['estoque_seguranca'],
             multiplo_caixa=parametros['multiplo_caixa'],
@@ -1422,7 +1439,7 @@ class PedidoFornecedorIntegrado:
 
         # DEBUG: Logar calculos de cobertura para itens com pedido
         if pedido_info['quantidade_pedido'] > 0 and cobertura_dias and cobertura_dias >= 60:
-            print(f"    [DEBUG CALC] Item {codigo} Emp {cod_empresa}: prev_diaria={previsao_diaria:.3f}, cobertura_dias={cobertura_dias}, demanda_periodo={demanda_periodo:.1f}, ES={es_info['estoque_seguranca']:.1f}, estoque={estoque['estoque_efetivo']:.1f}, necessidade={pedido_info['necessidade_bruta']:.1f}, qtd_pedido={pedido_info['quantidade_pedido']}{' [COB_LIMITADA]' if pedido_info.get('cobertura_limitada') else ''}")
+            print(f"    [DEBUG CALC] Item {codigo} Emp {cod_empresa}: prev_diaria={previsao_diaria:.3f}, cobertura_dias={cobertura_dias}, demanda_periodo={demanda_periodo:.1f}, ES={es_info['estoque_seguranca']:.1f}, est_hoje={estoque['estoque_efetivo']:.1f}, consumo_LT={consumo_ate_entrega:.1f}d, est_proj={estoque_disp_projetado:.1f}, necessidade={pedido_info['necessidade_bruta']:.1f}, qtd_pedido={pedido_info['quantidade_pedido']}{' [COB_LIMITADA]' if pedido_info.get('cobertura_limitada') else ''}")
 
         # 10. Calcular valor do pedido (antes de calcular coberturas para usar CUE)
         valor_pedido = pedido_info['quantidade_pedido'] * preco_custo
