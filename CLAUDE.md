@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.22** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.23** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -141,6 +141,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V35: Semantica correta de qtd_pend_transf no CD
 - V36: Pedido minimo 1 caixa para lojas em ruptura sem transferencia mapeada
 - V38: Correcao estoque consolidado modo Negociacao - soma TODAS as lojas (pedido + OK)
+- V39: OUL por loja - deficit calculado loja a loja, sem compensacao cruzada de excesso entre filiais
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -542,6 +543,8 @@ usando a demanda pre-calculada com fatores sazonais. Funcao `_calcular_demanda_d
 
 **Caches importantes** (para fases 2+):
 - `estoque_consolidado`: estoque de HOJE por item — soma de TODAS as lojas (itens_pedido + itens_ok). **V38**: no modo multiloja (destino CD), agrupa todos os registros por codigo antes de preencher o cache, evitando ignorar lojas com estoque OK para um item que tambem tem pedido em outras lojas.
+- `estoque_por_loja_cache`: {(codigo, cod_loja): estoque_efetivo} — **V39**: usado para calcular OUL por loja individualmente, sem compensacao cruzada
+- `pedidos_por_loja_acumulados`: {(codigo, cod_loja): qtd_acumulada} — **V39**: acumula pedidos por loja para fases 2+
 - `pedidos_acumulados`: soma dos pedidos de fases anteriores por item
 - `demanda_diaria_cache`: demanda diaria por item (pode variar por sazonalidade)
 - `embalagens_cache`: multiplo de caixa por item
@@ -753,6 +756,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V37: Consumo durante lead time descontado do estoque - necessidade calculada sobre estoque projetado na data de entrega, nao estoque hoje (v6.22)
 - Modo Negociacao Comercial na Compra Planejada - toggle OUL direto em todas as fases para blanket orders/forward buying (v6.22)
 - V38: Correcao estoque consolidado modo Negociacao Comercial (multiloja/CD) - estoque_consolidado agora soma TODAS as lojas (pedido+ok), evitando pedidos inflados para itens com estoque suficiente nas lojas restantes (v6.22)
+- V39: OUL por loja na Compra Planejada (modos Negociacao e Reabastecimento) - necessidade calculada loja a loja sem compensacao cruzada; excesso de uma filial nao mascara deficit de outra (v6.23)
 
 ## Documentacao Complementar
 
@@ -768,4 +772,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.22)
+**Ultima atualizacao**: Marco 2026 (v6.23)

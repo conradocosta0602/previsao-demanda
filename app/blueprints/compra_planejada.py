@@ -544,14 +544,15 @@ def api_compra_planejada_calcular():
         pedidos_acumulados = {}
         demanda_diaria_cache = {}
         es_cache = {}  # ES por item (para modo negociacao)
+        # V39: estoque por loja para calcular OUL loja a loja (sem compensacao cruzada)
+        # {(codigo, cod_loja): estoque_efetivo}
+        estoque_por_loja_cache = {}
+        # pedidos acumulados por loja para fases 2+: {(codigo, cod_loja): qtd_acumulada}
+        pedidos_por_loja_acumulados = {}
 
         if is_pedido_multiloja_resp:
-            # V38: Para pedidos multiloja (destino CD), o estoque consolidado deve
-            # somar TODAS as lojas — tanto as que precisam pedir (itens_pedido_normal)
-            # quanto as que ja tem estoque suficiente (itens_ok_normal).
-            # Bug anterior: itens_fase1 ja agrupava por codigo (soma das lojas com pedido),
-            # mas ignorava o estoque das lojas OK para o mesmo item.
-            # Solucao: agrupar todos os registros por codigo antes de montar os caches.
+            # V38/V39: Para pedidos multiloja (destino CD), agrupa todos os registros
+            # por codigo (pedido + ok) para construir caches corretos.
             todos_por_codigo = {}
             for item in itens_pedido_normal:
                 cod = int(item.get('codigo', 0))
@@ -565,7 +566,7 @@ def api_compra_planejada_calcular():
                 todos_por_codigo[cod].append(item)
 
             for cod, registros in todos_por_codigo.items():
-                # Estoque: soma de TODAS as lojas (pedido + ok)
+                # Estoque agregado (mantido para compatibilidade modo Reabastecimento fases 2+)
                 estoque_consolidado[cod] = sum(
                     float(i.get('estoque_efetivo', i.get('estoque_atual', 0)) or 0)
                     for i in registros
@@ -578,15 +579,30 @@ def api_compra_planejada_calcular():
                 # ES: soma de todas as lojas
                 es_cache[cod] = sum(float(i.get('estoque_seguranca', 0) or 0) for i in registros)
 
-            # Pedidos acumulados: apenas itens com pedido (fase 1 via API reabastecimento)
+                # V39: estoque por loja (usa cod_loja retornado pela API)
+                for i in registros:
+                    cod_loja = i.get('cod_loja')
+                    if cod_loja is not None:
+                        estoque_por_loja_cache[(cod, int(cod_loja))] = float(
+                            i.get('estoque_efetivo', i.get('estoque_atual', 0)) or 0
+                        )
+
+            # Pedidos acumulados totais e por loja (fase 1 via API reabastecimento)
             for item in itens_fase1:
                 cod = item['codigo']
                 pedidos_acumulados[cod] = float(item.get('quantidade_pedido', 0) or 0)
-            # Itens OK nao tem pedido acumulado
             for item in itens_ok_normal:
                 cod = int(item.get('codigo', 0))
                 if cod not in pedidos_acumulados:
                     pedidos_acumulados[cod] = 0
+
+            # V39: inicializar pedidos por loja com Fase 1 (itens_pedido_normal tem cod_loja)
+            for item in itens_pedido_normal:
+                cod = int(item.get('codigo', 0))
+                cod_loja_item = item.get('cod_loja')
+                if cod_loja_item is not None:
+                    chave = (cod, int(cod_loja_item))
+                    pedidos_por_loja_acumulados[chave] = float(item.get('quantidade_pedido', 0) or 0)
 
         else:
             # Pedido mono-loja: logica simples como antes
@@ -675,32 +691,84 @@ def api_compra_planejada_calcular():
                     if multiplo <= 0:
                         multiplo = 1
 
-                    # Estoque projetado na data de entrega
-                    # Consumo calculado mes a mes (sazonal) de hoje ate a entrega,
-                    # evitando usar a demanda do mes-alvo para todos os dias anteriores
-                    estoque_hoje = estoque_consolidado.get(codigo, 0)
-                    pedidos_ant = pedidos_acumulados.get(codigo, 0)
-                    consumo_ate_entrega = _calcular_consumo_total_periodo(
-                        cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                        str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
-                        lojas_demanda, is_pedido_multiloja
-                    )
-                    estoque_projetado = max(0, estoque_hoje + pedidos_ant - consumo_ate_entrega)
+                    # V39: OUL calculado loja a loja (sem compensacao cruzada de excesso)
+                    # Para cada loja: necessidade_loja = max(0, target_loja - est_proj_loja)
+                    # necessidade_total = soma dos deficits individuais
+                    lojas_do_item = [loja for loja in lojas_demanda
+                                     if (codigo, loja) in estoque_por_loja_cache]
 
-                    # OUL: apos cada entrega, estoque deve atingir cobertura-alvo
-                    target_estoque = demanda_diaria_periodo * cobertura_alvo
-                    necessidade = target_estoque - estoque_projetado
+                    if lojas_do_item and is_pedido_multiloja:
+                        necessidade_total = 0.0
+                        estoque_projetado_total = 0.0
+                        target_total = 0.0
+                        deficit_por_loja = {}  # para distribuir pedido acumulado
 
-                    if necessidade <= 0:
-                        qtd_pedido = 0
+                        for loja in lojas_do_item:
+                            est_loja = estoque_por_loja_cache.get((codigo, loja), 0)
+                            ped_ant_loja = pedidos_por_loja_acumulados.get((codigo, loja), 0)
+                            consumo_loja = _calcular_consumo_total_periodo(
+                                cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                                str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
+                                [loja], True
+                            )
+                            est_proj_loja = max(0, est_loja + ped_ant_loja - consumo_loja)
+
+                            # Demanda diaria desta loja no periodo alvo
+                            dem_dia_loja = _calcular_demanda_diaria_periodo(
+                                cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                                str(codigo), periodo, [loja], True
+                            )
+                            target_loja = dem_dia_loja * cobertura_alvo
+                            nec_loja = max(0.0, target_loja - est_proj_loja)
+
+                            necessidade_total += nec_loja
+                            estoque_projetado_total += est_proj_loja
+                            target_total += target_loja
+                            deficit_por_loja[loja] = nec_loja
+
+                        # Arredondar total para multiplo de caixa
+                        if necessidade_total <= 0:
+                            qtd_pedido = 0
+                        else:
+                            qtd_pedido = math.ceil(necessidade_total / multiplo) * multiplo
+
+                        # Para acumulo por loja: distribuir o pedido arredondado
+                        # proporcional ao deficit de cada loja
+                        if qtd_pedido > 0 and necessidade_total > 0:
+                            for loja in lojas_do_item:
+                                prop = deficit_por_loja[loja] / necessidade_total
+                                pedidos_por_loja_acumulados[(codigo, loja)] = (
+                                    pedidos_por_loja_acumulados.get((codigo, loja), 0)
+                                    + qtd_pedido * prop
+                                )
+                        # Variaveis para debug/exibicao
+                        estoque_projetado = estoque_projetado_total
+                        target_estoque = target_total
+                        necessidade = necessidade_total
+
                     else:
-                        qtd_pedido = math.ceil(necessidade / multiplo) * multiplo
+                        # Fallback para pedido mono-loja ou item sem breakdown por loja
+                        estoque_hoje = estoque_consolidado.get(codigo, 0)
+                        pedidos_ant = pedidos_acumulados.get(codigo, 0)
+                        consumo_ate_entrega = _calcular_consumo_total_periodo(
+                            cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                            str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
+                            lojas_demanda, is_pedido_multiloja
+                        )
+                        estoque_projetado = max(0, estoque_hoje + pedidos_ant - consumo_ate_entrega)
+                        target_estoque = demanda_diaria_periodo * cobertura_alvo
+                        necessidade = target_estoque - estoque_projetado
+                        if necessidade <= 0:
+                            qtd_pedido = 0
+                        else:
+                            qtd_pedido = math.ceil(necessidade / multiplo) * multiplo
 
                     order_cap_aplicado = False  # mantido para compatibilidade frontend
 
                     # Debug primeiros itens de todas as fases
                     if len(itens_fase) < 3:
-                        print(f"    [NEG F{fase_idx+1}] cod={codigo}: est_hoje={estoque_hoje:.0f} + ped_ant={pedidos_ant:.0f} - consumo({demanda_diaria_periodo:.2f}x{dias_ate_entrega}d={consumo_ate_entrega:.0f}) = est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} ({cobertura_alvo}d) | nec={necessidade:.0f} -> pedido={qtd_pedido}")
+                        lojas_info = f"{len(lojas_do_item) if lojas_do_item and is_pedido_multiloja else 1}L"
+                        print(f"    [NEG F{fase_idx+1}] cod={codigo} ({lojas_info}): est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} ({cobertura_alvo}d) | nec={necessidade:.0f} -> pedido={qtd_pedido}")
 
                     cue = cue_cache.get(codigo, 0)
 
@@ -738,8 +806,8 @@ def api_compra_planejada_calcular():
                         'order_cap_aplicado': order_cap_aplicado,
                     })
 
-                    # Acumular pedido para proximas fases
-                    pedidos_acumulados[codigo] = pedidos_ant + qtd_pedido
+                    # Acumular pedido total para proximas fases
+                    pedidos_acumulados[codigo] = pedidos_acumulados.get(codigo, 0) + qtd_pedido
 
                 print(f"  [FASE {fase_idx + 1}] {len([i for i in itens_fase if i['quantidade_pedido'] > 0])} itens com pedido (negociacao OUL, cobertura={cobertura_alvo}d)")
 
@@ -804,24 +872,74 @@ def api_compra_planejada_calcular():
                     if multiplo <= 0:
                         multiplo = 1
 
-                    estoque_atual = estoque_consolidado.get(codigo, 0)
-                    pedidos_ant = pedidos_acumulados.get(codigo, 0)
-                    dem_diaria_media = demanda_diaria_cache.get(codigo, demanda_diaria_periodo)
-                    consumo_ate_entrega = dem_diaria_media * dias_ate_entrega
-                    estoque_projetado = estoque_atual + pedidos_ant - consumo_ate_entrega
+                    # V39: OUL calculado loja a loja (sem compensacao cruzada de excesso)
+                    lojas_do_item_reb = [loja for loja in lojas_demanda
+                                         if (codigo, loja) in estoque_por_loja_cache]
 
-                    target_estoque = demanda_diaria_periodo * target_cobertura
-                    necessidade = target_estoque - max(0, estoque_projetado)
+                    if lojas_do_item_reb and is_pedido_multiloja:
+                        necessidade_total_reb = 0.0
+                        estoque_projetado_total_reb = 0.0
+                        target_total_reb = 0.0
+                        deficit_por_loja_reb = {}
 
-                    if necessidade <= 0:
-                        qtd_pedido = 0
+                        for loja in lojas_do_item_reb:
+                            est_loja = estoque_por_loja_cache.get((codigo, loja), 0)
+                            ped_ant_loja = pedidos_por_loja_acumulados.get((codigo, loja), 0)
+                            dem_diaria_loja = _calcular_demanda_diaria_periodo(
+                                cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                                str(codigo), periodo, [loja], True
+                            )
+                            consumo_loja = _calcular_consumo_total_periodo(
+                                cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                                str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
+                                [loja], True
+                            )
+                            est_proj_loja = max(0, est_loja + ped_ant_loja - consumo_loja)
+                            target_loja = dem_diaria_loja * target_cobertura
+                            nec_loja = max(0.0, target_loja - est_proj_loja)
+
+                            necessidade_total_reb += nec_loja
+                            estoque_projetado_total_reb += est_proj_loja
+                            target_total_reb += target_loja
+                            deficit_por_loja_reb[loja] = nec_loja
+
+                        if necessidade_total_reb <= 0:
+                            qtd_pedido = 0
+                        else:
+                            qtd_pedido = math.ceil(necessidade_total_reb / multiplo) * multiplo
+
+                        if qtd_pedido > 0 and necessidade_total_reb > 0:
+                            for loja in lojas_do_item_reb:
+                                prop = deficit_por_loja_reb[loja] / necessidade_total_reb
+                                pedidos_por_loja_acumulados[(codigo, loja)] = (
+                                    pedidos_por_loja_acumulados.get((codigo, loja), 0)
+                                    + qtd_pedido * prop
+                                )
+
+                        estoque_projetado = estoque_projetado_total_reb
+                        necessidade = necessidade_total_reb
+                        target_estoque = target_total_reb
+
                     else:
-                        qtd_pedido = math.ceil(necessidade / multiplo) * multiplo
+                        # Fallback mono-loja
+                        estoque_atual = estoque_consolidado.get(codigo, 0)
+                        pedidos_ant = pedidos_acumulados.get(codigo, 0)
+                        dem_diaria_media = demanda_diaria_cache.get(codigo, demanda_diaria_periodo)
+                        consumo_ate_entrega = dem_diaria_media * dias_ate_entrega
+                        estoque_projetado = estoque_atual + pedidos_ant - consumo_ate_entrega
+                        target_estoque = demanda_diaria_periodo * target_cobertura
+                        necessidade = target_estoque - max(0, estoque_projetado)
+
+                        if necessidade <= 0:
+                            qtd_pedido = 0
+                        else:
+                            qtd_pedido = math.ceil(necessidade / multiplo) * multiplo
 
                     order_cap_aplicado = False  # mantido para compatibilidade frontend
 
                     if fase_idx == 1 and len(itens_fase) < 3 and qtd_pedido > 0:
-                        print(f"    [OUL F{fase_idx+1}] cod={codigo}: est_hoje={estoque_atual:.0f} + ped_ant={pedidos_ant:.0f} - consumo({dem_diaria_media:.1f}x{dias_ate_entrega}d={consumo_ate_entrega:.0f}) = est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} | nec={necessidade:.0f} -> pedido={qtd_pedido}")
+                        lojas_info = f"{len(lojas_do_item_reb) if lojas_do_item_reb and is_pedido_multiloja else 1}L"
+                        print(f"    [OUL F{fase_idx+1}] cod={codigo} ({lojas_info}): est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} | nec={necessidade:.0f} -> pedido={qtd_pedido}")
 
                     cue = cue_cache.get(codigo, 0)
 
@@ -856,7 +974,7 @@ def api_compra_planejada_calcular():
                         'order_cap_aplicado': order_cap_aplicado,
                     })
 
-                    pedidos_acumulados[codigo] = pedidos_ant + qtd_pedido
+                    pedidos_acumulados[codigo] = pedidos_acumulados.get(codigo, 0) + qtd_pedido
 
                 print(f"  [FASE {fase_idx + 1}] {len(itens_fase)} itens calculados (OUL target={target_cobertura}d, intervalo={periodo['dias']}d)")
 
