@@ -76,6 +76,9 @@ def api_pedido_fornecedor_integrado():
         destino_tipo = dados.get('destino_tipo', 'LOJA')
         cod_empresa = dados.get('cod_empresa', 'TODAS')
         cobertura_dias = dados.get('cobertura_dias')
+        # data_referencia: ano/mes para buscar demanda (default = mes atual)
+        # Usado pela Compra Planejada para usar demanda do mes de entrega
+        data_referencia_str = dados.get('data_referencia')  # formato 'YYYY-MM-DD'
 
         # Normalizar filtros de linha - converter array de 1 elemento para string
         # IMPORTANTE: Trata casos onde JSON envia arrays onde esperamos string
@@ -379,6 +382,19 @@ def api_pedido_fornecedor_integrado():
         processador.precarregar_produtos(codigos_produtos)
 
         # PRE-CARREGAR DEMANDA EM LOTE (otimizacao: 1 query em vez de N queries)
+        # Usar data_referencia se fornecida (ex: Compra Planejada passa mes da entrega)
+        ano_ref = None
+        mes_ref = None
+        if data_referencia_str:
+            try:
+                from datetime import datetime as _dt
+                dt_ref = _dt.strptime(data_referencia_str, '%Y-%m-%d').date()
+                ano_ref = dt_ref.year
+                mes_ref = dt_ref.month
+                print(f"  [CACHE] Usando demanda de referencia: {ano_ref}/{mes_ref:02d} (data_entrega={data_referencia_str})")
+            except Exception:
+                pass
+
         # Agrupar produtos por CNPJ do fornecedor
         cache_demanda_global = {}
         cnpjs_unicos = df_produtos['codigo_fornecedor'].unique()
@@ -389,7 +405,9 @@ def api_pedido_fornecedor_integrado():
                     conn,
                     produtos_deste_fornecedor,
                     cnpj_forn,
-                    cod_empresas=lojas_demanda if is_pedido_multiloja else None
+                    cod_empresas=lojas_demanda if is_pedido_multiloja else None,
+                    ano=ano_ref,
+                    mes=mes_ref
                 )
                 cache_demanda_global.update(cache_demanda)
         print(f"  [CACHE] Demanda pre-carregada: {len(cache_demanda_global)} registros")

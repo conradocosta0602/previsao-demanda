@@ -410,8 +410,11 @@ def api_compra_planejada_calcular():
             'destino_tipo': destino_tipo,
             'cod_empresa': cod_empresa_payload,
             'cobertura_dias': cobertura_dias,
+            # Usar demanda do mes da 1a entrega (nao do mes atual)
+            # Ex: pedido para entrega 01/04 usa demanda de Abril, nao Marco
+            'data_referencia': datas_entrega[0].isoformat(),
         }
-        print(f"  [FASE 1] Payload: destino={destino_tipo}, cod_empresa={cod_empresa_payload}, cobertura={cobertura_dias}")
+        print(f"  [FASE 1] Payload: destino={destino_tipo}, cod_empresa={cod_empresa_payload}, cobertura={cobertura_dias}, data_ref={datas_entrega[0].isoformat()}")
 
         # Chamar a API internamente via test_client
         with current_app.test_client() as client:
