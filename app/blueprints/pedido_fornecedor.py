@@ -892,6 +892,7 @@ def api_pedido_fornecedor_integrado():
         # Reserva ES do CD com efeito pooling (sigma_total = sqrt(sum(sigma^2)))
         transferencias_cd = []
         info_distribuicao_cd = {}
+        embalagens_multiplo_cd = {}  # inicializado aqui para estar disponivel no V36
 
         if cds_detectados and estoque_cd:
             print(f"\n  [CD V29/V30] Iniciando distribuicao do estoque de {len(cds_detectados)} CD(s) {sorted(cds_detectados)} para lojas...")
@@ -1573,6 +1574,68 @@ def api_pedido_fornecedor_integrado():
                 print(f"  [CD V30] {len(transferencias_cd)} transferencias CD->lojas salvas no banco")
             except Exception as e_save_cd:
                 print(f"  [CD V30] Erro ao salvar transferencias CD no banco: {e_save_cd}")
+
+        # ==============================================================================
+        # ETAPA 4: PEDIDO MINIMO PARA LOJAS EM RUPTURA (V36)
+        # ==============================================================================
+        # Garante 1 caixa de pedido para lojas com estoque = 0 que NAO foram atendidas
+        # por transferencia do CD (V29) nem por transferencia entre lojas (V25).
+        # Evita que demandas muito baixas (ex: TSB de baixo giro) mascarem a necessidade
+        # real de reposicao em lojas individuais em ruptura.
+        if is_pedido_multiloja:
+            # Se embalagens nao foram carregadas na etapa V29 (sem CD), carregar agora
+            if not embalagens_multiplo_cd:
+                try:
+                    conn_emb_v36 = get_db_connection()
+                    cursor_emb_v36 = conn_emb_v36.cursor()
+                    cursor_emb_v36.execute("SELECT codigo, qtd_embalagem FROM embalagem_arredondamento WHERE qtd_embalagem > 1")
+                    embalagens_multiplo_cd = {int(r[0]): int(r[1]) for r in cursor_emb_v36.fetchall()}
+                    cursor_emb_v36.close()
+                    conn_emb_v36.close()
+                except Exception as e_emb_v36:
+                    print(f"  [V36] Erro ao carregar embalagens: {e_emb_v36}")
+
+            contagem_v36 = 0
+            for item_v36 in resultados:
+                # So atua em itens nao bloqueados, sem pedido, com estoque = 0
+                if item_v36.get('bloqueado'):
+                    continue
+                if item_v36.get('quantidade_pedido', 0) > 0:
+                    continue
+                if (item_v36.get('estoque_atual', 0) or 0) > 0:
+                    continue
+
+                # Verificar se a loja ja foi atendida por transferencia do CD
+                if item_v36.get('transferencias_cd'):
+                    continue
+
+                # Verificar se a loja ja foi atendida por transferencia entre lojas
+                if item_v36.get('transferencias_recebidas'):
+                    continue
+
+                # Nao atuar em itens sem demanda alguma (sem historico de vendas)
+                demanda_v36 = item_v36.get('demanda_prevista_diaria', 0) or 0
+                if demanda_v36 <= 0:
+                    continue
+
+                # Determinar 1 caixa minima
+                cod_v36 = int(item_v36.get('codigo', 0))
+                multiplo_v36 = embalagens_multiplo_cd.get(cod_v36, 1) if embalagens_multiplo_cd else 1
+                qtd_minima = max(1, multiplo_v36)
+
+                item_v36['quantidade_pedido'] = qtd_minima
+                item_v36['deve_pedir'] = True
+                item_v36['arredondamento_decisao'] = 'minimo_ruptura'
+                cue_v36 = item_v36.get('cue', 0) or item_v36.get('preco_custo', 0) or 0
+                item_v36['valor_pedido'] = round(qtd_minima * cue_v36, 2)
+                contagem_v36 += 1
+
+            if contagem_v36 > 0:
+                print(f"  [V36] Pedido minimo aplicado: {contagem_v36} lojas em ruptura sem transferencia mapeada")
+                # Recalcular listas apos V36
+                itens_pedido = [r for r in resultados if r.get('deve_pedir') and not r.get('bloqueado')
+                                and (r.get('quantidade_pedido', 0) or 0) > 0]
+                itens_ok = [r for r in resultados if not r.get('deve_pedir') and not r.get('bloqueado')]
 
         # Validacao de pedido minimo
         validacao_pedido_minimo = {}

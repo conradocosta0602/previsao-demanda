@@ -185,6 +185,28 @@
         .btn-toggle { background: #f3f4f6; color: #374151; }
         .btn-toggle:hover { background: #e5e7eb; }
 
+        /* Toggle modo */
+        .modo-toggle {
+            display: flex; border: 1px solid #d1d5db; border-radius: 8px;
+            overflow: hidden; margin-bottom: 14px;
+        }
+        .modo-btn {
+            flex: 1; padding: 8px 6px; border: none; background: #f9fafb;
+            color: #6b7280; font-size: 0.75em; font-weight: 600; cursor: pointer;
+            transition: all 0.2s; line-height: 1.3; text-align: center;
+        }
+        .modo-btn:first-child { border-right: 1px solid #d1d5db; }
+        .modo-btn.ativo { background: #667eea; color: white; }
+        .modo-hint {
+            font-size: 0.72em; color: #6b7280; margin-top: -10px; margin-bottom: 10px;
+            line-height: 1.4; padding: 6px 8px; background: #f9fafb;
+            border-radius: 6px; border: 1px solid #e5e7eb;
+        }
+
+        /* Cores modo negociacao */
+        .fase-header.negociacao { background: linear-gradient(135deg, #7c3aed, #a855f7); color: white; }
+        .tabela-itens th.negociacao { background: #7c3aed; }
+
         /* Responsivo */
         @media (max-width: 900px) {
             .main-layout { grid-template-columns: 1fr; }
@@ -258,19 +280,35 @@
                     </select>
                 </div>
 
-                <!-- Cobertura -->
+                <!-- Modo de calculo -->
                 <div class="form-group">
-                    <label>Cobertura (Pedido 1)</label>
+                    <label>Modo de Calculo</label>
+                    <div class="modo-toggle">
+                        <button class="modo-btn ativo" id="btnModoReabastecimento" onclick="setModo('reabastecimento')">
+                            Reabastecimento
+                        </button>
+                        <button class="modo-btn" id="btnModoNegociacao" onclick="setModo('negociacao')">
+                            Negociacao Comercial
+                        </button>
+                    </div>
+                    <div class="modo-hint" id="modoHint">
+                        Fase 1 = pedido normal (estoque, ES, transferencias). Demais = OUL para manter cobertura-alvo.
+                    </div>
+                </div>
+
+                <!-- Cobertura -->
+                <div class="form-group" id="grupoCobertura">
+                    <label id="labelCobertura">Cobertura (Pedido 1)</label>
                     <select id="coberturaDias">
                         <option value="">Automatica (ABC)</option>
                         <option value="30">30 dias</option>
                         <option value="45">45 dias</option>
                         <option value="60">60 dias</option>
                         <option value="75">75 dias</option>
-                        <option value="90">90 dias</option>
+                        <option value="90" selected>90 dias</option>
                         <option value="120">120 dias</option>
                     </select>
-                    <small style="color:#6b7280;font-size:0.72em;margin-top:2px;display:block;">
+                    <small id="smallCobertura" style="color:#6b7280;font-size:0.72em;margin-top:2px;display:block;">
                         Pedido 1 = reabastecimento. Demais = repor estoque para manter cobertura-alvo.
                     </small>
                 </div>
@@ -342,6 +380,7 @@
     let dadosResultado = null;
     let datasEntregaCount = 0;
     let leadTimeFornecedor = 15; // default
+    let modoCalculo = 'reabastecimento'; // 'reabastecimento' ou 'negociacao'
 
     // ================================================================
     // INICIALIZACAO
@@ -461,6 +500,31 @@
     });
 
     // ================================================================
+    // MODO DE CALCULO
+    // ================================================================
+    function setModo(modo) {
+        modoCalculo = modo;
+        document.getElementById('btnModoReabastecimento').classList.toggle('ativo', modo === 'reabastecimento');
+        document.getElementById('btnModoNegociacao').classList.toggle('ativo', modo === 'negociacao');
+
+        const hint = document.getElementById('modoHint');
+        const labelCobertura = document.getElementById('labelCobertura');
+        const smallCobertura = document.getElementById('smallCobertura');
+
+        if (modo === 'negociacao') {
+            labelCobertura.textContent = 'Cobertura-Alvo (apos entrega)';
+            smallCobertura.textContent = 'Estoque apos cada entrega sera reposto para esta cobertura. Ex: 90 dias = ~3 meses de estoque.';
+            hint.textContent = 'Todas as fases: pede o suficiente para cobrir a demanda do periodo + repor ate a cobertura-alvo. Ideal para negociacao por mes (Abr, Mai, Jun...).';
+        } else {
+            labelCobertura.textContent = 'Cobertura (Pedido 1)';
+            smallCobertura.textContent = 'Pedido 1 = reabastecimento. Demais = repor estoque para manter cobertura-alvo.';
+            hint.textContent = 'Fase 1 = pedido normal (estoque, ES, transferencias). Demais = OUL para manter cobertura-alvo.';
+        }
+
+        atualizarFaseLabels();
+    }
+
+    // ================================================================
     // DATAS DE ENTREGA
     // ================================================================
     function adicionarDataEntrega() {
@@ -512,8 +576,14 @@
         entries.forEach((entry, i) => {
             const label = entry.querySelector('.fase-label');
             if (label) {
-                const isFirst = i === 0;
-                label.className = `fase-label ${isFirst ? 'completo' : 'bruta'}`;
+                if (modoCalculo === 'negociacao') {
+                    label.className = 'fase-label';
+                    label.style.background = '#7c3aed';
+                } else {
+                    label.style.background = '';
+                    const isFirst = i === 0;
+                    label.className = `fase-label ${isFirst ? 'completo' : 'bruta'}`;
+                }
                 label.textContent = `Pedido ${i + 1}`;
             }
         });
@@ -555,6 +625,7 @@
             linha1: document.getElementById('linha1').value,
             linha3: document.getElementById('linha3').value,
             cobertura_dias: coberturaVal ? parseInt(coberturaVal) : null,
+            modo_calculo: modoCalculo,
         };
 
         // UI: mostrar progresso
@@ -648,22 +719,34 @@
         const fasesEl = document.getElementById('fasesContainer');
         fasesEl.innerHTML = '';
 
+        const modoAtual = (data.modo_calculo || 'reabastecimento');
+
         fases.forEach(fase => {
             try {
+                const isNegociacao = modoAtual === 'negociacao';
                 const isCompleto = fase.tipo_calculo === 'completo';
-                const tipoClass = isCompleto ? 'completo' : 'bruta';
+                let tipoClass = isNegociacao ? 'negociacao' : (isCompleto ? 'completo' : 'bruta');
 
                 const faseCard = document.createElement('div');
                 faseCard.className = 'fase-card';
                 faseCard.style.marginBottom = '16px';
 
-                const tabelaHtml = gerarTabela(fase);
+                const tabelaHtml = gerarTabela(fase, modoAtual);
+
+                // Descricao do periodo no header
+                let faseInfo = '';
+                if (isNegociacao) {
+                    faseInfo = `${fase.periodo_dias} dias | ${fase.total_itens || 0} itens`;
+                    if (fase.nome_periodo) faseInfo = `${fase.nome_periodo} (${fase.periodo_dias} dias) | ${fase.total_itens || 0} itens`;
+                } else {
+                    faseInfo = `${fase.periodo_dias} dias | ${fase.total_itens || 0} itens`;
+                }
 
                 faseCard.innerHTML = `
                     <div class="fase-header ${tipoClass}">
                         <div>
                             <div class="fase-titulo">Pedido ${fase.fase} - Entrega: ${formatarData(fase.data_entrega)}</div>
-                            <div class="fase-info">${fase.periodo_dias} dias | ${fase.total_itens || 0} itens</div>
+                            <div class="fase-info">${faseInfo}</div>
                         </div>
                         <div style="text-align: right;">
                             <div class="fase-valor">R$ ${formatarValor(fase.total_valor)}</div>
@@ -699,10 +782,11 @@
         fasesEl.appendChild(exportDiv);
     }
 
-    function gerarTabela(fase) {
+    function gerarTabela(fase, modo) {
         try {
             const isCompleto = fase.tipo_calculo === 'completo';
-            const thClass = isCompleto ? 'completo' : 'bruta';
+            const isNegociacao = (modo || 'reabastecimento') === 'negociacao';
+            let thClass = isNegociacao ? 'negociacao' : (isCompleto ? 'completo' : 'bruta');
             const itens = (fase.itens || []).filter(i => (i.quantidade_pedido || 0) > 0)
                 .sort((a, b) => (b.valor_total || 0) - (a.valor_total || 0));
 
@@ -711,7 +795,40 @@
             }
 
             let headers, rows;
-            if (isCompleto) {
+
+            if (isNegociacao) {
+                // Modo negociacao: todas as fases com mesma estrutura
+                // Fase 1 tem estoque_atual = estoque projetado na data de entrega
+                // Fases 2+ idem
+                const cobAlvo = fase.cobertura_alvo || '?';
+                headers = '<tr>' +
+                    `<th class="${thClass}">Codigo</th>` +
+                    `<th class="${thClass}">Descricao</th>` +
+                    `<th class="${thClass}">ABC</th>` +
+                    `<th class="${thClass}">Dem/dia</th>` +
+                    `<th class="${thClass}">Dem Periodo</th>` +
+                    `<th class="${thClass}">Est. Projetado</th>` +
+                    `<th class="${thClass}" title="Target = demanda x ${cobAlvo} dias">Target (${cobAlvo}d)</th>` +
+                    `<th class="${thClass}">Pedido</th>` +
+                    `<th class="${thClass}">Caixas</th>` +
+                    `<th class="${thClass}">CUE</th>` +
+                    `<th class="${thClass}">Valor (R$)</th>` +
+                    '</tr>';
+                rows = itens.map(i => `<tr>
+                    <td>${i.codigo}</td>
+                    <td class="col-desc" title="${i.descricao || ''}">${i.descricao || ''}</td>
+                    <td style="text-align:center">${i.curva_abc || ''}</td>
+                    <td class="col-num">${(i.demanda_diaria || 0).toFixed(2)}</td>
+                    <td class="col-num">${formatarNumero(i.demanda_periodo)}</td>
+                    <td class="col-num" style="color:#6b7280">${formatarNumero(i.estoque_projetado != null ? i.estoque_projetado : i.estoque_atual)}</td>
+                    <td class="col-num" style="color:#6b7280">${formatarNumero(i.estoque_seguranca)}</td>
+                    <td class="col-num" style="font-weight:600;color:#7c3aed">${formatarNumero(i.quantidade_pedido)}${i.order_cap_aplicado ? ' <span title="Order Cap aplicado: pedido limitado a demanda do intervalo ate proxima entrega" style="font-size:10px;background:#f59e0b;color:#fff;padding:1px 4px;border-radius:3px;font-weight:700;cursor:help">CAP</span>' : ''}</td>
+                    <td class="col-num">${i.numero_caixas || 0}</td>
+                    <td class="col-num">${(i.cue || 0).toFixed(2)}</td>
+                    <td class="col-num" style="font-weight:600">${formatarValor(i.valor_total)}</td>
+                </tr>`).join('');
+
+            } else if (isCompleto) {
                 headers = '<tr>' +
                     `<th class="${thClass}">Codigo</th>` +
                     `<th class="${thClass}">Descricao</th>` +
@@ -758,7 +875,7 @@
                     <td class="col-num">${fase.periodo_dias}</td>
                     <td class="col-num">${formatarNumero(i.demanda_periodo)}</td>
                     <td class="col-num">${formatarNumero(i.estoque_atual)}</td>
-                    <td class="col-num" style="font-weight:600">${formatarNumero(i.quantidade_pedido)}</td>
+                    <td class="col-num" style="font-weight:600">${formatarNumero(i.quantidade_pedido)}${i.order_cap_aplicado ? ' <span title="Order Cap aplicado: pedido limitado a demanda do intervalo ate proxima entrega" style="font-size:10px;background:#f59e0b;color:#fff;padding:1px 4px;border-radius:3px;font-weight:700;cursor:help">CAP</span>' : ''}</td>
                     <td class="col-num">${i.numero_caixas || 0}</td>
                     <td class="col-num">${(i.cue || 0).toFixed(2)}</td>
                     <td class="col-num" style="font-weight:600">${formatarValor(i.valor_total)}</td>

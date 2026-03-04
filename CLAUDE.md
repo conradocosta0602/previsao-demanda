@@ -505,17 +505,25 @@ negociacao antecipada com fornecedores (blanket orders / forward buying).
 **Conceito**: O usuario define N datas de entrega futuras e o sistema calcula o pedido
 para cada fase, mantendo uma cobertura-alvo de estoque ao longo do tempo.
 
+**Modos de Calculo** (toggle na interface):
+
+| Modo | Fase 1 | Fases 2+ | Uso |
+|------|--------|----------|-----|
+| **Reabastecimento** | Identico ao pedido normal (V25/V29/V30/...) | OUL simples | Reposicao periodica |
+| **Negociacao Comercial** | OUL direto (todas as fases iguais) | OUL com sazonalidade | Blanket order/forward buying |
+
 **Modelo Order-Up-To-Level (OUL)**:
 ```
-Fase 1 (1a entrega): Identico ao pedido de reabastecimento normal
-  - Chama internamente /api/pedido_fornecedor_integrado via test_client()
-  - Herda TODAS as regras: V25, V29, V30, V31, V32, V34, V35
+Modo Reabastecimento:
+  Fase 1: Chama /api/pedido_fornecedor_integrado via test_client()
+          Herda TODAS as regras: V25, V29, V30, V31, V32, V34, V35, V37
+  Fases 2+: OUL com estoque projetado (descontando consumo sazonal)
 
-Fases 2+ (entregas seguintes): Modelo OUL
-  - estoque_projetado = estoque_hoje + pedidos_anteriores - (demanda_diaria × dias_ate_entrega)
-  - target_estoque = demanda_diaria × cobertura_alvo
-  - necessidade = max(0, target_estoque - estoque_projetado)
-  - qtd_pedido = arredondar(necessidade, multiplo_caixa)
+Modo Negociacao Comercial (todas as fases):
+  estoque_projetado = max(0, estoque_hoje + pedidos_ant - consumo_ate_entrega_sazonal)
+  target_estoque = demanda_diaria_periodo × cobertura_alvo
+  necessidade = target_estoque - estoque_projetado  (sem ES, pois ja incluso no target)
+  qtd_pedido = ceil(necessidade / multiplo) × multiplo
 ```
 
 **Cobertura-alvo**: Vem do seletor da tela (ABC automatica, 60, 90, 120 dias).
@@ -735,13 +743,13 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V33: Transit time CD->loja no backend - incorporado ao lead time em vez de ajuste no frontend (v6.18)
 - V34: Fair Share Allocation na distribuicao do CD - proporcional por faixa em vez de sequencial (v6.18)
 - V35: Semantica qtd_pend_transf no CD - subtrair do estoque (mercadoria comprometida) em vez de somar (v6.18)
-- V37: Consumo lead time no pedido - estoque projetado na entrega = estoque_hoje - demanda × LT (v6.22)
 - Compra Planejada (Forward Buying) - Tela de negociacao antecipada com multiplas entregas e modelo OUL (v6.19)
 - V36: Pedido minimo para lojas em ruptura - garante 1 caixa para lojas com estoque=0 sem transferencia mapeada; V26 nao bloqueia ruptura real (v6.20)
-- V37: Consumo durante lead time descontado do estoque - necessidade calculada sobre estoque projetado na data de entrega, nao estoque hoje (v6.22)
 - Remocao da tela Pedido Manual - funcionalidade descontinuada, arquivos removidos (v6.20)
 - Fix exibicao metodo estatistico no relatorio detalhado - extrai metodo puro de valores compostos como ruptura_saneada+tsb (v6.20)
 - Salvar Demanda agora grava valores da tela (nao re-executa cronjob) - campo ajuste_manual protege contra sobrescrita automatica (v6.21)
+- V37: Consumo durante lead time descontado do estoque - necessidade calculada sobre estoque projetado na data de entrega, nao estoque hoje (v6.22)
+- Modo Negociacao Comercial na Compra Planejada - toggle OUL direto em todas as fases para blanket orders/forward buying (v6.22)
 
 ## Documentacao Complementar
 
