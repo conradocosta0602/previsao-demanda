@@ -543,7 +543,9 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             reg['ano'], reg['mes']
         ))
 
-    # Deletar registros antigos SEM ajuste manual que serao recalculados
+    # Deletar registros antigos SEM ajuste manual que serao recalculados.
+    # Registros com ajuste_manual (salvos pela Tela de Demanda) sao preservados.
+    chaves_com_ajuste = set()
     if chaves_para_deletar:
         chaves_list = list(chaves_para_deletar)
         execute_values(cursor, """
@@ -553,7 +555,22 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
               AND cod_empresa IS NULL
         """, chaves_list, template="(%s, %s, %s, %s)")
 
-    # Preparar dados para insert em lote
+        # Identificar quais chaves ainda existem (tem ajuste_manual) para nao inserir duplicata
+        execute_values(cursor, """
+            SELECT cod_produto, cnpj_fornecedor, ano, mes
+            FROM demanda_pre_calculada
+            WHERE (cod_produto, cnpj_fornecedor, ano, mes) IN (VALUES %s)
+              AND cod_empresa IS NULL
+        """, chaves_list, template="(%s, %s, %s, %s)")
+        for row in cursor.fetchall():
+            chaves_com_ajuste.add((row[0], row[1], row[2], row[3]))
+
+    # Preparar dados para insert em lote, excluindo os que ja tem ajuste_manual
+    registros_para_inserir = [
+        reg for reg in registros
+        if (reg['cod_produto'], reg['cnpj_fornecedor'], reg['ano'], reg['mes']) not in chaves_com_ajuste
+    ]
+
     valores = [
         (
             reg['cod_produto'], reg['cnpj_fornecedor'], reg['cod_empresa'],
@@ -564,10 +581,14 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             reg['limitador_aplicado'], reg['metodo_usado'], reg['categoria_serie'],
             reg['dias_historico'], reg['total_vendido_historico']
         )
-        for reg in registros
+        for reg in registros_para_inserir
     ]
 
-    # INSERT em lote (sem ON CONFLICT pois ja deletamos os antigos)
+    if not valores:
+        conn.commit()
+        return len(registros)
+
+    # INSERT em lote. Registros com ajuste_manual ja foram excluidos da lista acima.
     execute_values(cursor, """
         INSERT INTO demanda_pre_calculada (
             cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,

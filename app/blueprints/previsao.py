@@ -887,6 +887,7 @@ def _api_gerar_previsao_banco_v2_interno():
 
             relatorio_itens.append({
                 'cod_produto': cod_produto,
+                'cnpj_fornecedor': item.get('cnpj_fornecedor', ''),
                 'descricao': item['descricao'],
                 'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
                 'categoria': item['categoria'],
@@ -1280,6 +1281,132 @@ def _api_gerar_previsao_banco_v2_interno():
         import traceback
         traceback.print_exc()
         return jsonify({'erro': str(e)}), 500
+
+
+@previsao_bp.route('/api/demanda/salvar_tela', methods=['POST'])
+def api_salvar_demanda_tela():
+    """
+    Salva os valores exibidos na Tela de Demanda diretamente em demanda_pre_calculada.
+
+    Recebe os dados ja calculados (relatorio_detalhado.itens) do frontend e grava
+    cada item/periodo como ajuste_manual, substituindo qualquer valor anterior
+    (inclusive o calculado pelo cronjob). O cronjob preserva registros com
+    ajuste_manual IS NOT NULL.
+
+    Request JSON:
+    {
+        "itens": [
+            {
+                "cod_produto": "123456",
+                "cnpj_fornecedor": "61413282000143",
+                "previsao_por_periodo": [
+                    {"periodo": "2026-07-01", "previsao": 350},
+                    ...
+                ]
+            },
+            ...
+        ],
+        "usuario": "valter.lino"
+    }
+    """
+    try:
+        from app.utils.db_connection import get_db_connection
+
+        dados = request.get_json()
+        itens = dados.get('itens', [])
+        usuario = dados.get('usuario', 'tela_demanda')
+
+        if not itens:
+            return jsonify({'success': False, 'erro': 'Nenhum item recebido'}), 400
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        total_registros = 0
+        total_itens = 0
+
+        for item in itens:
+            cod_produto = str(item.get('cod_produto', ''))
+            cnpj_fornecedor = str(item.get('cnpj_fornecedor', ''))
+            periodos = item.get('previsao_por_periodo', [])
+
+            if not cod_produto or not cnpj_fornecedor or not periodos:
+                continue
+
+            for pp in periodos:
+                periodo_str = pp.get('periodo', '')  # formato '2026-07-01'
+                previsao_val = pp.get('previsao', 0)
+
+                if not periodo_str:
+                    continue
+
+                try:
+                    ano = int(periodo_str[:4])
+                    mes = int(periodo_str[5:7])
+                except (ValueError, IndexError):
+                    continue
+
+                # Upsert manual: UPDATE primeiro, INSERT se nao existir
+                # (nao usa ON CONFLICT pois o unique index usa COALESCE(cod_empresa,0))
+                cursor.execute("""
+                    UPDATE demanda_pre_calculada
+                    SET demanda_prevista      = %s,
+                        demanda_diaria_base   = %s,
+                        ajuste_manual         = %s,
+                        ajuste_manual_data    = NOW(),
+                        ajuste_manual_usuario = %s,
+                        ajuste_manual_motivo  = 'salvo_tela_demanda',
+                        data_calculo          = NOW()
+                    WHERE cod_produto = %s
+                      AND cnpj_fornecedor = %s
+                      AND cod_empresa IS NULL
+                      AND ano = %s
+                      AND mes = %s
+                """, (
+                    float(previsao_val), float(previsao_val) / 30.0,
+                    float(previsao_val), usuario,
+                    cod_produto, cnpj_fornecedor, ano, mes
+                ))
+                if cursor.rowcount == 0:
+                    # Registro nao existe ainda - inserir
+                    cursor.execute("""
+                        INSERT INTO demanda_pre_calculada (
+                            cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
+                            demanda_prevista, demanda_diaria_base,
+                            ajuste_manual, ajuste_manual_data,
+                            ajuste_manual_usuario, ajuste_manual_motivo,
+                            data_calculo
+                        ) VALUES (
+                            %s, %s, NULL, %s, %s,
+                            %s, %s,
+                            %s, NOW(), %s, 'salvo_tela_demanda',
+                            NOW()
+                        )
+                    """, (
+                        cod_produto, cnpj_fornecedor, ano, mes,
+                        float(previsao_val), float(previsao_val) / 30.0,
+                        float(previsao_val), usuario
+                    ))
+                total_registros += 1
+
+            total_itens += 1
+
+        conn.commit()
+        conn.close()
+
+        print(f"[SalvarTela] {total_itens} itens, {total_registros} registros salvos por {usuario}")
+
+        return jsonify({
+            'success': True,
+            'total_itens': total_itens,
+            'total_registros': total_registros,
+            'mensagem': f'{total_itens} itens salvos ({total_registros} registros)'
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'erro': str(e)}), 500
 
 
 @previsao_bp.route('/api/gerar_previsao_banco_v2', methods=['POST'])

@@ -1,6 +1,18 @@
-# Sistema de Demanda e Reabastecimento v6.19
+# Sistema de Demanda e Reabastecimento v6.21
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.21 - Salvar Demanda agora grava valores da tela (Mar/2026):**
+- **Fonte unica de verdade**: Botao "Salvar Demanda" agora envia os valores exibidos na Tela de Demanda diretamente para `demanda_pre_calculada`, em vez de re-executar o cronjob
+- **Protecao via ajuste_manual**: Registros salvos pela tela recebem `ajuste_manual IS NOT NULL`, impedindo sobrescrita pelo calculo automatico noturno
+- **Novo endpoint** `POST /api/demanda/salvar_tela`: recebe `relatorio_detalhado.itens` do frontend e faz upsert item a item com `UPDATE` + `INSERT`
+- **Cronjob preserva ajustes**: O job diario identifica chaves ja com `ajuste_manual` e as exclui do batch de INSERT, evitando colisao de chave
+- **Impacto**: Pedido Fornecedor e Compra Planejada passam a usar exatamente os valores validados pelo usuario na tela
+
+**Novidades v6.20 - Pedido Minimo para Ruptura + Remocao Pedido Manual (Mar/2026):**
+- **V36 - Pedido minimo em ruptura**: Lojas com estoque=0 sem transferencia mapeada recebem pedido minimo de 1 caixa (V26 nao bloqueia ruptura real)
+- **Remocao tela Pedido Manual**: Funcionalidade descontinuada, arquivos removidos
+- **Fix metodo estatistico**: Relatorio detalhado exibe metodo puro extraido de valores compostos como `ruptura_saneada+tsb`
 
 **Novidades v6.19 - Compra Planejada (Forward Buying) (Fev/2026):**
 - **Compra Planejada**: Nova tela para planejamento de compras futuras com multiplas datas de entrega
