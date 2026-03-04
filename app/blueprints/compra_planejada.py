@@ -178,7 +178,9 @@ def api_compra_planejada_calcular():
 
         if lojas_selecionadas:
             is_destino_cd = destino_tipo == 'CD' or any(l >= 80 for l in lojas_selecionadas)
-            cod_destino = lojas_selecionadas[0]
+            # Se destino e CD, cod_destino deve ser o CD (>= 80), nao a primeira loja fisica
+            cds_selecionados = [l for l in lojas_selecionadas if l >= 80]
+            cod_destino = cds_selecionados[0] if cds_selecionados else (80 if is_destino_cd else lojas_selecionadas[0])
         else:
             is_destino_cd = destino_tipo == 'CD'
             cod_destino = 80
@@ -398,14 +400,18 @@ def api_compra_planejada_calcular():
         print(f"  [FASE 1] Chamando API do pedido ao fornecedor (resultado identico)...")
 
         # Montar payload identico ao que a tela de pedido envia
+        # Quando destino e CD, enviar cod_destino (ex: 80) como cod_empresa
+        # para que a API use o estoque correto do CD no processamento
+        cod_empresa_payload = cod_destino if is_destino_cd else cod_empresa
         payload_pedido = {
             'fornecedor': fornecedor_filtro,
             'linha1': linha1_filtro,
             'linha3': linha3_filtro,
             'destino_tipo': destino_tipo,
-            'cod_empresa': cod_empresa,
+            'cod_empresa': cod_empresa_payload,
             'cobertura_dias': cobertura_dias,
         }
+        print(f"  [FASE 1] Payload: destino={destino_tipo}, cod_empresa={cod_empresa_payload}, cobertura={cobertura_dias}")
 
         # Chamar a API internamente via test_client
         with current_app.test_client() as client:
