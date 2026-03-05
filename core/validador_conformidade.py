@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 31 verificacoes do checklist de conformidade.
+        Executa todas as 32 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -100,6 +100,7 @@ class ValidadorConformidade:
             ('V35', 'Semantica qtd_pend_transf CD', self._verificar_qtd_pend_transf_cd),
             ('V37', 'Consumo Lead Time no Pedido', self._verificar_consumo_lead_time_pedido),
             ('V43', 'Fase 1 Negociacao via API + dias_ate_entrega', self._verificar_fase1_negociacao_api),
+            ('V45', 'Delay Operacional Removido + Transit CD 15d', self._verificar_delay_removido_transit_15),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -1567,10 +1568,10 @@ class ValidadorConformidade:
 
     def _verificar_es_lt_base_rateio_desvio(self) -> Tuple[str, str, Dict]:
         """
-        V22: Verifica que ES usa LT sem delay e rateio de desvio usa sqrt().
+        V22: Verifica que ES usa LT do fornecedor e rateio de desvio usa sqrt().
 
         Implementado em v6.8 para garantir que:
-        1. ES usa lead_time_base (sem delay operacional)
+        1. ES usa lead_time_base (LT do fornecedor, sem transit CD)
         2. Rateio de desvio usa sqrt(proporcao), nao proporcao linear
         """
         try:
@@ -1585,7 +1586,7 @@ class ValidadorConformidade:
             source = inspect.getsource(PedidoFornecedorIntegrado.processar_item)
             es_usa_lt_base = 'lead_time_dias=lead_time_base' in source
             resultados.append({
-                'teste': 'ES usa lead_time_base (sem delay)',
+                'teste': 'ES usa lead_time_base (LT fornecedor)',
                 'correto': es_usa_lt_base,
                 'comentario': 'ES = Z x sigma x sqrt(LT_fornecedor)'
             })
@@ -1627,7 +1628,7 @@ class ValidadorConformidade:
                 return 'ok', 'ES usa LT base e rateio de desvio usa sqrt() corretamente', {
                     'versao': 'v6.8',
                     'regras': [
-                        'ES usa lead_time_base (sem delay operacional)',
+                        'ES usa lead_time_base (LT fornecedor, sem transit CD)',
                         'Rateio proporcional: desvio = desvio * sqrt(proporcao_loja)',
                         'Rateio uniforme: desvio = desvio / sqrt(num_lojas)'
                     ],
@@ -3302,6 +3303,126 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V43: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_delay_removido_transit_15(self) -> Tuple[str, str, Dict]:
+        """
+        V45: Verifica que o delay operacional (5d) foi removido do calculo de lead time
+        e que o transit time CD->loja e 15 dias (incorporando os 5d de margem).
+
+        Implementado em v6.25:
+        1. DELAY_OPERACIONAL_DIAS nao deve existir no codigo
+        2. lead_time = lead_time_base (sem soma de delay)
+        3. Transit time CD->loja = 15 dias (10d transit + 5d margem operacional)
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: DELAY_OPERACIONAL_DIAS nao deve existir como constante
+            testes_total += 1
+            try:
+                import inspect
+                from core import pedido_fornecedor_integrado as pfi_module
+                source = inspect.getsource(pfi_module)
+                if 'DELAY_OPERACIONAL_DIAS' not in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Constante DELAY_OPERACIONAL_DIAS removida',
+                        'status': 'ok',
+                        'detalhe': 'Delay operacional nao existe mais no codigo (removido em v6.25)'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Constante DELAY_OPERACIONAL_DIAS removida',
+                        'status': 'falha',
+                        'detalhe': 'DELAY_OPERACIONAL_DIAS ainda encontrado no codigo'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Constante DELAY_OPERACIONAL_DIAS removida',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 2: lead_time = lead_time_base (sem soma)
+            testes_total += 1
+            try:
+                import inspect
+                from core import pedido_fornecedor_integrado as pfi_module
+                source = inspect.getsource(pfi_module)
+                if 'lead_time = lead_time_base' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Lead time efetivo = lead time base',
+                        'status': 'ok',
+                        'detalhe': 'lead_time = lead_time_base (sem delay adicional)'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Lead time efetivo = lead time base',
+                        'status': 'falha',
+                        'detalhe': 'lead_time != lead_time_base (possivel delay residual)'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Lead time efetivo = lead time base',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            # Teste 3: Transit time CD = 15 dias
+            testes_total += 1
+            try:
+                from core.padrao_compra import get_dias_transferencia
+                if self.conn:
+                    dias = get_dias_transferencia(self.conn)
+                    if dias == 15:
+                        testes_ok += 1
+                        detalhes_testes.append({
+                            'teste': 'Transit time CD = 15 dias',
+                            'status': 'ok',
+                            'detalhe': f'Transit time = {dias}d (10d transit + 5d margem operacional)'
+                        })
+                    else:
+                        detalhes_testes.append({
+                            'teste': 'Transit time CD = 15 dias',
+                            'status': 'alerta',
+                            'detalhe': f'Transit time = {dias}d (esperado 15d). Verificar parametros_globais'
+                        })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Transit time CD = 15 dias',
+                        'status': 'falha',
+                        'detalhe': 'Sem conexao com banco'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Transit time CD = 15 dias',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            detalhes = {
+                'descricao': 'Delay operacional removido; margem incorporada ao transit CD->loja',
+                'impacto': [
+                    'Pedido direto loja: LT = LT_fornecedor (sem +5d)',
+                    'Pedido centralizado: LT = LT_fornecedor + 15d transit (manteve total)',
+                ],
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V45 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V45 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V45 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V45: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

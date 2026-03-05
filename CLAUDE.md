@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.24** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.25** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -63,19 +63,20 @@ previsao-demanda/
 
 **Formula de cobertura**:
 ```
-Lead Time Base = Lead Time Fornecedor + Transit Time CD (se centralizado)
-Lead Time Efetivo = Lead Time Base + Delay Operacional (5d)
-Cobertura = Lead Time Efetivo + Ciclo (7d) + Seguranca ABC
+Pedido Direto Loja:
+  Lead Time Efetivo = Lead Time Fornecedor
+  Cobertura = Lead Time Efetivo + Ciclo (7d) + Seguranca ABC
+
+Pedido Centralizado (CD):
+  Lead Time Efetivo = Lead Time Fornecedor + Transit Time CD (15d)
+  Cobertura = Lead Time Efetivo + Ciclo (7d) + Seguranca ABC
 ```
 
-**Transit Time CD->Loja** (v6.18): Para pedidos centralizados (destino CD),
-o transit time (parametro `dias_transferencia_padrao_compra`, default 10 dias)
+**Transit Time CD->Loja** (v6.18, ajustado v6.25): Para pedidos centralizados (destino CD),
+o transit time (parametro `dias_transferencia_padrao_compra`, default 15 dias)
 e somado ao lead time do fornecedor no **backend**, incorporando-se ao calculo
-de cobertura que desconta estoque existente. Antes era adicionado no frontend
-como `demanda × dias`, o que inflava pedidos.
-
-**Delay Operacional**: 5 dias adicionados ao lead time para compensar
-tempo entre calculo do pedido e envio ao fornecedor (aprovacoes, consolidacao).
+de cobertura que desconta estoque existente. Inclui 5 dias de margem operacional
+(aprovacoes, consolidacao, envio) que antes era aplicada a todos os pedidos.
 
 **Seguranca por curva**:
 - A: +2 dias (Z=2.05, NS=98%)
@@ -84,10 +85,8 @@ tempo entre calculo do pedido e envio ao fornecedor (aprovacoes, consolidacao).
 
 **Estoque de Seguranca** (v6.8):
 ```
-ES = Z × Sigma × sqrt(Lead Time Base)
+ES = Z × Sigma × sqrt(Lead Time Fornecedor)
 ```
-- **Lead Time Base**: Lead time do fornecedor SEM delay operacional
-- O delay operacional e para cobertura logistica, nao para variabilidade de demanda
 - **Rateio do desvio**: Quando demanda consolidada e rateada por loja, o desvio usa sqrt()
   - Demanda: `demanda * proporcao_loja`
   - Desvio: `desvio * sqrt(proporcao_loja)` (propriedade estatistica da variancia)
@@ -125,7 +124,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**31 verificacoes** de conformidade com a metodologia documentada:
+**32 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
@@ -666,7 +665,7 @@ DB_PORT=5432
 
 9. **Tipos padronizados**: `codigo` e `cod_empresa` devem ser INTEGER em todo o sistema
 
-10. **Delay operacional**: 5 dias adicionados ao lead time para compensar tempo entre calculo e envio do pedido
+10. **Transit time CD->loja**: 15 dias (inclui 5d margem operacional). Delay operacional separado removido em v6.25 — incorporado ao transit time CD
 
 11. **Arredondamento inteligente**: Multiplo de caixa usa 50% como threshold (Silver, Pyke & Peterson) com verificacao de risco de ruptura
 
@@ -765,6 +764,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V43: Fase 1 Negociacao Comercial via API - Fase 1 agora usa /api/pedido_fornecedor_integrado (com ES, V25, V29/V30, V37) em vez de OUL simplificado; data_referencia = data de entrega do usuario para demanda do mes correto (v6.24)
 - V43b: dias_ate_entrega na Compra Planejada - V37 usa dias reais ate entrega (nao lead_time) para projetar estoque; cobertura fixa (90d) = exatamente 90 dias pos-entrega (v6.24)
 - V44: Documentacao semantica cobertura fixa vs ABC - cobertura fixa (90d) com V37 garante 90d pos-entrega; modo ABC (LT+ciclo+seg) mantem semantica historica (v6.24)
+- V45: Remover delay operacional 5d do lead time + transit time CD 10->15d - delay incorporado ao transit CD; pedido direto loja usa LT real do fornecedor (v6.25)
 
 ## Documentacao Complementar
 
@@ -780,4 +780,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.24)
+**Ultima atualizacao**: Marco 2026 (v6.25)

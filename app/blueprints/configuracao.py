@@ -22,7 +22,7 @@ def api_listar_parametros_globais():
         {'chave': 'lead_time_padrao', 'valor': '15', 'descricao': 'Lead time padrao', 'tipo': 'integer', 'categoria': 'fornecedor'},
         {'chave': 'ciclo_pedido_padrao', 'valor': '7', 'descricao': 'Ciclo de pedido padrao', 'tipo': 'integer', 'categoria': 'fornecedor'},
         {'chave': 'dias_historico_vendas', 'valor': '730', 'descricao': 'Dias de historico de vendas', 'tipo': 'integer', 'categoria': 'previsao'},
-        {'chave': 'dias_transferencia_padrao_compra', 'valor': '10', 'descricao': 'Dias de lead time para transferencia', 'tipo': 'integer', 'categoria': 'transferencia'},
+        {'chave': 'dias_transferencia_padrao_compra', 'valor': '15', 'descricao': 'Dias de lead time para transferencia CD->loja (inclui 5d operacional)', 'tipo': 'integer', 'categoria': 'transferencia'},
         {'chave': 'cobertura_minima_doador', 'valor': '10', 'descricao': 'Cobertura minima doador', 'tipo': 'integer', 'categoria': 'transferencia'},
         {'chave': 'margem_excesso_dias', 'valor': '7', 'descricao': 'Dias acima do alvo para excesso', 'tipo': 'integer', 'categoria': 'transferencia'},
     ]
@@ -64,7 +64,7 @@ def api_listar_parametros_globais():
                 ('lead_time_padrao', '15', 'Lead time padrao quando nao ha cadastro especifico', 'integer', 'fornecedor'),
                 ('ciclo_pedido_padrao', '7', 'Ciclo de pedido padrao em dias', 'integer', 'fornecedor'),
                 ('dias_historico_vendas', '730', 'Dias de historico de vendas a considerar', 'integer', 'previsao'),
-                ('dias_transferencia_padrao_compra', '10', 'Dias de lead time para transferencia entre lojas', 'integer', 'transferencia'),
+                ('dias_transferencia_padrao_compra', '15', 'Dias de lead time para transferencia CD->loja (inclui 5d operacional)', 'integer', 'transferencia'),
                 ('cobertura_minima_doador', '10', 'Cobertura minima em dias que doador deve manter', 'integer', 'transferencia'),
                 ('margem_excesso_dias', '7', 'Dias acima do alvo para considerar excesso', 'integer', 'transferencia'),
             ]

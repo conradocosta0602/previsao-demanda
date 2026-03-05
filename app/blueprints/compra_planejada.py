@@ -318,7 +318,9 @@ def api_compra_planejada_calcular():
         if is_destino_cd:
             from core.padrao_compra import get_dias_transferencia
             dias_transferencia_cd_pre = get_dias_transferencia(conn)
-        cobertura_ultima_fase = lt_max_forn + dias_transferencia_cd_pre + 5 + 7 + 4
+        # Cobertura = LT + transit_CD + ciclo(7) + seguranca_B(4)
+        # Delay operacional removido em v6.25
+        cobertura_ultima_fase = lt_max_forn + dias_transferencia_cd_pre + 7 + 4
 
         # ---- Calcular periodos entre datas de entrega ----
         # Periodos definem o intervalo entre entregas (para calculo de demanda sazonal)

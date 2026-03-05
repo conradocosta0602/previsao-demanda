@@ -99,13 +99,13 @@ def get_dias_transferencia(conn) -> int:
         conn: Conexao com o banco
 
     Returns:
-        Numero de dias de transferencia (padrao: 10)
+        Numero de dias de transferencia (padrao: 15, inclui 5d operacional desde v6.25)
     """
-    valor = buscar_parametro_global(conn, 'dias_transferencia_padrao_compra', '10')
+    valor = buscar_parametro_global(conn, 'dias_transferencia_padrao_compra', '15')
     try:
         return int(valor)
     except (ValueError, TypeError):
-        return 10
+        return 15
 
 
 def buscar_padrao_compra_item(conn, codigo: int, cod_empresa_venda: int) -> Optional[int]:

@@ -400,15 +400,15 @@ def api_pedido_fornecedor_integrado():
                 pass
         else:
             # V42: Calcular automaticamente o mes de entrega esperado
-            # Data entrega = hoje + lead_time_max + delay(5d)
+            # Data entrega = hoje + lead_time_max (delay operacional removido em v6.25)
             try:
                 from datetime import date as _date
                 lt_max = int(df_produtos['lead_time_dias'].max()) if not df_produtos.empty else 15
-                dias_ate_entrega = lt_max + 5  # lead time + delay operacional
+                dias_ate_entrega = lt_max
                 dt_entrega_est = _date.today() + timedelta(days=dias_ate_entrega)
                 ano_ref = dt_entrega_est.year
                 mes_ref = dt_entrega_est.month
-                print(f"  [CACHE] Demanda referencia (auto LT={lt_max}+5d): {ano_ref}/{mes_ref:02d} (entrega ~{dt_entrega_est})")
+                print(f"  [CACHE] Demanda referencia (auto LT={lt_max}d): {ano_ref}/{mes_ref:02d} (entrega ~{dt_entrega_est})")
             except Exception:
                 pass
 

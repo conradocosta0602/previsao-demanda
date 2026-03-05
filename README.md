@@ -1,6 +1,11 @@
-# Sistema de Demanda e Reabastecimento v6.24
+# Sistema de Demanda e Reabastecimento v6.25
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.25 - Ajuste Lead Time: Remover Delay Operacional + Transit CD 15d (Mar/2026):**
+- **V45 - Delay operacional removido**: Os 5 dias de delay operacional foram removidos do calculo de lead time para todos os pedidos. Pedidos direto loja agora usam o LT real do fornecedor
+- **Transit time CD 10->15d**: Os 5 dias de margem operacional foram incorporados ao transit time CD->loja (10+5=15d). Pedidos centralizados mantem o mesmo LT total
+- **Migration v15**: `database/migration_v15_ajuste_lead_time.sql` - atualiza parametro `dias_transferencia_padrao_compra` de 10 para 15
 
 **Novidades v6.24 - Compra Planejada Fase 1 via API + Cobertura Pos-Entrega (Mar/2026):**
 - **V43 - Fase 1 Negociacao via API**: Modo Negociacao Comercial agora usa `/api/pedido_fornecedor_integrado` para Fase 1 (identico ao Reabastecimento), herdando ES, V25, V29/V30, V37
@@ -29,7 +34,7 @@ Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (C
 - **Exportacao Excel**: Abas por fase + consolidado para negociacao com fornecedor
 
 **Novidades v6.18 - Transit Time Backend + Fair Share CD + Correcao qtd_pend_transf (Fev/2026):**
-- **V33 - Transit time no backend**: Transit time CD->loja (+10d) incorporado ao lead time no backend, onde o calculo de cobertura desconta estoque. Antes era adicionado no frontend como `demanda × dias`, inflando pedidos
+- **V33 - Transit time no backend**: Transit time CD->loja (+15d desde v6.25, era +10d) incorporado ao lead time no backend, onde o calculo de cobertura desconta estoque. Antes era adicionado no frontend como `demanda × dias`, inflando pedidos
 - **V34 - Fair Share Allocation**: Distribuicao de estoque do CD proporcional dentro de cada faixa de prioridade. Antes era sequencial (primeira loja recebia 100% antes da segunda)
 - **V35 - Semantica qtd_pend_transf**: No CD, `qtd_pend_transf` e mercadoria ja comprometida (saindo). Subtraida do estoque disponivel em vez de somada (evita dupla contagem)
 - **29 verificacoes de conformidade**: Novas V33, V34, V35
@@ -526,7 +531,7 @@ Quando a visualizacao "Por Padrao de Compra" esta ativa:
 
 ### Ajuste de Cobertura para Transferencia
 
-Para itens centralizados (loja destino diferente das lojas de venda), o sistema adiciona **10 dias extras de cobertura** para cobrir o tempo de transferencia da mercadoria entre filiais. Esse valor e configuravel na tabela `parametros_globais` com a chave `dias_transferencia_padrao_compra`.
+Para itens centralizados (loja destino diferente das lojas de venda), o sistema adiciona **15 dias extras de cobertura** para cobrir o tempo de transferencia da mercadoria entre filiais (inclui 5d de margem operacional desde v6.25). Esse valor e configuravel na tabela `parametros_globais` com a chave `dias_transferencia_padrao_compra`.
 
 ### Arquivos Relacionados
 
@@ -547,7 +552,7 @@ R: Nao. Apenas SKUs que devem ser centralizados. Itens sem cadastro aparecem nor
 **P: Um mesmo SKU pode ter multiplas lojas de venda com destinos diferentes?**
 R: Sim. Cada combinacao `codigo + cod_empresa_venda` pode ter um `cod_empresa_destino` diferente.
 
-**P: O ajuste de +10 dias de transferencia e configuravel?**
+**P: O ajuste de +15 dias de transferencia e configuravel?**
 R: Sim. Altere o valor na tabela `parametros_globais` com a chave `dias_transferencia_padrao_compra`.
 
 **P: A demanda de cada loja de origem e calculada individualmente?**
@@ -691,7 +696,7 @@ CREATE TABLE parametros_gondola (
 - **Modelo Order-Up-To-Level (OUL)**: Fases 2+ calculam pedido para manter cobertura-alvo (do seletor da tela). Formula: `necessidade = max(0, demanda_diaria × cobertura_alvo - estoque_projetado)`
 - **Estoque projetado**: `estoque_hoje + pedidos_anteriores - (demanda_diaria × dias_ate_entrega)` — desconta consumo ate data de entrega
 - **Demanda sazonal ponderada**: Funcao `_calcular_demanda_diaria_periodo()` pondera demanda por meses cobertos com fatores sazonais
-- **Cobertura-alvo configuravel**: ABC automatica (LT + Transit + Delay + Ciclo + Seguranca), 60, 90 ou 120 dias
+- **Cobertura-alvo configuravel**: ABC automatica (LT + Transit_CD + Ciclo + Seguranca), 60, 90 ou 120 dias
 - **Cache de itens OK**: Itens com estoque suficiente (sem pedido na Fase 1) incluidos no cache de estoque para fases futuras
 - **Exportacao Excel**: Aba Resumo + abas por fase + aba Consolidado (item × fase)
 - **API lead time**: `/api/compra_planejada/lead_time` retorna LT maximo para calcular data padrao de entrega
@@ -701,7 +706,7 @@ CREATE TABLE parametros_gondola (
 
 **V33/V34/V35 - Transit Time Backend + Fair Share CD + Correcao qtd_pend_transf:**
 
-- **V33 - Transit time CD->loja no backend**: O transit time (parametro `dias_transferencia_padrao_compra`, default 10d) e somado ao lead time do fornecedor no backend para pedidos centralizados. O calculo de cobertura desconta estoque existente, evitando inflacao. Removidos 3 blocos de ajuste do frontend
+- **V33 - Transit time CD->loja no backend**: O transit time (parametro `dias_transferencia_padrao_compra`, default 15d desde v6.25) e somado ao lead time do fornecedor no backend para pedidos centralizados. O calculo de cobertura desconta estoque existente, evitando inflacao. Removidos 3 blocos de ajuste do frontend
 - **V34 - Fair Share Allocation**: Distribuicao de estoque do CD proporcional dentro de cada faixa de prioridade (RUPTURA > CRITICA > ALTA > MEDIA). Se estoque insuficiente na faixa, distribui `fracao = estoque / total_necessidade`. Sobra de arredondamento vai ao mais necessitado
 - **V35 - Semantica qtd_pend_transf no CD**: `qtd_pend_transf` no CD = mercadoria ja comprometida (separada/faturada para lojas). Agora subtraida do estoque disponivel (`estoque - qtd_pend_transf`) em vez de somada (que causava dupla contagem). CD 80 tinha 3.435 un comprometidas
 - **29 verificacoes de conformidade**: Novas V33, V34, V35
@@ -954,7 +959,7 @@ Esta versao corrige problemas fundamentais no calculo de previsao que causavam s
 **Novas Funcionalidades:**
 - **Padrao de Compra**: Centralizacao de pedidos por loja destino, integrando demanda de multiplas lojas vendedoras em um unico pedido
 - **Visualizacao por Destino**: Toggle na tela de Pedido ao Fornecedor para alternar entre visao padrao e visao por Padrao de Compra
-- **Ajuste de Cobertura por Transferencia**: +10 dias configuravel para cobrir tempo de transferencia entre filiais
+- **Ajuste de Cobertura por Transferencia**: +15 dias configuravel para cobrir tempo de transferencia entre filiais (ajustado de 10 para 15 em v6.25)
 - **Agregacao Automatica**: Soma quantidades, estoques e demandas de todas as lojas de origem por SKU
 - **Central de Parametros**: Coluna de Padrao de Compra na tabela de produtos do fornecedor
 

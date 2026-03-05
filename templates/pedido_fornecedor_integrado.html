@@ -953,7 +953,7 @@
                 if (data.success && data.parametros) {
                     const diasParam = data.parametros.find(p => p.chave === 'dias_transferencia_padrao_compra');
                     if (diasParam) {
-                        diasTransferenciaGlobal = parseInt(diasParam.valor) || 10;
+                        diasTransferenciaGlobal = parseInt(diasParam.valor) || 15;
                     }
                 }
             } catch (e) {
@@ -1219,11 +1219,31 @@
                     requestBody.cobertura_dias = cobertura ? parseInt(cobertura) : null;
                 }
 
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody)
-                });
+                // Timeout de 15 minutos para permitir processamento de grandes volumes
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 900000); // 15 minutos
+
+                let response;
+                try {
+                    response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody),
+                        signal: controller.signal
+                    });
+                } catch (fetchError) {
+                    clearTimeout(timeoutId);
+                    clearInterval(interval);
+                    document.getElementById('progressCard').style.display = 'none';
+                    document.getElementById('errorCard').style.display = 'block';
+                    if (fetchError.name === 'AbortError') {
+                        document.getElementById('errorMessage').textContent = 'Tempo limite excedido (15 min). Selecione um fornecedor específico.';
+                    } else {
+                        document.getElementById('errorMessage').textContent = 'Erro de conexão: servidor indisponível. Verifique se o servidor está rodando.';
+                    }
+                    return;
+                }
+                clearTimeout(timeoutId);
 
                 clearInterval(interval);
                 document.getElementById('progressFill').style.width = '100%';

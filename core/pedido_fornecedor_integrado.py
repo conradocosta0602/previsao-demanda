@@ -43,10 +43,6 @@ NIVEL_SERVICO_ABC = {
 # Ciclo de pedido padrão (semanal)
 CICLO_PEDIDO_DIAS = 7
 
-# Delay operacional: tempo entre cálculo do pedido e envio ao fornecedor
-# Compensa ineficiências do processo (aprovações, consolidação, envio)
-DELAY_OPERACIONAL_DIAS = 5
-
 # Arredondamento inteligente para múltiplos de caixa
 # Referência: Silver, Pyke & Peterson (2017), APICS, SAP, Oracle
 PERCENTUAL_MINIMO_ARREDONDAMENTO = 0.50  # 50% - padrão literatura (não arredonda se < 50% do múltiplo)
@@ -172,7 +168,7 @@ def calcular_es_pooling_cd(
 
     Args:
         desvios_por_loja: Lista com desvio padrão diário de cada loja
-        lead_time_fornecedor: Lead time do fornecedor em dias (sem delay operacional)
+        lead_time_fornecedor: Lead time do fornecedor em dias
         curva_abc: Classificação ABC do item
 
     Returns:
@@ -1331,9 +1327,9 @@ class PedidoFornecedorIntegrado:
 
         # 5. Dados do fornecedor (usar parametro se fornecido, senao buscar do produto ou usar padrao)
         lead_time_base = lead_time_dias if lead_time_dias is not None else (produto.get('lead_time_dias') or 15)
-        # Lead time efetivo = Lead time do fornecedor + Delay operacional
-        # Delay compensa tempo entre cálculo do pedido e envio ao fornecedor
-        lead_time = lead_time_base + DELAY_OPERACIONAL_DIAS
+        # Lead time efetivo = Lead time do fornecedor (sem delay operacional - removido em v6.25)
+        # Para pedidos centralizados, o transit time CD->loja (15d) ja e somado externamente
+        lead_time = lead_time_base
         ciclo_pedido = ciclo_pedido_dias if ciclo_pedido_dias is not None else CICLO_PEDIDO_DIAS
         curva_abc = produto.get('curva_abc') or 'B'
 
@@ -1355,8 +1351,7 @@ class PedidoFornecedorIntegrado:
             }
 
         # 7. Calcular estoque de segurança
-        # IMPORTANTE: ES usa lead_time_base (sem delay operacional)
-        # O delay operacional e para cobertura logistica, nao para variabilidade de demanda
+        # ES usa lead_time_base (LT do fornecedor, sem transit CD)
         # ES = Z x sigma x sqrt(LT_fornecedor)
         # Garantir que desvio_padrao nao seja NaN
         if desvio_padrao is None or np.isnan(desvio_padrao) or np.isinf(desvio_padrao):
@@ -1506,9 +1501,8 @@ class PedidoFornecedorIntegrado:
             # Fornecedor
             'codigo_fornecedor': produto.get('codigo_fornecedor', ''),
             'nome_fornecedor': produto.get('nome_fornecedor', ''),
-            'lead_time_dias': lead_time,  # Lead time efetivo (base + delay operacional)
-            'lead_time_base': lead_time_base,  # Lead time do fornecedor (sem delay)
-            'delay_operacional': DELAY_OPERACIONAL_DIAS,  # Delay entre cálculo e envio
+            'lead_time_dias': lead_time,  # Lead time efetivo (= lead_time_base, sem delay desde v6.25)
+            'lead_time_base': lead_time_base,  # Lead time do fornecedor
 
             # Classificação
             'curva_abc': curva_abc,

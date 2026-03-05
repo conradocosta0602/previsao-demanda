@@ -754,7 +754,7 @@ Exemplo:
 SELECT valor FROM parametros_globais
 WHERE chave = 'dias_transferencia_padrao_compra';
 
--- Padrao: 10 dias
+-- Padrao: 15 dias (inclui 5d margem operacional desde v6.25)
 ```
 
 ### Impacto no Calculo de Pedido
@@ -764,10 +764,10 @@ Lead Time Efetivo = Lead Time Fornecedor + Dias Transferencia (se centralizado)
 
 Exemplo:
   Fornecedor entrega em 15 dias
-  Transferencia CD → Loja: 10 dias
-  Lead Time Efetivo: 25 dias
+  Transferencia CD → Loja: 15 dias (inclui 5d margem operacional)
+  Lead Time Efetivo: 30 dias
 
-  → Ponto de Pedido e Estoque Seguranca ajustados para 25 dias
+  → Ponto de Pedido e Estoque Seguranca ajustados para 30 dias
 ```
 
 ### Criticas Geradas
