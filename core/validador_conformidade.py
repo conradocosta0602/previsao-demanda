@@ -1950,10 +1950,10 @@ class ValidadorConformidade:
 
             source_code = inspect.getsource(pedido_fornecedor)
 
-            # Teste 1: Verificar constante COBERTURA_MINIMA_DOADOR = 90
-            teste_1_ok = 'COBERTURA_MINIMA_DOADOR = 90' in source_code
+            # Teste 1: Verificar constante COBERTURA_MINIMA_DOADOR = 180
+            teste_1_ok = 'COBERTURA_MINIMA_DOADOR = 180' in source_code
             resultados.append({
-                'teste': 'Cobertura minima doador = 90 dias',
+                'teste': 'Cobertura minima doador = 180 dias',
                 'constante_encontrada': teste_1_ok,
                 'correto': teste_1_ok
             })

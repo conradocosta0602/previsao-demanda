@@ -149,13 +149,13 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 **Logica Otimizada v6.11** para transferencias entre filiais:
 
 **Regras de Identificacao**:
-- **Doador**: cobertura_atual > 90 dias (COBERTURA_MINIMA_DOADOR = 90)
-- **Receptor**: cobertura_atual <= 90 dias E quantidade_pedido > 0
+- **Doador**: cobertura_atual > 180 dias (COBERTURA_MINIMA_DOADOR = 180)
+- **Receptor**: cobertura_atual <= 180 dias E quantidade_pedido > 0
 - **Restricao**: Apenas entre lojas do MESMO grupo regional (V24)
 
 **Quantidade Transferivel**:
 ```
-excesso_dias = cobertura_atual - 90
+excesso_dias = cobertura_atual - 180
 qtd_bruta = excesso_dias × demanda_diaria
 qtd_transferir = (qtd_bruta // multiplo_embalagem) * multiplo_embalagem  # Arredonda BAIXO
 ```
@@ -167,7 +167,7 @@ qtd_transferir = (qtd_bruta // multiplo_embalagem) * multiplo_embalagem  # Arred
 | CRITICA | 0-30 dias | 1 | Segunda |
 | ALTA | 31-60 dias | 2 | Terceira |
 | MEDIA | 61-90 dias | 3 | Quarta |
-| > 90 dias | - | NAO RECEBE | Pode ser doadora |
+| > 180 dias | - | NAO RECEBE | Pode ser doadora |
 
 **Algoritmo de Matching Otimizado**:
 - Preferir 1 doador → 1 receptor (consolidar frete)

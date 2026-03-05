@@ -1231,11 +1231,11 @@ def api_pedido_fornecedor_integrado():
                 # ==============================================================================
                 # CONFIGURACAO DE TRANSFERENCIAS v6.11
                 # ==============================================================================
-                # Cobertura minima: doador so pode doar se tiver > 90 dias de cobertura
-                COBERTURA_MINIMA_DOADOR = 90  # dias
+                # Cobertura minima: doador so pode doar se tiver > 180 dias de cobertura
+                COBERTURA_MINIMA_DOADOR = 180  # dias
 
                 # Faixas de prioridade para receptores (ordenadas por urgencia)
-                # Lojas com cobertura > 90 dias NAO sao receptoras
+                # Lojas com cobertura > 180 dias NAO sao receptoras
                 FAIXAS_PRIORIDADE = [
                     ('RUPTURA', 0, 0),      # estoque = 0, prioridade 0 (maxima)
                     ('CRITICA', 0, 30),     # 0-30 dias, prioridade 1

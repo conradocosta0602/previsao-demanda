@@ -108,24 +108,24 @@ Colunas disponiveis:
 
 ### Identificacao de Doadores
 
-Apenas lojas com cobertura > 90 dias podem doar:
+Apenas lojas com cobertura > 180 dias podem doar:
 
 ```python
-COBERTURA_MINIMA_DOADOR = 90  # dias
+COBERTURA_MINIMA_DOADOR = 180  # dias
 
 if cobertura_atual > COBERTURA_MINIMA_DOADOR:
     excesso_dias = cobertura_atual - COBERTURA_MINIMA_DOADOR
     excesso_unidades = int(excesso_dias * demanda_diaria)
-    # Doador mantem minimo de 90 dias apos doar
+    # Doador mantem minimo de 180 dias apos doar
 ```
 
 **Exemplo:**
-- Loja com 120 dias de cobertura, demanda 10 un/dia
-- Excesso = (120 - 90) × 10 = 300 unidades disponiveis para doar
+- Loja com 220 dias de cobertura, demanda 10 un/dia
+- Excesso = (220 - 180) × 10 = 400 unidades disponiveis para doar
 
 ### Identificacao de Receptores
 
-Apenas lojas com cobertura <= 90 dias E pedido pendente podem receber:
+Apenas lojas com cobertura <= 180 dias E pedido pendente podem receber:
 
 ```python
 if cobertura_atual <= 90 and quantidade_pedido > 0:
@@ -173,7 +173,7 @@ Para minimizar fragmentacao e otimizar frete:
 
 | Parametro | Valor | Descricao |
 |-----------|-------|-----------|
-| COBERTURA_MINIMA_DOADOR | 90 | Dias minimos para poder doar |
+| COBERTURA_MINIMA_DOADOR | 180 | Dias minimos para poder doar |
 | FAIXAS_PRIORIDADE | 4 faixas | RUPTURA, CRITICA, ALTA, MEDIA |
 | Multiplo Embalagem | Variavel | Arredonda para baixo (caixas fechadas) |
 
