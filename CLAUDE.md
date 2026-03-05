@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.23** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.24** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -125,7 +125,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**29 verificacoes** de conformidade com a metodologia documentada:
+**31 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
@@ -142,6 +142,8 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V36: Pedido minimo 1 caixa para lojas em ruptura sem transferencia mapeada
 - V38: Correcao estoque consolidado modo Negociacao - soma TODAS as lojas (pedido + OK)
 - V39: OUL por loja - deficit calculado loja a loja, sem compensacao cruzada de excesso entre filiais
+- V43: Fase 1 Negociacao via API + dias_ate_entrega para cobertura pos-entrega correta
+- V44: Documentacao semantica cobertura fixa (90d) = pos-entrega com V37
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -512,19 +514,19 @@ para cada fase, mantendo uma cobertura-alvo de estoque ao longo do tempo.
 | Modo | Fase 1 | Fases 2+ | Uso |
 |------|--------|----------|-----|
 | **Reabastecimento** | Identico ao pedido normal (V25/V29/V30/...) | OUL simples | Reposicao periodica |
-| **Negociacao Comercial** | OUL direto (todas as fases iguais) | OUL com sazonalidade | Blanket order/forward buying |
+| **Negociacao Comercial** | Identico ao pedido normal via API (V43) | OUL com sazonalidade | Blanket order/forward buying |
 
 **Modelo Order-Up-To-Level (OUL)**:
 ```
-Modo Reabastecimento:
-  Fase 1: Chama /api/pedido_fornecedor_integrado via test_client()
-          Herda TODAS as regras: V25, V29, V30, V31, V32, V34, V35, V37
-  Fases 2+: OUL com estoque projetado (descontando consumo sazonal)
+Ambos os modos - Fase 1 (V43):
+  Chama /api/pedido_fornecedor_integrado via test_client()
+  Herda TODAS as regras: V25, V29, V30, V31, V32, V34, V35, V37
+  data_referencia = data de entrega definida pelo usuario (demanda do mes correto)
 
-Modo Negociacao Comercial (todas as fases):
+Ambos os modos - Fases 2+:
   estoque_projetado = max(0, estoque_hoje + pedidos_ant - consumo_ate_entrega_sazonal)
   target_estoque = demanda_diaria_periodo × cobertura_alvo
-  necessidade = target_estoque - estoque_projetado  (sem ES, pois ja incluso no target)
+  necessidade = target_estoque - estoque_projetado
   qtd_pedido = ceil(necessidade / multiplo) × multiplo
 ```
 
@@ -760,6 +762,9 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V40: Correcao cod_destino na Compra Planejada - quando destino=CD e lojas fisicas selecionadas, usa CD 80 como cod_empresa no payload da API (nao a primeira loja fisica) (v6.23)
 - V41: Demanda do mes de entrega no Pedido 1 da Compra Planejada - passa data_referencia=datas_entrega[0] para API usar demanda de Abril (entrega) e nao Marco (hoje) (v6.23)
 - V42: Demanda do mes de entrega no Reabastecimento normal - calcula automaticamente mes entrega = hoje + lead_time_max + 5d; alinha ambas as telas com o mesmo principio (v6.23)
+- V43: Fase 1 Negociacao Comercial via API - Fase 1 agora usa /api/pedido_fornecedor_integrado (com ES, V25, V29/V30, V37) em vez de OUL simplificado; data_referencia = data de entrega do usuario para demanda do mes correto (v6.24)
+- V43b: dias_ate_entrega na Compra Planejada - V37 usa dias reais ate entrega (nao lead_time) para projetar estoque; cobertura fixa (90d) = exatamente 90 dias pos-entrega (v6.24)
+- V44: Documentacao semantica cobertura fixa vs ABC - cobertura fixa (90d) com V37 garante 90d pos-entrega; modo ABC (LT+ciclo+seg) mantem semantica historica (v6.24)
 
 ## Documentacao Complementar
 
@@ -775,4 +780,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.23)
+**Ultima atualizacao**: Marco 2026 (v6.24)

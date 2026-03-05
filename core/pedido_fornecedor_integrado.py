@@ -1227,7 +1227,8 @@ class PedidoFornecedorIntegrado:
         lead_time_dias: Optional[int] = None,
         ciclo_pedido_dias: Optional[int] = None,
         pedido_minimo_valor: Optional[float] = None,
-        aplicar_limitador_cobertura: bool = False
+        aplicar_limitador_cobertura: bool = False,
+        dias_ate_entrega: Optional[int] = None
     ) -> Dict:
         """
         Processa um item individual calculando necessidade de pedido.
@@ -1242,6 +1243,8 @@ class PedidoFornecedorIntegrado:
             ciclo_pedido_dias: Ciclo de pedido do fornecedor (se None, usa padrão)
             pedido_minimo_valor: Valor mínimo do pedido (para validação posterior)
             aplicar_limitador_cobertura: V26 - limitar cobertura pos-pedido a 90 dias (itens TSB)
+            dias_ate_entrega: V43 - dias reais ate a entrega (Compra Planejada).
+                Se informado, V37 usa este valor em vez do lead_time para descontar consumo.
 
         Returns:
             Dicionário com análise completa do item
@@ -1420,9 +1423,23 @@ class PedidoFornecedorIntegrado:
         # estoque_na_entrega = max(0, estoque_efetivo_hoje - demanda_diaria × lead_time)
         # necessidade = demanda_periodo + ES - estoque_na_entrega
         #
+        # V43: Quando dias_ate_entrega é informado (Compra Planejada), usar esse valor
+        # em vez do lead_time. A data de entrega real pode diferir do lead_time calculado.
+        #
+        # Semantica da cobertura fixa (ex: 90 dias) com V37:
+        # - demanda_periodo = demanda_diaria × 90 (cobertura pos-entrega desejada)
+        # - estoque_projetado = estoque_hoje - demanda × LT (V37: estoque na data de entrega)
+        # - necessidade = demanda_periodo + ES - estoque_projetado
+        # Resultado: pedido garante 90 dias de estoque APOS a entrega. Correto.
+        #
+        # No modo ABC automatico, cobertura = LT + ciclo + seg. O LT aparece tanto na
+        # cobertura quanto no V37, dando cobertura efetiva = ciclo + seg pos-entrega.
+        # Isso e intencional: a cobertura ABC foi projetada para incluir o LT.
+        #
         # Nota: qtd_pendente (pedidos já em trânsito) chega ANTES ou JUNTO com o pedido,
         # por isso é mantido como "estoque_transito" sem desconto de consumo.
-        consumo_ate_entrega = previsao_diaria * lead_time
+        dias_consumo_v37 = dias_ate_entrega if dias_ate_entrega is not None else lead_time
+        consumo_ate_entrega = previsao_diaria * dias_consumo_v37
         estoque_disp_projetado = max(0.0, estoque['estoque_disponivel'] - consumo_ate_entrega)
 
         pedido_info = calcular_quantidade_pedido(

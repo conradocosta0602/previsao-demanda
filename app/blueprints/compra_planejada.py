@@ -403,6 +403,8 @@ def api_compra_planejada_calcular():
         # Quando destino e CD, enviar cod_destino (ex: 80) como cod_empresa
         # para que a API use o estoque correto do CD no processamento
         cod_empresa_payload = cod_destino if is_destino_cd else cod_empresa
+        # Dias ate a entrega real (para V37 usar em vez do lead_time)
+        dias_ate_entrega_fase1 = (datas_entrega[0] - hoje).days
         payload_pedido = {
             'fornecedor': fornecedor_filtro,
             'linha1': linha1_filtro,
@@ -413,6 +415,9 @@ def api_compra_planejada_calcular():
             # Usar demanda do mes da 1a entrega (nao do mes atual)
             # Ex: pedido para entrega 01/04 usa demanda de Abril, nao Marco
             'data_referencia': datas_entrega[0].isoformat(),
+            # V43: dias ate entrega real (para V37 descontar consumo correto)
+            # Sem isso, V37 usa lead_time como proxy, inflando o pedido
+            'dias_ate_entrega': dias_ate_entrega_fase1,
         }
         print(f"  [FASE 1] Payload: destino={destino_tipo}, cod_empresa={cod_empresa_payload}, cobertura={cobertura_dias}, data_ref={datas_entrega[0].isoformat()}")
 
@@ -672,9 +677,30 @@ def api_compra_planejada_calcular():
                 cod = int(item.get('codigo', 0))
                 abc_cache[cod] = item.get('curva_abc', 'B') or 'B'
 
-            fases_resultado = []
+            # ================================================================
+            # FASE 1 NEGOCIACAO: Usa resultado da API (identico ao Reabastecimento)
+            # Garante que ES, V25, V29/V30, V37 estejam inclusos.
+            # A data_referencia ja foi passada como datas_entrega[0] (linha 415),
+            # portanto a demanda usada corresponde ao mes de entrega do usuario.
+            # ================================================================
+            fases_resultado = [{
+                'fase': 1,
+                'data_entrega': periodos[0]['data_entrega'].isoformat(),
+                'data_fim_cobertura': periodos[0]['data_fim_cobertura'].isoformat(),
+                'periodo_dias': cobertura_display,
+                'cobertura_alvo': cobertura_alvo,
+                'tipo_calculo': 'negociacao',
+                'itens': itens_fase1,
+                'total_valor': sum(i.get('valor_total', 0) for i in itens_fase1),
+                'total_itens': len([i for i in itens_fase1 if i.get('quantidade_pedido', 0) > 0]),
+                'total_quantidade': sum(i.get('quantidade_pedido', 0) for i in itens_fase1),
+            }]
 
-            for fase_idx, periodo in enumerate(periodos):
+            print(f"  [FASE 1] {len([i for i in itens_fase1 if i.get('quantidade_pedido', 0) > 0])} itens com pedido (via API, data_ref={datas_entrega[0].isoformat()})")
+
+            # FASES 2+: OUL com sazonalidade mensal (logica original)
+            for fase_idx in range(1, len(periodos)):
+                periodo = periodos[fase_idx]
                 itens_fase = []
                 dias_ate_entrega = (periodo['data_entrega'] - hoje).days
                 dias_periodo = periodo['dias']
@@ -1295,7 +1321,7 @@ def api_compra_planejada_exportar():
 
             # Headers
             header_fill_roxo = PatternFill(start_color='7C3AED', end_color='7C3AED', fill_type='solid')
-            cobertura_alvo_fase = fase.get('cobertura_alvo', cobertura_display if cobertura_dias else cobertura_ultima_fase)
+            cobertura_alvo_fase = fase.get('cobertura_alvo', fase.get('periodo_dias', 90))
             if tipo == 'negociacao':
                 headers = ['Cod Item', 'Cod DIG', 'Descricao', 'Fornecedor', 'ABC',
                            'Demanda/dia', 'Dias Periodo', 'Dem Periodo',

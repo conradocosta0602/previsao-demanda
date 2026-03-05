@@ -1,6 +1,12 @@
-# Sistema de Demanda e Reabastecimento v6.21
+# Sistema de Demanda e Reabastecimento v6.24
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.24 - Compra Planejada Fase 1 via API + Cobertura Pos-Entrega (Mar/2026):**
+- **V43 - Fase 1 Negociacao via API**: Modo Negociacao Comercial agora usa `/api/pedido_fornecedor_integrado` para Fase 1 (identico ao Reabastecimento), herdando ES, V25, V29/V30, V37
+- **V43b - dias_ate_entrega**: Compra Planejada envia dias reais ate a entrega para V37 projetar estoque corretamente (em vez de usar lead_time como proxy)
+- **V44 - Semantica cobertura fixa**: Cobertura fixa (90d) com V37 garante exatamente 90 dias de estoque apos a entrega; documentacao da semantica ABC vs fixa
+- **Checklist V43**: Nova verificacao de conformidade para Fase 1 via API e parametro dias_ate_entrega
 
 **Novidades v6.21 - Salvar Demanda + Fix Compra Planejada (Mar/2026):**
 - **Fonte unica de verdade**: Botao "Salvar Demanda" agora envia os valores exibidos na Tela de Demanda diretamente para `demanda_pre_calculada`, em vez de re-executar o cronjob

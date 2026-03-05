@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 26 verificacoes do checklist de conformidade.
+        Executa todas as 31 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -99,6 +99,7 @@ class ValidadorConformidade:
             ('V34', 'Fair Share Distribuicao CD', self._verificar_fair_share_cd),
             ('V35', 'Semantica qtd_pend_transf CD', self._verificar_qtd_pend_transf_cd),
             ('V37', 'Consumo Lead Time no Pedido', self._verificar_consumo_lead_time_pedido),
+            ('V43', 'Fase 1 Negociacao via API + dias_ate_entrega', self._verificar_fase1_negociacao_api),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -3185,6 +3186,122 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V37: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_fase1_negociacao_api(self) -> Tuple[str, str, Dict]:
+        """
+        V43: Verifica que a Compra Planejada modo Negociacao usa a API de pedido
+        para Fase 1 (em vez de OUL simplificado) e que o parametro dias_ate_entrega
+        esta disponivel no processar_item para projecao correta de estoque.
+
+        V43 garante:
+        1. Fase 1 Negociacao usa itens_fase1 da API (identico ao Reabastecimento)
+        2. dias_ate_entrega e passado no payload da Compra Planejada
+        3. processar_item aceita dias_ate_entrega e usa no V37
+        """
+        try:
+            testes_ok = 0
+            testes_total = 0
+            detalhes_testes = []
+
+            # Teste 1: Compra Planejada envia dias_ate_entrega no payload
+            testes_total += 1
+            try:
+                import inspect
+                from app.blueprints import compra_planejada as cp_module
+                source_cp = inspect.getsource(cp_module)
+                if 'dias_ate_entrega' in source_cp and 'itens_fase1' in source_cp:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'Compra Planejada envia dias_ate_entrega e usa itens_fase1',
+                        'status': 'ok',
+                        'detalhe': 'Fase 1 usa resultado da API (itens_fase1) e envia dias_ate_entrega no payload'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'Compra Planejada envia dias_ate_entrega e usa itens_fase1',
+                        'status': 'falha',
+                        'detalhe': 'dias_ate_entrega ou itens_fase1 nao encontrado em compra_planejada.py'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'Compra Planejada envia dias_ate_entrega e usa itens_fase1',
+                    'status': 'falha',
+                    'detalhe': f'Erro ao inspecionar compra_planejada: {str(e)}'
+                })
+
+            # Teste 2: processar_item aceita dias_ate_entrega
+            testes_total += 1
+            try:
+                import inspect
+                from core.pedido_fornecedor_integrado import PedidoFornecedorIntegrado
+                sig = inspect.signature(PedidoFornecedorIntegrado.processar_item)
+                if 'dias_ate_entrega' in sig.parameters:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'processar_item aceita dias_ate_entrega',
+                        'status': 'ok',
+                        'detalhe': 'Parametro dias_ate_entrega presente na assinatura de processar_item()'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'processar_item aceita dias_ate_entrega',
+                        'status': 'falha',
+                        'detalhe': 'Parametro dias_ate_entrega NAO encontrado em processar_item()'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'processar_item aceita dias_ate_entrega',
+                    'status': 'falha',
+                    'detalhe': f'Erro ao inspecionar processar_item: {str(e)}'
+                })
+
+            # Teste 3: V37 usa dias_ate_entrega quando disponivel
+            testes_total += 1
+            try:
+                import inspect
+                from core import pedido_fornecedor_integrado as pfi_module
+                source = inspect.getsource(pfi_module)
+                if 'dias_consumo_v37 = dias_ate_entrega if dias_ate_entrega' in source:
+                    testes_ok += 1
+                    detalhes_testes.append({
+                        'teste': 'V37 usa dias_ate_entrega quando informado',
+                        'status': 'ok',
+                        'detalhe': 'dias_consumo_v37 prioriza dias_ate_entrega sobre lead_time (correto)'
+                    })
+                else:
+                    detalhes_testes.append({
+                        'teste': 'V37 usa dias_ate_entrega quando informado',
+                        'status': 'falha',
+                        'detalhe': 'Logica de priorizacao dias_ate_entrega sobre lead_time nao encontrada'
+                    })
+            except Exception as e:
+                detalhes_testes.append({
+                    'teste': 'V37 usa dias_ate_entrega quando informado',
+                    'status': 'falha',
+                    'detalhe': f'Erro: {str(e)}'
+                })
+
+            detalhes = {
+                'descricao': 'Fase 1 Negociacao usa API de pedido + dias_ate_entrega para cobertura pos-entrega',
+                'beneficios': [
+                    'Fase 1 herda todas as regras (ES, V25, V29/V30, V37)',
+                    'Cobertura fixa (90d) = exatamente 90 dias apos entrega',
+                    'Consistencia entre Reabastecimento e Compra Planejada'
+                ],
+                'testes': detalhes_testes
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V43 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V43 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V43 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V43: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

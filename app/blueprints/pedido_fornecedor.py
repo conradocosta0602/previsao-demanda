@@ -79,6 +79,9 @@ def api_pedido_fornecedor_integrado():
         # data_referencia: ano/mes para buscar demanda (default = mes atual)
         # Usado pela Compra Planejada para usar demanda do mes de entrega
         data_referencia_str = dados.get('data_referencia')  # formato 'YYYY-MM-DD'
+        # V43: dias ate entrega real (Compra Planejada)
+        # Quando informado, V37 usa este valor em vez do lead_time para descontar consumo
+        dias_ate_entrega_override = dados.get('dias_ate_entrega')  # int ou None
 
         # Normalizar filtros de linha - converter array de 1 elemento para string
         # IMPORTANTE: Trata casos onde JSON envia arrays onde esperamos string
@@ -622,7 +625,8 @@ def api_pedido_fornecedor_integrado():
                             lead_time_dias=lead_time_forn + dias_transferencia_cd,
                             ciclo_pedido_dias=ciclo_pedido_forn,
                             pedido_minimo_valor=pedido_min_forn,
-                            aplicar_limitador_cobertura=is_tsb
+                            aplicar_limitador_cobertura=is_tsb,
+                            dias_ate_entrega=dias_ate_entrega_override
                         )
 
                         if 'erro' in resultado:
@@ -760,7 +764,8 @@ def api_pedido_fornecedor_integrado():
                         cobertura_dias=cobertura_dias,
                         lead_time_dias=lead_time_forn + dias_transferencia_cd,
                         ciclo_pedido_dias=ciclo_pedido_forn,
-                        pedido_minimo_valor=pedido_min_forn
+                        pedido_minimo_valor=pedido_min_forn,
+                        dias_ate_entrega=dias_ate_entrega_override
                     )
 
                     if 'erro' not in resultado:
