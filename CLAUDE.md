@@ -530,7 +530,7 @@ Ambos os modos - Fases 2+:
 ```
 
 **Cobertura-alvo**: Vem do seletor da tela (ABC automatica, 60, 90, 120 dias).
-Quando ABC automatica: `LT_max + Transit_CD + Delay(5) + Ciclo(7) + Seguranca(4)`.
+Quando ABC automatica: `LT_max + Transit_CD + Ciclo(7) + Seguranca(4)`.
 
 **Demanda sazonal**: Para cada fase, a demanda diaria e ponderada pelos meses cobertos,
 usando a demanda pre-calculada com fatores sazonais. Funcao `_calcular_demanda_diaria_periodo()`.
@@ -737,7 +737,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V22: Correcao do calculo de Estoque de Seguranca - rateio de desvio usa sqrt() e ES usa LT sem delay (v6.8)
 - V23: Correcao demanda sazonal no pedido - usar demanda_prevista/30 em vez de demanda_diaria_base (v6.9)
 - V24: Transferencias respeitam grupos regionais - PE/PB/RN (lojas 1,2,4,6,7,8) e BA/SE (lojas 3,5,9) (v6.10)
-- V25: Transferencias otimizadas - doador >90d, faixas prioridade, multiplo embalagem, matching 1:1 (v6.11)
+- V25: Transferencias otimizadas - doador >180d, faixas prioridade, multiplo embalagem, matching 1:1 (v6.11)
 - V26: Limitador de cobertura 90 dias para itens TSB - evita excesso em demanda intermitente (v6.12)
 - V27: Completude de dados de embalagem - alerta fornecedores sem multiplo de caixa cadastrado (v6.12)
 - V28: Tabela de Custo (CUE) na Tela de Demanda - tabela espelhada em R$ + coluna CUE no Excel (v6.13)
@@ -760,7 +760,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V39: OUL por loja na Compra Planejada (modos Negociacao e Reabastecimento) - necessidade calculada loja a loja sem compensacao cruzada; excesso de uma filial nao mascara deficit de outra (v6.23)
 - V40: Correcao cod_destino na Compra Planejada - quando destino=CD e lojas fisicas selecionadas, usa CD 80 como cod_empresa no payload da API (nao a primeira loja fisica) (v6.23)
 - V41: Demanda do mes de entrega no Pedido 1 da Compra Planejada - passa data_referencia=datas_entrega[0] para API usar demanda de Abril (entrega) e nao Marco (hoje) (v6.23)
-- V42: Demanda do mes de entrega no Reabastecimento normal - calcula automaticamente mes entrega = hoje + lead_time_max + 5d; alinha ambas as telas com o mesmo principio (v6.23)
+- V42: Demanda do mes de entrega no Reabastecimento normal - calcula automaticamente mes entrega = hoje + lead_time_max; alinha ambas as telas com o mesmo principio (v6.23)
 - V43: Fase 1 Negociacao Comercial via API - Fase 1 agora usa /api/pedido_fornecedor_integrado (com ES, V25, V29/V30, V37) em vez de OUL simplificado; data_referencia = data de entrega do usuario para demanda do mes correto (v6.24)
 - V43b: dias_ate_entrega na Compra Planejada - V37 usa dias reais ate entrega (nao lead_time) para projetar estoque; cobertura fixa (90d) = exatamente 90 dias pos-entrega (v6.24)
 - V44: Documentacao semantica cobertura fixa vs ABC - cobertura fixa (90d) com V37 garante 90d pos-entrega; modo ABC (LT+ciclo+seg) mantem semantica historica (v6.24)
