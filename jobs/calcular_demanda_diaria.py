@@ -533,9 +533,11 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
 
     cursor = conn.cursor()
 
-    # FIX: DELETE antes do INSERT para resolver duplicacao com cod_empresa NULL
-    # PostgreSQL trata NULL != NULL em UNIQUE constraints, causando duplicatas
-    # Agrupar registros por (cod_produto, cnpj_fornecedor, ano, mes) para DELETE
+    # FIX v6.25: DELETE + INSERT com protecao contra duplicatas
+    # 1. Deleta registros SEM ajuste_manual (serao recalculados)
+    # 2. Identifica registros COM ajuste_manual (preservados)
+    # 3. Deduplicar batch antes do INSERT
+    # 4. Usa COALESCE(cod_empresa,0) para casar com o UNIQUE index
     chaves_para_deletar = set()
     for reg in registros:
         chaves_para_deletar.add((
@@ -552,24 +554,41 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             DELETE FROM demanda_pre_calculada
             WHERE ajuste_manual IS NULL
               AND (cod_produto, cnpj_fornecedor, ano, mes) IN (VALUES %s)
-              AND cod_empresa IS NULL
+              AND (cod_empresa IS NULL OR cod_empresa = 0)
         """, chaves_list, template="(%s, %s, %s, %s)")
 
         # Identificar quais chaves ainda existem (tem ajuste_manual) para nao inserir duplicata
-        execute_values(cursor, """
-            SELECT cod_produto, cnpj_fornecedor, ano, mes
-            FROM demanda_pre_calculada
-            WHERE (cod_produto, cnpj_fornecedor, ano, mes) IN (VALUES %s)
-              AND cod_empresa IS NULL
-        """, chaves_list, template="(%s, %s, %s, %s)")
-        for row in cursor.fetchall():
-            chaves_com_ajuste.add((row[0], row[1], row[2], row[3]))
+        # NOTA: Nao usar execute_values para SELECT (page_size trunca resultados)
+        # Extrair cnpj unico do batch para query direta
+        cnpjs = set(c[1] for c in chaves_list)
+        for cnpj in cnpjs:
+            cursor.execute("""
+                SELECT cod_produto, cnpj_fornecedor, ano, mes
+                FROM demanda_pre_calculada
+                WHERE cnpj_fornecedor = %s
+                  AND (cod_empresa IS NULL OR cod_empresa = 0)
+                  AND ajuste_manual IS NOT NULL
+            """, (cnpj,))
+            for row in cursor.fetchall():
+                chaves_com_ajuste.add((str(row[0]), str(row[1]), int(row[2]), int(row[3])))
 
     # Preparar dados para insert em lote, excluindo os que ja tem ajuste_manual
     registros_para_inserir = [
         reg for reg in registros
-        if (reg['cod_produto'], reg['cnpj_fornecedor'], reg['ano'], reg['mes']) not in chaves_com_ajuste
+        if (str(reg['cod_produto']), str(reg['cnpj_fornecedor']), int(reg['ano']), int(reg['mes'])) not in chaves_com_ajuste
     ]
+
+    # Deduplicar batch: mesmo (cod_produto, cnpj, cod_empresa, ano, mes) pode aparecer 2x
+    # UNIQUE index usa COALESCE(cod_empresa,0), entao NULL e 0 sao iguais
+    vistos = set()
+    registros_unicos = []
+    for reg in registros_para_inserir:
+        chave = (str(reg['cod_produto']), str(reg['cnpj_fornecedor']),
+                 0 if reg['cod_empresa'] is None else int(reg['cod_empresa']),
+                 int(reg['ano']), int(reg['mes']))
+        if chave not in vistos:
+            vistos.add(chave)
+            registros_unicos.append(reg)
 
     valores = [
         (
@@ -581,14 +600,15 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             reg['limitador_aplicado'], reg['metodo_usado'], reg['categoria_serie'],
             reg['dias_historico'], reg['total_vendido_historico']
         )
-        for reg in registros_para_inserir
+        for reg in registros_unicos
     ]
 
     if not valores:
         conn.commit()
         return len(registros)
 
-    # INSERT em lote. Registros com ajuste_manual ja foram excluidos da lista acima.
+    # INSERT em lote. Registros com ajuste_manual ja foram excluidos,
+    # e batch deduplicado para evitar colisao no UNIQUE index.
     execute_values(cursor, """
         INSERT INTO demanda_pre_calculada (
             cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
