@@ -1374,17 +1374,17 @@
                 let metricaTransfHtml = '';
                 if (totalTransf > 0) {
                     metricaTransfHtml = `
-                        <a href="/transferencias" class="metrica" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 8px; padding: 8px; text-decoration: none; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;" title="Clique para ver detalhes das transferencias entre lojas" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 4px 12px rgba(16,185,129,0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='none';">
+                        <a href="/transferencias" class="metrica" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 8px; padding: 8px; text-decoration: none; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;" title="Clique para ver detalhes das transferencias entre lojas (${totalTransf} total: V25 + CD)" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 4px 12px rgba(16,185,129,0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='none';">
                             <div class="valor" style="color: white;">-R$ ${(economiaTransf/1000).toFixed(1)}k</div>
                             <div class="label" style="color: rgba(255,255,255,0.9);">${totalTransf} Transf.</div>
                         </a>
                     `;
                 }
 
-                // Metrica de distribuicao do CD (V29)
+                // Metrica de distribuicao do CD (V29) - unificada no badge acima
                 let metricaCDHtml = '';
                 const resumoCDStats = data.resumo_distribuicao_cd;
-                if (resumoCDStats && resumoCDStats.total_distribuido > 0) {
+                if (false && resumoCDStats && resumoCDStats.total_distribuido > 0) {
                     metricaCDHtml = `
                         <div class="metrica" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border-radius: 8px; padding: 8px;">
                             <div class="valor" style="color: white;">-R$ ${(resumoCDStats.valor_economia/1000).toFixed(1)}k</div>

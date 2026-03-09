@@ -1825,9 +1825,9 @@ def api_pedido_fornecedor_integrado():
             'cobertura_media_atual': cobertura_media_atual,
             'cobertura_media_pos_pedido': cobertura_media_pos,
             # Estatisticas de transferencias
-            'total_transferencias_sugeridas': len(transferencias_sugeridas),
-            'valor_economia_transferencias': round(valor_economia_transferencias, 2),
-            'produtos_com_transferencia': len(set(t['cod_produto'] for t in transferencias_sugeridas)) if transferencias_sugeridas else 0
+            'total_transferencias_sugeridas': len(transferencias_sugeridas) + len(transferencias_cd),
+            'valor_economia_transferencias': round(valor_economia_transferencias + (info_distribuicao_cd.get('valor_economia', 0) if info_distribuicao_cd else 0), 2),
+            'produtos_com_transferencia': len(set(t['cod_produto'] for t in transferencias_sugeridas) | set(t.get('cod_produto', 0) for t in transferencias_cd)) if (transferencias_sugeridas or transferencias_cd) else 0
         }
 
         return jsonify(converter_tipos_json({
