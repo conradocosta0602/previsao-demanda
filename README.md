@@ -1,6 +1,12 @@
-# Sistema de Demanda e Reabastecimento v6.25
+# Sistema de Demanda e Reabastecimento v6.26
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.26 - SOLIs Abertas no Calculo de Pedido (Mar/2026):**
+- **V46 - SOLIs abertas**: Solicitacoes manuais de movimentacao de estoque (SOLIs) sao integradas ao calculo de pedido
+- **Ajuste de estoque**: Origem tem estoque reduzido, destino recebe no transito
+- **Bloqueio de transferencias**: V25 e V29/V30 nao sugerem transferencia onde ja existe SOLI para o item/lojas
+- **Importacao**: `python database/importar_solis.py` - importa CSV de SOLIs abertas autorizadas
 
 **Novidades v6.25 - Ajuste Lead Time: Remover Delay Operacional + Transit CD 15d (Mar/2026):**
 - **V45 - Delay operacional removido**: Os 5 dias de delay operacional foram removidos do calculo de lead time para todos os pedidos. Pedidos direto loja agora usam o LT real do fornecedor

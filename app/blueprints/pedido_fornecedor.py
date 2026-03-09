@@ -491,6 +491,60 @@ def api_pedido_fornecedor_integrado():
             dias_transferencia_cd = get_dias_transferencia(conn)
             print(f"  [TRANSIT TIME] Destino CD: +{dias_transferencia_cd}d transit time adicionado ao lead time")
 
+        # ==============================================================================
+        # V46: AJUSTAR ESTOQUE COM SOLIs ABERTAS
+        # SOLIs = solicitacoes manuais de movimentacao de estoque entre filiais/CDs
+        # - Origem: subtrair do estoque disponivel (mercadoria vai sair)
+        # - Destino: somar ao estoque em transito (mercadoria vai chegar)
+        # - Bloqueio: nao sugerir transferencia V25/V29/V30 onde ja existe SOLI
+        # ==============================================================================
+        solis_por_item = {}  # {codigo: [(origem, destino, qtde), ...]}
+        solis_bloqueio = set()  # {(codigo, loja_a, loja_b)} para bloqueio V25/V29/V30
+        total_solis_aplicadas = 0
+
+        try:
+            conn_soli = get_db_connection()
+            cursor_soli = conn_soli.cursor()
+            cursor_soli.execute("""
+                SELECT codigo, filial_origem, filial_destino, qtde
+                FROM solis_abertas
+                WHERE dt_confirmacao IS NOT NULL
+                  AND codigo = ANY(%s)
+            """, (codigos_produtos,))
+
+            for row_soli in cursor_soli.fetchall():
+                codigo_s, origem_s, destino_s, qtde_s = int(row_soli[0]), int(row_soli[1]), int(row_soli[2]), float(row_soli[3])
+                solis_por_item.setdefault(codigo_s, []).append((origem_s, destino_s, qtde_s))
+
+                # Bloqueio V25/V29/V30: par de lojas (ordenado) para o item
+                par = tuple(sorted([origem_s, destino_s]))
+                solis_bloqueio.add((codigo_s, par[0], par[1]))
+
+                # Ajustar cache de estoque - ORIGEM: subtrair do disponivel
+                key_origem = (codigo_s, origem_s)
+                if key_origem in processador._cache_estoque:
+                    entry = processador._cache_estoque[key_origem]
+                    entry['estoque_disponivel'] = max(0, entry['estoque_disponivel'] - qtde_s)
+                    entry['estoque_efetivo'] = entry['estoque_disponivel'] + entry['estoque_transito']
+                    total_solis_aplicadas += 1
+
+                # Ajustar cache de estoque - DESTINO: somar ao transito
+                key_destino = (codigo_s, destino_s)
+                if key_destino in processador._cache_estoque:
+                    entry = processador._cache_estoque[key_destino]
+                    entry['estoque_transito'] += qtde_s
+                    entry['estoque_efetivo'] = entry['estoque_disponivel'] + entry['estoque_transito']
+                    total_solis_aplicadas += 1
+
+            cursor_soli.close()
+            conn_soli.close()
+
+            if solis_por_item:
+                print(f"  [V46] SOLIs carregadas: {sum(len(v) for v in solis_por_item.values())} movimentacoes para {len(solis_por_item)} itens ({total_solis_aplicadas} ajustes de estoque)")
+                print(f"  [V46] Bloqueios de transferencia: {len(solis_bloqueio)} pares item/lojas")
+        except Exception as e_soli:
+            print(f"  [V46] Aviso: nao foi possivel carregar SOLIs ({e_soli}). Continuando sem ajuste.")
+
         resultados = []
         itens_sem_historico = 0
         itens_sem_demanda = 0
@@ -664,6 +718,14 @@ def api_pedido_fornecedor_integrado():
                         resultado['pedido_minimo_fornecedor'] = pedido_min_forn
                         resultado['sem_demanda_loja'] = demanda_diaria <= 0
 
+                        # V46: Adicionar info de SOLIs ao resultado
+                        solis_item = solis_por_item.get(codigo, [])
+                        solis_loja = [(o, d, q) for o, d, q in solis_item if o == loja_cod or d == loja_cod]
+                        if solis_loja:
+                            resultado['solis_abertas'] = solis_loja
+                            resultado['soli_saida'] = sum(q for o, d, q in solis_loja if o == loja_cod)
+                            resultado['soli_entrada'] = sum(q for o, d, q in solis_loja if d == loja_cod)
+
                         # DEBUG: Qualquer item com cobertura insuficiente
                         cobertura_alvo_debug = cobertura_dias if cobertura_dias else 21
                         cobertura_pos = resultado.get('cobertura_pos_pedido_dias', 999)
@@ -780,6 +842,15 @@ def api_pedido_fornecedor_integrado():
                         resultado['dias_transferencia_cd'] = dias_transferencia_cd
                         resultado['ciclo_pedido_usado'] = ciclo_pedido_forn
                         resultado['pedido_minimo_fornecedor'] = pedido_min_forn
+
+                        # V46: Adicionar info de SOLIs ao resultado
+                        solis_item_s = solis_por_item.get(codigo, [])
+                        solis_loja_s = [(o, d, q) for o, d, q in solis_item_s if o == cod_destino or d == cod_destino]
+                        if solis_loja_s:
+                            resultado['solis_abertas'] = solis_loja_s
+                            resultado['soli_saida'] = sum(q for o, d, q in solis_loja_s if o == cod_destino)
+                            resultado['soli_entrada'] = sum(q for o, d, q in solis_loja_s if d == cod_destino)
+
                         resultados.append(resultado)
 
             except Exception as e:
@@ -1005,6 +1076,12 @@ def api_pedido_fornecedor_integrado():
                     estoque_loja = float(item.get('estoque_atual', 0) or 0)
 
                     if qtd_pedido > 0 and demanda_d > 0:
+                        # V46: Bloquear distribuicao CD->loja se ja existe SOLI para este item/par
+                        cod_loja_receptor = item.get('cod_loja', 0)
+                        par_soli_cd = tuple(sorted([cod_cd, cod_loja_receptor]))
+                        if (codigo, par_soli_cd[0], par_soli_cd[1]) in solis_bloqueio:
+                            continue  # Ja tem SOLI entre CD e esta loja
+
                         if estoque_loja == 0:
                             prioridade = 0
                             faixa = 'RUPTURA'
@@ -1408,6 +1485,11 @@ def api_pedido_fornecedor_integrado():
                                 grupo_origem = origem.get('grupo_id')
                                 if grupo_origem is None or grupo_origem != grupo_destino:
                                     continue
+
+                                # V46: Bloquear se ja existe SOLI entre estas lojas para este item
+                                par_soli_v25 = tuple(sorted([origem['cod_loja'], destino['cod_loja']]))
+                                if (codigo, par_soli_v25[0], par_soli_v25[1]) in solis_bloqueio:
+                                    continue  # Ja tem SOLI manual entre estas lojas
 
                                 # Preferir doador que cobre 100% da necessidade
                                 if origem['disponivel_doar'] >= destino['necessidade_restante']:

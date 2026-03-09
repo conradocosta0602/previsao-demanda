@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.25** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.26** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -124,7 +124,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**32 verificacoes** de conformidade com a metodologia documentada:
+**33 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
@@ -143,6 +143,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V39: OUL por loja - deficit calculado loja a loja, sem compensacao cruzada de excesso entre filiais
 - V43: Fase 1 Negociacao via API + dias_ate_entrega para cobertura pos-entrega correta
 - V44: Documentacao semantica cobertura fixa (90d) = pos-entrega com V37
+- V46: SOLIs abertas integradas ao calculo de pedido - ajuste de estoque e bloqueio de transferencias
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -257,6 +258,36 @@ ES_cd = Z × sigma_total × sqrt(LT_fornecedor)
 **Badge na Tela**:
 - Badge verde `CD X un` quando loja recebe distribuicao do CD
 - Exibido na visualizacao "Por Padrao de Compra (Destino)"
+
+### 5c. SOLIs Abertas no Calculo de Pedido (V46)
+
+**Arquivos**: `app/blueprints/pedido_fornecedor.py`, `database/importar_solis.py`
+
+SOLIs sao solicitacoes manuais de movimentacao de estoque entre filiais/CDs.
+O sistema integra SOLIs abertas (autorizadas) ao calculo de pedido para evitar
+duplicidade de movimentacoes e garantir estoque projetado correto.
+
+**Tabela**: `solis_abertas`
+- Colunas: `codigo`, `filial_origem`, `filial_destino`, `qtde`, `codigo_soli`, `dt_confirmacao`
+- Apenas SOLIs com `dt_confirmacao` preenchida (autorizadas) sao consideradas
+
+**Importacao**: `python database/importar_solis.py [caminho_csv]`
+- CSV padrao: `Solis Abertas_Geral_DD_MM_AA.csv`
+- TRUNCATE + INSERT a cada importacao (posicao atualizada)
+
+**Regras de Negocio**:
+1. **Estoque origem**: Subtrair `qtde_soli` do estoque disponivel (mercadoria vai sair)
+2. **Estoque destino**: Somar `qtde_soli` ao estoque em transito (mercadoria vai chegar)
+3. **Bloqueio V25**: Nao sugerir transferencia entre lojas que ja tem SOLI para o item
+4. **Bloqueio V29/V30**: Nao distribuir CD->loja se ja existe SOLI CD->loja para o item
+
+**Ponto de injecao**: Apos `precarregar_estoque()`, antes do loop de calculo.
+Ajusta `processador._cache_estoque` diretamente (sem alterar o core).
+
+**Campos adicionados nos resultados**:
+- `solis_abertas`: lista de (origem, destino, qtde) para o item/loja
+- `soli_saida`: total de unidades saindo da loja por SOLI
+- `soli_entrada`: total de unidades entrando na loja por SOLI
 
 ### 6. Rateio Proporcional de Demanda (V14)
 
@@ -600,6 +631,10 @@ N+1. Consolidado (todos itens × todas fases)
 - `estoque_posicao_atual` - Posicao atual de estoque por loja
 - `situacao_compra_itens` - Status de compra por item/loja (NC, FL, CO, EN, FF)
 
+### Tabelas de Movimentacao
+- `solis_abertas` - SOLIs autorizadas de movimentacao entre filiais/CDs
+- `oportunidades_transferencia` - Sugestoes de transferencia entre lojas (V25/V29)
+
 ### Tabelas de Auditoria
 - `auditoria_conformidade` - Log de validacoes do checklist
 
@@ -765,6 +800,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V43b: dias_ate_entrega na Compra Planejada - V37 usa dias reais ate entrega (nao lead_time) para projetar estoque; cobertura fixa (90d) = exatamente 90 dias pos-entrega (v6.24)
 - V44: Documentacao semantica cobertura fixa vs ABC - cobertura fixa (90d) com V37 garante 90d pos-entrega; modo ABC (LT+ciclo+seg) mantem semantica historica (v6.24)
 - V45: Remover delay operacional 5d do lead time + transit time CD 10->15d - delay incorporado ao transit CD; pedido direto loja usa LT real do fornecedor (v6.25)
+- V46: SOLIs abertas no calculo de pedido - ajusta estoque (origem-destino), bloqueia V25/V29/V30 onde SOLI existe (v6.26)
 
 ## Documentacao Complementar
 
@@ -780,4 +816,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.25)
+**Ultima atualizacao**: Marco 2026 (v6.26)

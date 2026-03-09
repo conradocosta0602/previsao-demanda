@@ -101,6 +101,7 @@ class ValidadorConformidade:
             ('V37', 'Consumo Lead Time no Pedido', self._verificar_consumo_lead_time_pedido),
             ('V43', 'Fase 1 Negociacao via API + dias_ate_entrega', self._verificar_fase1_negociacao_api),
             ('V45', 'Delay Operacional Removido + Transit CD 15d', self._verificar_delay_removido_transit_15),
+            ('V46', 'SOLIs Abertas no Calculo de Pedido', self._verificar_solis_abertas),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -3423,6 +3424,127 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V45: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    # =========================================================================
+    # V46: SOLIs Abertas no Calculo de Pedido
+    # =========================================================================
+
+    def _verificar_solis_abertas(self):
+        """
+        V46: Verifica que SOLIs abertas sao integradas ao calculo de pedido.
+
+        Testes:
+        1. Tabela solis_abertas existe e tem dados
+        2. Codigo no pedido_fornecedor.py carrega SOLIs e ajusta estoque
+        3. Bloqueio V25 implementado (solis_bloqueio no matching de doadores)
+        4. Bloqueio V29/V30 implementado (solis_bloqueio na distribuicao CD)
+        """
+        try:
+            import traceback
+            resultados = []
+            testes_ok = 0
+            testes_total = 4
+
+            # Teste 1: Tabela solis_abertas existe e tem dados
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM solis_abertas WHERE dt_confirmacao IS NOT NULL")
+                total_solis = cursor.fetchone()[0]
+                teste_1_ok = total_solis > 0
+                resultados.append({
+                    'teste': 'Tabela solis_abertas com dados confirmados',
+                    'total_solis': total_solis,
+                    'correto': teste_1_ok
+                })
+                if teste_1_ok:
+                    testes_ok += 1
+            except Exception:
+                resultados.append({
+                    'teste': 'Tabela solis_abertas existe',
+                    'correto': False,
+                    'erro': 'Tabela nao encontrada'
+                })
+
+            # Teste 2: Codigo de ajuste de estoque no blueprint
+            try:
+                import os
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                pedido_path = os.path.join(base_dir, 'app', 'blueprints', 'pedido_fornecedor.py')
+                with open(pedido_path, 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                teste_2_ok = (
+                    'solis_por_item' in source and
+                    'solis_bloqueio' in source and
+                    'solis_abertas' in source and
+                    'estoque_disponivel' in source
+                )
+                resultados.append({
+                    'teste': 'Ajuste de estoque com SOLIs no blueprint',
+                    'solis_por_item': 'solis_por_item' in source,
+                    'solis_bloqueio': 'solis_bloqueio' in source,
+                    'correto': teste_2_ok
+                })
+                if teste_2_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Codigo de ajuste de estoque',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            # Teste 3: Bloqueio V25 no matching de doadores
+            try:
+                teste_3_ok = 'par_soli_v25' in source and 'solis_bloqueio' in source
+                resultados.append({
+                    'teste': 'Bloqueio V25 - transferencias com SOLI existente',
+                    'par_soli_v25': 'par_soli_v25' in source,
+                    'correto': teste_3_ok
+                })
+                if teste_3_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Bloqueio V25',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            # Teste 4: Bloqueio V29/V30 na distribuicao CD
+            try:
+                teste_4_ok = 'par_soli_cd' in source and 'solis_bloqueio' in source
+                resultados.append({
+                    'teste': 'Bloqueio V29/V30 - distribuicao CD com SOLI existente',
+                    'par_soli_cd': 'par_soli_cd' in source,
+                    'correto': teste_4_ok
+                })
+                if teste_4_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Bloqueio V29/V30',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            detalhes = {
+                'testes': resultados,
+                'testes_ok': testes_ok,
+                'testes_total': testes_total
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V46 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V46 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V46 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V46: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 
