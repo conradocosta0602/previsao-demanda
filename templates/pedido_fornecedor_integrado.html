@@ -1464,7 +1464,6 @@
 
             // V47: Painel de parametros do calculo
             const params = data.parametros_calculo || {};
-            if (params._debug) console.log('[V47 DEBUG]', params._debug);
             const paramEl = document.getElementById('parametrosCalculo');
             if (params.lead_time_medio && paramEl) {
                 paramEl.innerHTML = `
