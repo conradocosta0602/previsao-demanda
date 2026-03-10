@@ -1830,9 +1830,71 @@ def api_pedido_fornecedor_integrado():
             'produtos_com_transferencia': len(set(t['cod_produto'] for t in transferencias_sugeridas) | set(t.get('cod_produto', 0) for t in transferencias_cd)) if (transferencias_sugeridas or transferencias_cd) else 0
         }
 
+        # V47: Parametros agregados do calculo (media ponderada por valor do pedido)
+        parametros_calculo = {}
+        if itens_pedido:
+            pesos = []
+            lts, ciclos, segs, coberturas_alvo, ess = [], [], [], [], []
+            # Cobertura real: Estoque Total / Demanda Diaria Total
+            estoque_total_atual = 0
+            demanda_diaria_total = 0
+            # Cobertura pos-entrega: projeta estoque na data de entrega + pedido
+            # Assim o usuario ve quantos dias de estoque tera APOS receber o pedido
+            estoque_total_pos = 0
+
+            for item in itens_pedido:
+                peso = max(item.get('valor_pedido', 0), 1)
+                pesos.append(peso)
+                dc = item.get('detalhes_cobertura', {})
+                lts.append(dc.get('lead_time_dias', 0))
+                ciclos.append(dc.get('ciclo_pedido_dias', 7))
+                segs.append(dc.get('seguranca_abc_dias', 0))
+                coberturas_alvo.append(item.get('cobertura_necessaria_dias', 0))
+                ess.append(float(item.get('estoque_seguranca', 0) or 0))
+                # Acumular para cobertura agregada
+                dd = float(item.get('demanda_prevista_diaria', 0) or 0)
+                demanda_diaria_total += dd
+                est_efetivo = float(item.get('estoque_efetivo', 0) or 0)
+                estoque_total_atual += est_efetivo
+                # Projetar estoque na data de entrega - ALINHADO COM V37:
+                # V37 desconta consumo apenas do estoque_disponivel (sem transito)
+                # Transito e mantido integralmente (chega antes/junto com o pedido)
+                est_disp = float(item.get('estoque_atual', 0) or 0)
+                est_transito = float(item.get('estoque_transito', 0) or 0)
+                lt_item = float(dc.get('lead_time_dias', 0) or 0)
+                consumo_lt = dd * lt_item
+                est_disp_projetado = max(0, est_disp - consumo_lt)
+                estoque_total_pos += est_disp_projetado + est_transito + float(item.get('quantidade_pedido', 0) or 0)
+
+            soma_pesos = sum(pesos) or 1
+            # Cobertura = Estoque / Demanda Diaria (formula padrao)
+            if demanda_diaria_total > 0:
+                cob_atual_real = round(estoque_total_atual / demanda_diaria_total, 1)
+                cob_pos_real = round(estoque_total_pos / demanda_diaria_total, 1)
+                # Sanitizar NaN/Inf
+                if math.isnan(cob_atual_real) or math.isinf(cob_atual_real):
+                    cob_atual_real = 0
+                if math.isnan(cob_pos_real) or math.isinf(cob_pos_real):
+                    cob_pos_real = 0
+            else:
+                cob_atual_real = 0
+                cob_pos_real = 0
+
+            parametros_calculo = {
+                'lead_time_medio': round(sum(l * p for l, p in zip(lts, pesos)) / soma_pesos, 1),
+                'ciclo_pedido': ciclos[0] if ciclos else 7,
+                'seguranca_abc_media': round(sum(s * p for s, p in zip(segs, pesos)) / soma_pesos, 1),
+                'cobertura_alvo_media': round(sum(c * p for c, p in zip(coberturas_alvo, pesos)) / soma_pesos, 1),
+                'cobertura_atual_real': cob_atual_real,
+                'cobertura_pos_pedido_real': cob_pos_real,
+                'es_medio': round(sum(e * p for e, p in zip(ess, pesos)) / soma_pesos, 1),
+                'total_itens_base': len(itens_pedido),
+            }
+
         return jsonify(converter_tipos_json({
             'success': True,
             'estatisticas': estatisticas,
+            'parametros_calculo': parametros_calculo,
             'agregacao_fornecedor': agregacao,
             'itens_pedido': itens_pedido,
             'itens_bloqueados': itens_bloqueados,

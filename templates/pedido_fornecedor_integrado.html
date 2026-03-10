@@ -255,6 +255,33 @@
             letter-spacing: 0.3px;
         }
 
+        /* V47: Painel de parametros do calculo */
+        .parametros-calculo {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+            padding: 10px 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        .parametros-calculo .param {
+            text-align: center;
+        }
+        .parametros-calculo .param .valor {
+            font-size: 1.05em;
+            font-weight: 600;
+            color: #495057;
+        }
+        .parametros-calculo .param .label {
+            font-size: 0.6em;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            margin-top: 1px;
+        }
+
         /* Fornecedor Card Redesign */
         .fornecedor-card {
             background: white;
@@ -745,6 +772,9 @@
             .resumo-metricas {
                 grid-template-columns: repeat(2, 1fr);
             }
+            .parametros-calculo {
+                grid-template-columns: repeat(3, 1fr);
+            }
         }
     </style>
 </head>
@@ -888,6 +918,7 @@
                         <div class="titulo">RESUMO DO PEDIDO</div>
                         <div class="fornecedor-nome" id="resumoTitulo">Carregando...</div>
                         <div class="resumo-metricas" id="resumoMetricas"></div>
+                        <div class="parametros-calculo" id="parametrosCalculo" style="display: none;"></div>
                     </div>
 
                     <!-- Lista de Fornecedores -->
@@ -1429,6 +1460,23 @@
                         <div class="label">Valor Total</div>
                     </div>
                 `;
+            }
+
+            // V47: Painel de parametros do calculo
+            const params = data.parametros_calculo || {};
+            if (params._debug) console.log('[V47 DEBUG]', params._debug);
+            const paramEl = document.getElementById('parametrosCalculo');
+            if (params.lead_time_medio && paramEl) {
+                paramEl.innerHTML = `
+                    <div class="param"><div class="valor">${params.lead_time_medio}d</div><div class="label">Lead Time</div></div>
+                    <div class="param"><div class="valor">${params.ciclo_pedido}d</div><div class="label">Ciclo</div></div>
+                    <div class="param"><div class="valor">+${params.seguranca_abc_media}d</div><div class="label">Seg. ABC</div></div>
+                    <div class="param"><div class="valor">${params.cobertura_alvo_media}d</div><div class="label">Cob. Alvo</div></div>
+                    <div class="param"><div class="valor">${params.cobertura_atual_real}d</div><div class="label">Cob. Atual</div></div>
+                    <div class="param"><div class="valor">${params.cobertura_pos_pedido_real}d</div><div class="label">Pos Entrega</div></div>
+                    <div class="param"><div class="valor">${params.es_medio} un</div><div class="label">ES Medio</div></div>
+                `;
+                paramEl.style.display = 'grid';
             }
 
             // Criar mapa de transferencias por produto (converter para string para comparacao consistente)
@@ -2113,6 +2161,22 @@
                     <div class="label">Valor Total</div>
                 </div>
             `;
+
+            // V47: Painel de parametros do calculo (visao Padrao de Compra)
+            const paramsPC = data.parametros_calculo || {};
+            const paramElPC = document.getElementById('parametrosCalculo');
+            if (paramsPC.lead_time_medio && paramElPC) {
+                paramElPC.innerHTML = `
+                    <div class="param"><div class="valor">${paramsPC.lead_time_medio}d</div><div class="label">Lead Time</div></div>
+                    <div class="param"><div class="valor">${paramsPC.ciclo_pedido}d</div><div class="label">Ciclo</div></div>
+                    <div class="param"><div class="valor">+${paramsPC.seguranca_abc_media}d</div><div class="label">Seg. ABC</div></div>
+                    <div class="param"><div class="valor">${paramsPC.cobertura_alvo_media}d</div><div class="label">Cob. Alvo</div></div>
+                    <div class="param"><div class="valor">${paramsPC.cobertura_atual_real}d</div><div class="label">Cob. Atual</div></div>
+                    <div class="param"><div class="valor">${paramsPC.cobertura_pos_pedido_real}d</div><div class="label">Pos Entrega</div></div>
+                    <div class="param"><div class="valor">${paramsPC.es_medio} un</div><div class="label">ES Medio</div></div>
+                `;
+                paramElPC.style.display = 'grid';
+            }
 
             // Cards de Destino
             let fornHtml = '';

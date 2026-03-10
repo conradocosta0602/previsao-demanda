@@ -1062,6 +1062,9 @@ def api_compra_planejada_calcular():
                 info['total_quantidade'] / max(info['multiplo_caixa'], 1)
             )
 
+        # V47: Parametros do calculo (da Fase 1 via API)
+        parametros_calculo = resp_data.get('parametros_calculo', {})
+
         return jsonify({
             'success': True,
             'fases': fases_resultado,
@@ -1072,6 +1075,7 @@ def api_compra_planejada_calcular():
                 'num_fases': len(fases_resultado),
                 'itens': list(consolidado_itens.values()),
             },
+            'parametros_calculo': parametros_calculo,
             'is_pedido_multiloja': is_pedido_multiloja,
             'is_destino_cd': is_destino_cd,
             'fornecedores': fornecedores_a_processar,

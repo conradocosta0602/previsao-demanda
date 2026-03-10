@@ -1,6 +1,11 @@
-# Sistema de Demanda e Reabastecimento v6.26
+# Sistema de Demanda e Reabastecimento v6.27
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.27 - Painel de Parametros do Calculo (Mar/2026):**
+- **V47 - Painel de parametros**: Exibe medias ponderadas dos parametros usados no calculo (Lead Time, Ciclo, Seg. ABC, Cobertura Alvo/Atual/Pos, ES Medio)
+- Presente na Tela de Pedido ao Fornecedor e Compra Planejada (Fase 1)
+- Medias ponderadas pelo valor do pedido (itens de maior valor tem mais peso)
 
 **Novidades v6.26 - SOLIs Abertas no Calculo de Pedido (Mar/2026):**
 - **V46 - SOLIs abertas**: Solicitacoes manuais de movimentacao de estoque (SOLIs) sao integradas ao calculo de pedido

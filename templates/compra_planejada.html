@@ -141,6 +141,20 @@
         .metrica .valor { font-size: 1.3em; font-weight: 700; }
         .metrica .label { font-size: 0.7em; opacity: 0.7; margin-top: 2px; }
 
+        /* V47: Painel de parametros do calculo */
+        .parametros-calculo-cp {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.15);
+            border-radius: 8px;
+        }
+        .parametros-calculo-cp .param { text-align: center; }
+        .parametros-calculo-cp .param .valor { font-size: 1em; font-weight: 600; }
+        .parametros-calculo-cp .param .label { font-size: 0.55em; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 1px; }
+
         /* Fases cards */
         .fase-card {
             background: white; border-radius: 12px;
@@ -212,6 +226,7 @@
             .main-layout { grid-template-columns: 1fr; }
             .sidebar { position: static; }
             .resumo-metricas { grid-template-columns: repeat(2, 1fr); }
+            .parametros-calculo-cp { grid-template-columns: repeat(3, 1fr); }
         }
     </style>
 </head>
@@ -748,6 +763,21 @@
                     <div class="label">VALOR TOTAL</div>
                 </div>
             </div>
+            ${(() => {
+                const p = data.parametros_calculo || {};
+                if (!p.lead_time_medio) return '';
+                return `
+                    <div class="parametros-calculo-cp">
+                        <div class="param"><div class="valor">${p.lead_time_medio}d</div><div class="label">Lead Time</div></div>
+                        <div class="param"><div class="valor">${p.ciclo_pedido}d</div><div class="label">Ciclo</div></div>
+                        <div class="param"><div class="valor">+${p.seguranca_abc_media}d</div><div class="label">Seg. ABC</div></div>
+                        <div class="param"><div class="valor">${p.cobertura_alvo_media}d</div><div class="label">Cob. Alvo</div></div>
+                        <div class="param"><div class="valor">${p.cobertura_atual_real}d</div><div class="label">Cob. Atual</div></div>
+                        <div class="param"><div class="valor">${p.cobertura_pos_pedido_real}d</div><div class="label">Pos Entrega</div></div>
+                        <div class="param"><div class="valor">${p.es_medio} un</div><div class="label">ES Medio</div></div>
+                    </div>
+                `;
+            })()}
         `;
 
         // Fases
