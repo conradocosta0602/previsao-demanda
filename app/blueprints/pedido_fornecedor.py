@@ -1835,13 +1835,14 @@ def api_pedido_fornecedor_integrado():
         if itens_pedido:
             pesos = []
             lts, ciclos, segs, coberturas_alvo, ess = [], [], [], [], []
-            # Cobertura real: Estoque Total / Demanda Diaria Total
+            # Cobertura TOTAL do fornecedor: inclui itens_pedido + itens_ok
+            # Itens OK tem estoque suficiente e nao precisam de pedido,
+            # mas fazem parte da cobertura geral do fornecedor
             estoque_total_atual = 0
             demanda_diaria_total = 0
-            # Cobertura pos-entrega: projeta estoque na data de entrega + pedido
-            # Assim o usuario ve quantos dias de estoque tera APOS receber o pedido
             estoque_total_pos = 0
 
+            # Parametros ponderados: apenas itens_pedido (sao os parametros do pedido)
             for item in itens_pedido:
                 peso = max(item.get('valor_pedido', 0), 1)
                 pesos.append(peso)
@@ -1851,7 +1852,16 @@ def api_pedido_fornecedor_integrado():
                 segs.append(dc.get('seguranca_abc_dias', 0))
                 coberturas_alvo.append(item.get('cobertura_necessaria_dias', 0))
                 ess.append(float(item.get('estoque_seguranca', 0) or 0))
-                # Acumular para cobertura agregada
+
+            # Cobertura: itens_pedido + itens_ok (total do fornecedor)
+            # Montar dict de cessoes V25 (doador -> qtd cedida) para subtrair do estoque
+            cessoes_v25 = {}  # {(codigo, cod_loja): qtd_total_cedida}
+            for t in transferencias_sugeridas:
+                chave = (t.get('cod_produto'), t.get('loja_origem'))
+                cessoes_v25[chave] = cessoes_v25.get(chave, 0) + float(t.get('qtd_sugerida', 0) or 0)
+
+            todos_itens = list(itens_pedido) + list(itens_ok)
+            for item in todos_itens:
                 dd = float(item.get('demanda_prevista_diaria', 0) or 0)
                 demanda_diaria_total += dd
                 est_efetivo = float(item.get('estoque_efetivo', 0) or 0)
@@ -1859,12 +1869,23 @@ def api_pedido_fornecedor_integrado():
                 # Projetar estoque na data de entrega - ALINHADO COM V37:
                 # V37 desconta consumo apenas do estoque_disponivel (sem transito)
                 # Transito e mantido integralmente (chega antes/junto com o pedido)
+                dc = item.get('detalhes_cobertura', {})
                 est_disp = float(item.get('estoque_atual', 0) or 0)
                 est_transito = float(item.get('estoque_transito', 0) or 0)
                 lt_item = float(dc.get('lead_time_dias', 0) or 0)
                 consumo_lt = dd * lt_item
                 est_disp_projetado = max(0, est_disp - consumo_lt)
-                estoque_total_pos += est_disp_projetado + est_transito + float(item.get('quantidade_pedido', 0) or 0)
+                # Transferencias: somar recebimentos e subtrair cessoes
+                # Recebimentos: CD->loja (V29/V30) e loja->loja (V25)
+                transf_receber = 0
+                for t in item.get('transferencias_cd', []):
+                    transf_receber += float(t.get('qtd', 0) or 0)
+                for t in item.get('transferencias_receber', []):
+                    transf_receber += float(t.get('qtd', 0) or 0)
+                # Cessoes V25: doador cede estoque para outra loja
+                chave_cessao = (item.get('codigo'), item.get('cod_loja', item.get('cod_empresa')))
+                transf_ceder = cessoes_v25.get(chave_cessao, 0)
+                estoque_total_pos += est_disp_projetado + est_transito + float(item.get('quantidade_pedido', 0) or 0) + transf_receber - transf_ceder
 
             soma_pesos = sum(pesos) or 1
             # Cobertura = Estoque / Demanda Diaria (formula padrao)
@@ -1888,7 +1909,7 @@ def api_pedido_fornecedor_integrado():
                 'cobertura_atual_real': cob_atual_real,
                 'cobertura_pos_pedido_real': cob_pos_real,
                 'es_medio': round(sum(e * p for e, p in zip(ess, pesos)) / soma_pesos, 1),
-                'total_itens_base': len(itens_pedido),
+                'total_itens_base': len(todos_itens),
             }
 
         return jsonify(converter_tipos_json({

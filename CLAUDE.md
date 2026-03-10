@@ -144,7 +144,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V43: Fase 1 Negociacao via API + dias_ate_entrega para cobertura pos-entrega correta
 - V44: Documentacao semantica cobertura fixa (90d) = pos-entrega com V37
 - V46: SOLIs abertas integradas ao calculo de pedido - ajuste de estoque e bloqueio de transferencias
-- V47: Painel de parametros do calculo de pedido - transparencia dos parametros usados (LT, ciclo, seg. ABC, cobertura, ES)
+- V47: Painel de parametros do calculo de pedido - transparencia dos parametros usados (LT, ciclo, seg. ABC, cobertura, ES); cobertura total do fornecedor (itens_pedido + itens_ok) com transferencias (V25/V29/V30) contabilizadas na projecao
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -802,7 +802,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V44: Documentacao semantica cobertura fixa vs ABC - cobertura fixa (90d) com V37 garante 90d pos-entrega; modo ABC (LT+ciclo+seg) mantem semantica historica (v6.24)
 - V45: Remover delay operacional 5d do lead time + transit time CD 10->15d - delay incorporado ao transit CD; pedido direto loja usa LT real do fornecedor (v6.25)
 - V46: SOLIs abertas no calculo de pedido - ajusta estoque (origem-destino), bloqueia V25/V29/V30 onde SOLI existe (v6.26)
-- V47: Painel de parametros do calculo - exibe medias ponderadas de LT, ciclo, seg. ABC, cobertura atual e pos-entrega, ES na tela de pedido e compra planejada; cobertura pos-entrega alinhada com V37 (desconta consumo LT apenas do disponivel, preserva transito) (v6.27)
+- V47: Painel de parametros do calculo - medias ponderadas de LT, ciclo, seg. ABC, cobertura e ES; cobertura total fornecedor (itens_pedido + itens_ok) com transferencias V25/V29/V30 na projecao; V37 alinhado (consumo LT so do disponivel, preserva transito) (v6.27)
 
 ## Documentacao Complementar
 
