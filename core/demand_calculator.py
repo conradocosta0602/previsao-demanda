@@ -898,6 +898,98 @@ class DemandCalculator:
         return melhor_metodo, demanda, desvio, mae_melhor
 
     @staticmethod
+    def backtesting_universal(vendas: List[float], min_periodos: int = 8) -> Tuple[str, float, float, Dict]:
+        """
+        V48: Backtesting universal - testa TODOS os 6 metodos por walk-forward validation.
+        Seleciona o metodo com menor WMAPE.
+
+        Args:
+            vendas: Serie temporal (minimo 8 periodos para validacao)
+            min_periodos: Minimo de periodos para backtesting
+
+        Returns:
+            (metodo_escolhido, demanda, desvio, metadata)
+        """
+        if len(vendas) < min_periodos:
+            # Poucos dados para backtesting — fallback para heuristica
+            demanda, desvio, meta = DemandCalculator.calcular_demanda_inteligente(vendas)
+            metodo = meta.get('metodo_usado', 'sma')
+            return metodo, demanda, desvio, {
+                'metodo_selecao': 'fallback_serie_curta',
+                'metodo_usado': metodo,
+                **{k: v for k, v in meta.items() if k != 'metodo_usado'}
+            }
+
+        # Reservar ultimos 30% para validacao (min 2, max 6)
+        n_val = max(2, min(6, int(len(vendas) * 0.3)))
+        treino = vendas[:-n_val]
+
+        if len(treino) < 4:
+            demanda, desvio = DemandCalculator.calcular_demanda_sma(vendas)
+            return 'sma', demanda, desvio, {'metodo_selecao': 'fallback_treino_curto'}
+
+        # 6 metodos a testar
+        metodos = {
+            'sma': lambda v: DemandCalculator.calcular_demanda_sma(v),
+            'wma': lambda v: DemandCalculator.calcular_demanda_wma(v),
+            'ema': lambda v: DemandCalculator.calcular_demanda_ema(v),
+            'tendencia': lambda v: DemandCalculator.calcular_demanda_tendencia(v),
+            'sazonal': lambda v: DemandCalculator.calcular_demanda_sazonal(v),
+            'tsb': lambda v: DemandCalculator.calcular_demanda_tsb(v),
+        }
+
+        resultados = {}
+
+        for nome, func in metodos.items():
+            try:
+                erros_abs = []
+                reais = []
+
+                # Walk-forward: treinar com [0:i], prever [i], avaliar
+                for i in range(len(treino), len(vendas)):
+                    dados_treino = vendas[:i]
+
+                    # Requisitos minimos por metodo
+                    if nome == 'sazonal' and len(dados_treino) < 12:
+                        continue  # Precisa de pelo menos 1 ciclo completo
+                    if nome == 'tendencia' and len(dados_treino) < 4:
+                        continue
+
+                    previsao, _ = func(dados_treino)
+                    valor_real = vendas[i]
+
+                    if previsao is not None and not np.isnan(previsao):
+                        erros_abs.append(abs(valor_real - previsao))
+                        reais.append(valor_real)
+
+                if erros_abs and sum(abs(r) for r in reais if r != 0) > 0:
+                    soma_reais = sum(abs(r) for r in reais if r != 0)
+                    wmape = sum(erros_abs) / soma_reais * 100
+                    mae = float(np.mean(erros_abs))
+                    resultados[nome] = {'wmape': round(wmape, 2), 'mae': round(mae, 2)}
+            except Exception:
+                continue  # Metodo falhou, pular
+
+        if not resultados:
+            # Nenhum metodo funcionou — fallback
+            demanda, desvio = DemandCalculator.calcular_demanda_sma(vendas)
+            return 'sma', demanda, desvio, {'metodo_selecao': 'fallback_nenhum_valido'}
+
+        # Selecionar metodo com menor WMAPE
+        melhor = min(resultados, key=lambda m: resultados[m]['wmape'])
+        demanda, desvio = metodos[melhor](vendas)
+
+        metadata = {
+            'metodo_selecao': 'backtesting_universal',
+            'wmape_melhor': resultados[melhor]['wmape'],
+            'mae_melhor': resultados[melhor]['mae'],
+            'metodos_testados': len(resultados),
+            'ranking': {k: v['wmape'] for k, v in sorted(resultados.items(), key=lambda x: x[1]['wmape'])}
+        }
+
+        return melhor, demanda, desvio, metadata
+
+    @staticmethod
     def classificar_padrao_demanda(vendas: List[float]) -> Dict[str, any]:
         """
         Classifica o padrão de demanda para escolher o melhor método
@@ -1034,7 +1126,20 @@ class DemandCalculator:
                 demanda, desvio = DemandCalculator.calcular_demanda_sma(vendas)
                 return demanda, desvio, {'metodo_usado': 'sma', 'erro': 'metodo_invalido'}
 
-        # MODO AUTOMÁTICO - Classificar e escolher melhor método
+        # V48: MODO AUTOMÁTICO - Backtesting universal
+        # Se serie suficiente (>=8 periodos), testar todos os 6 metodos
+        if len(vendas) >= 8:
+            metodo_bt, demanda, desvio, meta_bt = DemandCalculator.backtesting_universal(vendas)
+            metadata = {
+                'metodo_usado': metodo_bt,
+                'modo': 'backtesting_universal',
+                'num_periodos': len(vendas),
+                'ultima_venda': vendas[-1] if vendas else 0,
+                **meta_bt
+            }
+            return demanda, desvio, metadata
+
+        # Fallback: serie curta (<8 periodos), usar heuristica original
         classificacao = DemandCalculator.classificar_padrao_demanda(vendas)
         metodo_escolhido = classificacao['metodo_recomendado']
 

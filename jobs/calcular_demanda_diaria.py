@@ -393,6 +393,7 @@ def calcular_demanda_item(
     """
     Calcula demanda pre-calculada para um item.
     Retorna lista de registros para os proximos 12 meses.
+    V48: Deteccao de outliers antes do calculo.
     """
     # Buscar historico
     serie, meta_hist = buscar_historico_item(conn, cod_produto, cnpj_fornecedor)
@@ -401,9 +402,21 @@ def calcular_demanda_item(
         # Historico insuficiente
         return []
 
-    # Calcular demanda usando DemandCalculator (mesmo da tela de demanda)
+    # V48: Deteccao e tratamento de outliers ANTES do calculo
+    serie_limpa = serie
+    if len(serie) >= 30:
+        try:
+            from core.outlier_detector import AutoOutlierDetector
+            detector = AutoOutlierDetector()
+            resultado_outliers = detector.analyze_and_clean(serie)
+            if resultado_outliers['outliers_count'] > 0:
+                serie_limpa = resultado_outliers['cleaned_data']
+        except Exception:
+            pass
+
+    # Calcular demanda usando DemandCalculator (com serie limpa)
     demanda_total, desvio_total, meta_calc = DemandCalculator.calcular_demanda_diaria_unificada(
-        vendas_diarias=serie,
+        vendas_diarias=serie_limpa,
         dias_periodo=30,  # Base mensal
         granularidade_exibicao='mensal'
     )
@@ -634,13 +647,33 @@ def calcular_demanda_item_com_cache(
     """
     Calcula demanda para um item usando historico pre-carregado.
     OTIMIZADO: Nao faz query no banco, usa dados do cache.
+    V48: Deteccao de outliers antes do calculo.
     """
     if not serie or len(serie) < 7:
         return []
 
-    # Calcular demanda usando DemandCalculator
+    # V48: Deteccao e tratamento de outliers ANTES do calculo
+    outlier_info = None
+    serie_limpa = serie
+    if len(serie) >= 30:  # Minimo para deteccao confiavel (1 mes de dados diarios)
+        try:
+            from core.outlier_detector import AutoOutlierDetector
+            detector = AutoOutlierDetector()
+            resultado_outliers = detector.analyze_and_clean(serie)
+            if resultado_outliers['outliers_count'] > 0:
+                serie_limpa = resultado_outliers['cleaned_data']
+                outlier_info = {
+                    'outliers_removidos': resultado_outliers['outliers_count'],
+                    'metodo_deteccao': resultado_outliers['method_used'],
+                    'tratamento': resultado_outliers['treatment'],
+                    'confianca': resultado_outliers['confidence']
+                }
+        except Exception:
+            pass  # Falha no detector nao deve bloquear o calculo
+
+    # Calcular demanda usando DemandCalculator (com serie limpa)
     demanda_total, desvio_total, meta_calc = DemandCalculator.calcular_demanda_diaria_unificada(
-        vendas_diarias=serie,
+        vendas_diarias=serie_limpa,
         dias_periodo=30,
         granularidade_exibicao='mensal'
     )

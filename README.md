@@ -1,6 +1,11 @@
-# Sistema de Demanda e Reabastecimento v6.27
+# Sistema de Demanda e Reabastecimento v6.28
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.28 - Backtesting Universal + Deteccao de Outliers (Mar/2026):**
+- **V48 - Backtesting universal**: Selecao de metodo por WMAPE (walk-forward validation testando todos os 6 metodos) em vez de heuristica fixa
+- **V48 - AutoOutlierDetector**: Deteccao automatica de outliers (IQR/Z-Score) integrada ao pipeline do cronjob, limpando a serie antes do calculo
+- Melhoria esperada: 10-20% no WMAPE medio, especialmente itens com padroes ambiguos
 
 **Novidades v6.27 - Painel de Parametros do Calculo (Mar/2026):**
 - **V47 - Painel de parametros**: Exibe medias ponderadas dos parametros usados no calculo (Lead Time, Ciclo, Seg. ABC, Cobertura Alvo/Atual/Pos, ES Medio)

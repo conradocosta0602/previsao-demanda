@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.27** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.28** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -145,6 +145,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V44: Documentacao semantica cobertura fixa (90d) = pos-entrega com V37
 - V46: SOLIs abertas integradas ao calculo de pedido - ajuste de estoque e bloqueio de transferencias
 - V47: Painel de parametros do calculo de pedido - transparencia dos parametros usados (LT, ciclo, seg. ABC, cobertura, ES); cobertura total do fornecedor (itens_pedido + itens_ok) com transferencias (V25/V29/V30) contabilizadas na projecao
+- V48: Backtesting universal + deteccao de outliers - selecao de metodo por WMAPE (walk-forward 6 metodos) e AutoOutlierDetector integrado ao pipeline (IQR/Z-Score antes do calculo)
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -803,6 +804,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V45: Remover delay operacional 5d do lead time + transit time CD 10->15d - delay incorporado ao transit CD; pedido direto loja usa LT real do fornecedor (v6.25)
 - V46: SOLIs abertas no calculo de pedido - ajusta estoque (origem-destino), bloqueia V25/V29/V30 onde SOLI existe (v6.26)
 - V47: Painel de parametros do calculo - medias ponderadas de LT, ciclo, seg. ABC, cobertura e ES; cobertura total fornecedor (itens_pedido + itens_ok) com transferencias V25/V29/V30 na projecao; V37 alinhado (consumo LT so do disponivel, preserva transito) (v6.27)
+- V48: Backtesting universal + deteccao de outliers - selecao de metodo por WMAPE (walk-forward validation testando todos os 6 metodos) em vez de heuristica; AutoOutlierDetector (IQR/Z-Score) integrado ao pipeline do cronjob (v6.28)
 
 ## Documentacao Complementar
 
@@ -818,4 +820,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.27)
+**Ultima atualizacao**: Marco 2026 (v6.28)
