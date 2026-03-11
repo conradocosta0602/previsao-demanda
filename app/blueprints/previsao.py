@@ -863,6 +863,11 @@ def _api_gerar_previsao_banco_v2_interno():
             chave_metodo = metodo_usado.split('+')[-1] if '+' in metodo_usado else metodo_usado
             metodo_exibicao = mapeamento_metodos.get(chave_metodo, mapeamento_metodos.get(metodo_usado, chave_metodo.upper()))
 
+            # Se algum periodo tem ajuste manual, indicar no metodo
+            tem_algum_ajuste = any(p.get('ajuste_manual') for p in previsao_item_periodos)
+            if tem_algum_ajuste:
+                metodo_exibicao = 'Ajuste Manual'
+
             # Calcular variacao percentual
             variacao_pct = 0
             if total_ano_anterior_item > 0:
