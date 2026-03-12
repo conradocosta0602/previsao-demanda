@@ -111,8 +111,14 @@
         .menu-card.compra-planejada { border-left-color: #7c3aed; }
         .menu-card.compra-planejada .card-icon { background: rgba(124, 58, 237, 0.15); }
 
+        .menu-card.acuracia { border-left-color: #3b82f6; }
+        .menu-card.acuracia .card-icon { background: rgba(59, 130, 246, 0.15); }
+
         .menu-card.cadastros { border-left-color: #64748b; }
         .menu-card.cadastros .card-icon { background: rgba(100, 116, 139, 0.15); }
+
+        .menu-card.saude { border-left-color: #dc2626; }
+        .menu-card.saude .card-icon { background: rgba(220, 38, 38, 0.15); }
 
         .menu-footer {
             background: rgba(255, 255, 255, 0.95);
@@ -219,12 +225,30 @@
             </div>
         </a>
 
+        <!-- Acuracia de Previsao -->
+        <a href="/acuracia" class="menu-card acuracia">
+            <div class="card-icon">&#x1F3AF;</div>
+            <div class="card-info">
+                <h2>Acuracia de Previsao</h2>
+                <p>Compare previsoes com vendas reais. WMAPE e BIAS por fornecedor, categoria e curva ABC</p>
+            </div>
+        </a>
+
         <!-- Central de Parametros de Fornecedor -->
         <a href="/central-parametros-fornecedor" class="menu-card cadastros">
             <div class="card-icon">⚙️</div>
             <div class="card-info">
                 <h2>Central de Parametros</h2>
                 <p>Consulte e edite Lead Time, Ciclo de Pedido, Faturamento Minimo e veja itens por fornecedor</p>
+            </div>
+        </a>
+
+        <!-- Saude do Sistema -->
+        <a href="/saude" class="menu-card saude">
+            <div class="card-icon">🩺</div>
+            <div class="card-info">
+                <h2>Saude do Sistema</h2>
+                <p>Painel de conformidade metodologica. Acompanhe as 33 verificacoes automaticas e identifique falhas</p>
             </div>
         </a>
     </main>

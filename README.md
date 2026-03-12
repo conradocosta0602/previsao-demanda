@@ -1,6 +1,13 @@
-# Sistema de Demanda e Reabastecimento v6.28
+# Sistema de Demanda e Reabastecimento v6.29
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.29 - Tela de Acuracia de Previsao (Mar/2026):**
+- **V49 - Acuracia de Previsao**: Dashboard comparando previsao vs vendas reais com WMAPE, BIAS e MAE
+- Drill-down por fornecedor, categoria, curva ABC e item individual
+- Evolucao temporal mensal (grafico dual-axis WMAPE + BIAS)
+- Distribuicao por faixa de acuracia (donut chart: Excelente a Muito Fraca)
+- Filtros por filial, fornecedor, categoria, linha e curva ABC
 
 **Novidades v6.28 - Backtesting Universal + Deteccao de Outliers (Mar/2026):**
 - **V48 - Backtesting universal**: Selecao de metodo por WMAPE (walk-forward validation testando todos os 6 metodos) em vez de heuristica fixa

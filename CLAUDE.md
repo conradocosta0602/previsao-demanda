@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.28** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.29** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -21,6 +21,7 @@ previsao-demanda/
 │   │   ├── pedido_fornecedor.py  # API de pedido integrado
 │   │   ├── compra_planejada.py   # API de compra planejada (forward buying)
 │   │   ├── demanda_job.py    # API de demanda pre-calculada
+│   │   ├── acuracia.py       # API de acuracia de previsao (previsto vs realizado)
 │   │   └── validacao.py      # API de checklist de conformidade
 │   └── utils/
 │       ├── db_connection.py  # Conexao PostgreSQL
@@ -146,6 +147,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V46: SOLIs abertas integradas ao calculo de pedido - ajuste de estoque e bloqueio de transferencias
 - V47: Painel de parametros do calculo de pedido - transparencia dos parametros usados (LT, ciclo, seg. ABC, cobertura, ES); cobertura total do fornecedor (itens_pedido + itens_ok) com transferencias (V25/V29/V30) contabilizadas na projecao
 - V48: Backtesting universal + deteccao de outliers - selecao de metodo por WMAPE (walk-forward 6 metodos) e AutoOutlierDetector integrado ao pipeline (IQR/Z-Score antes do calculo)
+- V49: Tela de Acuracia de Previsao - dashboard previsto vs realizado com WMAPE, BIAS e MAE; drill-down por fornecedor, categoria, curva ABC e item; evolucao temporal e distribuicao por faixa
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -596,6 +598,42 @@ N+1. Consolidado (todos itens × todas fases)
 | `/api/compra_planejada/exportar` | POST | Exporta Excel |
 | `/api/compra_planejada/lead_time` | GET | Lead time para data padrao |
 
+### 14. Acuracia de Previsao (V49)
+
+**Arquivos**: `app/blueprints/acuracia.py`, `static/js/acuracia.js`, `templates/acuracia.html`
+
+**Rota**: `/acuracia`
+
+Dashboard de comparacao sistematica entre previsao (demanda_pre_calculada) e vendas reais
+(historico_vendas_diario), com metricas WMAPE, BIAS e MAE.
+
+**Metricas**:
+```
+WMAPE = SUM(|realizado - previsto|) / SUM(realizado) × 100
+BIAS% = SUM(previsto - realizado) / SUM(realizado) × 100
+MAE   = AVG(|realizado - previsto|)
+```
+
+**Faixas WMAPE**: <10% Excelente, 10-20% Boa, 20-30% Aceitavel, 30-50% Fraca, >50% Muito Fraca
+
+**Fonte de dados**: Query direta JOIN `demanda_pre_calculada` × `historico_vendas_diario`.
+Demanda e consolidada (cod_empresa=NULL), vendas sao agregadas por item antes do JOIN.
+
+**Filtros**: Fornecedor, Categoria, Linha, Filial, Curva ABC, Periodo (3/6/12 meses)
+
+**Agregacoes de ranking**: Fornecedor, Categoria, Curva ABC, Item (com paginacao)
+
+**Grafico evolucao**: Dual axis Chart.js (WMAPE esquerdo, BIAS direito) + donut distribuicao
+
+**APIs**:
+
+| Endpoint | Metodo | Descricao |
+|----------|--------|-----------|
+| `/api/acuracia/filtros` | GET | Opcoes de filtro |
+| `/api/acuracia/resumo` | GET | Cards WMAPE, BIAS, MAE + distribuicao |
+| `/api/acuracia/evolucao` | GET | Serie temporal mensal |
+| `/api/acuracia/ranking` | GET | Ranking drill-down por agregacao |
+
 ## APIs Importantes
 
 | Endpoint | Metodo | Descricao |
@@ -611,6 +649,10 @@ N+1. Consolidado (todos itens × todas fases)
 | `/api/compra_planejada/calcular` | POST | Calcula compra planejada (forward buying) |
 | `/api/compra_planejada/exportar` | POST | Exporta compra planejada para Excel |
 | `/api/compra_planejada/lead_time` | GET | Lead time para data padrao de entrega |
+| `/api/acuracia/filtros` | GET | Opcoes de filtro (fornecedores, categorias, curvas) |
+| `/api/acuracia/resumo` | GET | Cards WMAPE, BIAS, MAE + distribuicao por faixa |
+| `/api/acuracia/evolucao` | GET | Serie temporal mensal WMAPE + BIAS |
+| `/api/acuracia/ranking` | GET | Ranking drill-down por agregacao |
 
 ## Tabelas Principais
 
@@ -805,6 +847,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V46: SOLIs abertas no calculo de pedido - ajusta estoque (origem-destino), bloqueia V25/V29/V30 onde SOLI existe (v6.26)
 - V47: Painel de parametros do calculo - medias ponderadas de LT, ciclo, seg. ABC, cobertura e ES; cobertura total fornecedor (itens_pedido + itens_ok) com transferencias V25/V29/V30 na projecao; V37 alinhado (consumo LT so do disponivel, preserva transito) (v6.27)
 - V48: Backtesting universal + deteccao de outliers - selecao de metodo por WMAPE (walk-forward validation testando todos os 6 metodos) em vez de heuristica; AutoOutlierDetector (IQR/Z-Score) integrado ao pipeline do cronjob (v6.28)
+- V49: Tela de Acuracia de Previsao - dashboard previsto vs realizado com WMAPE, BIAS, MAE; drill-down por fornecedor, categoria, curva ABC e item; evolucao temporal e distribuicao por faixa de acuracia (v6.29)
 
 ## Documentacao Complementar
 
@@ -820,4 +863,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.28)
+**Ultima atualizacao**: Marco 2026 (v6.29)

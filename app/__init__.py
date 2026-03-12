@@ -110,3 +110,7 @@ def _register_blueprints(app):
     # Blueprint: Compra Planejada (Forward Buying)
     from app.blueprints.compra_planejada import compra_planejada_bp
     app.register_blueprint(compra_planejada_bp)
+
+    # Blueprint: Acuracia de Previsao
+    from app.blueprints.acuracia import acuracia_bp
+    app.register_blueprint(acuracia_bp)
