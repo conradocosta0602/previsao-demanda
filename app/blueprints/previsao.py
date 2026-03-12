@@ -5,6 +5,7 @@ Rotas: /api/gerar_previsao_banco*, /api/exportar_tabela_comparativa
 
 import os
 import io
+import math
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -563,6 +564,7 @@ def _api_gerar_previsao_banco_v2_interno():
             )
 
             demanda_diaria_base = metadata.get('demanda_diaria_base', 0)
+            desvio_diario_base = metadata.get('desvio_diario_base', 0)
             metodo_calc = metadata.get('metodo_usado', 'media_simples')
 
             # Preservar metodo de saneamento/normalizacao se foi aplicado
@@ -868,27 +870,41 @@ def _api_gerar_previsao_banco_v2_interno():
             if tem_algum_ajuste:
                 metodo_exibicao = 'Ajuste Manual'
 
-            # Calcular variacao percentual
+            # Calcular variacao percentual (mantida como informacao)
             variacao_pct = 0
             if total_ano_anterior_item > 0:
                 variacao_pct = ((total_previsao_item - total_ano_anterior_item) / total_ano_anterior_item) * 100
 
-            # Determinar sinal de alerta baseado na variacao
-            # 🔴 Critico: variacao > 50% ou < -50%
-            # 🟡 Alerta: variacao > 30% ou < -30%
-            # 🔵 Atencao: variacao > 20% ou < -20%
-            # 🟢 Normal: variacao entre -20% e +20%
-            # ⚪ Sem dados: sem ano anterior para comparar
-            if total_ano_anterior_item == 0:
+            # Calcular CV (Coeficiente de Variacao) para indicador de risco (V50)
+            # CV = desvio_mensal / media_previsao_mensal
+            num_periodos_prev = len(previsao_item_periodos) if previsao_item_periodos else 1
+            media_previsao_mensal = total_previsao_item / num_periodos_prev if num_periodos_prev > 0 else 0
+            desvio_mensal = desvio_diario_base * math.sqrt(30)
+            cv = desvio_mensal / media_previsao_mensal if media_previsao_mensal > 0 else 0
+
+            # Determinar sinal de alerta baseado no CV (V50)
+            # 🔴 Risco critico: CV > 80% (previsao muito incerta)
+            # 🟡 Atencao: CV > 50% (alta variabilidade)
+            # 🔵 Baixo risco: CV > 30% (variabilidade moderada)
+            # 🟢 Confiavel: CV <= 30% (previsao estavel)
+            # ⚪ Sem dados: sem base para calcular
+            if media_previsao_mensal == 0:
                 sinal_emoji = '⚪'
-            elif abs(variacao_pct) > 50:
+            elif cv > 0.80:
                 sinal_emoji = '🔴'
-            elif abs(variacao_pct) > 30:
+            elif cv > 0.50:
                 sinal_emoji = '🟡'
-            elif abs(variacao_pct) > 20:
+            elif cv > 0.30:
                 sinal_emoji = '🔵'
             else:
                 sinal_emoji = '🟢'
+
+            # Mapeamento emoji -> texto para filtro frontend
+            sinal_alerta_map = {
+                '⚪': 'cinza', '🔴': 'vermelho', '🟡': 'amarelo',
+                '🔵': 'azul', '🟢': 'verde'
+            }
+            sinal_alerta = sinal_alerta_map.get(sinal_emoji, 'cinza')
 
             relatorio_itens.append({
                 'cod_produto': cod_produto,
@@ -901,6 +917,9 @@ def _api_gerar_previsao_banco_v2_interno():
                 'demanda_ano_anterior': round(total_ano_anterior_item, 2),
                 'variacao_percentual': round(variacao_pct, 1),
                 'sinal_emoji': sinal_emoji,
+                'sinal_alerta': sinal_alerta,
+                'cv': round(cv, 4),
+                'desvio_padrao': round(desvio_mensal, 2),
                 'metodo_estatistico': metodo_exibicao,
                 'fator_tendencia_yoy': round(fator_tendencia_yoy, 4),
                 'classificacao_tendencia': classificacao_tendencia,
@@ -1339,59 +1358,127 @@ def api_salvar_demanda_tela():
                 continue
 
             for pp in periodos:
-                periodo_str = pp.get('periodo', '')  # formato '2026-07-01'
+                periodo_str = pp.get('periodo', '')  # '2026-07-01' (mensal) ou '2026-S11' (semanal)
                 previsao_val = pp.get('previsao', 0)
 
                 if not periodo_str:
                     continue
 
-                try:
-                    ano = int(periodo_str[:4])
-                    mes = int(periodo_str[5:7])
-                except (ValueError, IndexError):
-                    continue
+                # V50: Detectar formato semanal vs mensal
+                is_semanal = '-S' in periodo_str
 
-                # Upsert manual: UPDATE primeiro, INSERT se nao existir
-                # (nao usa ON CONFLICT pois o unique index usa COALESCE(cod_empresa,0))
-                cursor.execute("""
-                    UPDATE demanda_pre_calculada
-                    SET demanda_prevista      = %s,
-                        demanda_diaria_base   = %s,
-                        ajuste_manual         = %s,
-                        ajuste_manual_data    = NOW(),
-                        ajuste_manual_usuario = %s,
-                        ajuste_manual_motivo  = 'salvo_tela_demanda',
-                        data_calculo          = NOW()
-                    WHERE cod_produto = %s
-                      AND cnpj_fornecedor = %s
-                      AND cod_empresa IS NULL
-                      AND ano = %s
-                      AND mes = %s
-                """, (
-                    float(previsao_val), float(previsao_val) / 30.0,
-                    float(previsao_val), usuario,
-                    cod_produto, cnpj_fornecedor, ano, mes
-                ))
-                if cursor.rowcount == 0:
-                    # Registro nao existe ainda - inserir
+                if is_semanal:
+                    # Formato semanal: '2026-S11' -> ano=2026, semana=11
+                    try:
+                        partes = periodo_str.split('-S')
+                        ano = int(partes[0])
+                        semana = int(partes[1])
+                    except (ValueError, IndexError):
+                        continue
+
+                    # Calcular segunda-feira da semana ISO
+                    from datetime import datetime as dt_aux
+                    try:
+                        data_inicio_semana = dt_aux.strptime(f'{ano}-W{semana:02d}-1', '%G-W%V-%u').date()
+                    except ValueError:
+                        continue
+
+                    divisor = 7.0
+
+                    # UPDATE primeiro (semanal)
                     cursor.execute("""
-                        INSERT INTO demanda_pre_calculada (
-                            cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
-                            demanda_prevista, demanda_diaria_base,
-                            ajuste_manual, ajuste_manual_data,
-                            ajuste_manual_usuario, ajuste_manual_motivo,
-                            data_calculo
-                        ) VALUES (
-                            %s, %s, NULL, %s, %s,
-                            %s, %s,
-                            %s, NOW(), %s, 'salvo_tela_demanda',
-                            NOW()
-                        )
+                        UPDATE demanda_pre_calculada
+                        SET demanda_prevista      = %s,
+                            demanda_diaria_base   = %s,
+                            ajuste_manual         = %s,
+                            ajuste_manual_data    = NOW(),
+                            ajuste_manual_usuario = %s,
+                            ajuste_manual_motivo  = 'salvo_tela_demanda',
+                            data_calculo          = NOW()
+                        WHERE cod_produto = %s
+                          AND cnpj_fornecedor = %s
+                          AND cod_empresa IS NULL
+                          AND ano = %s
+                          AND semana = %s
+                          AND tipo_granularidade = 'semanal'
                     """, (
-                        cod_produto, cnpj_fornecedor, ano, mes,
-                        float(previsao_val), float(previsao_val) / 30.0,
-                        float(previsao_val), usuario
+                        float(previsao_val), float(previsao_val) / divisor,
+                        float(previsao_val), usuario,
+                        cod_produto, cnpj_fornecedor, ano, semana
                     ))
+                    if cursor.rowcount == 0:
+                        cursor.execute("""
+                            INSERT INTO demanda_pre_calculada (
+                                cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
+                                semana, tipo_granularidade, data_inicio_semana,
+                                demanda_prevista, demanda_diaria_base,
+                                ajuste_manual, ajuste_manual_data,
+                                ajuste_manual_usuario, ajuste_manual_motivo,
+                                data_calculo
+                            ) VALUES (
+                                %s, %s, NULL, %s, NULL,
+                                %s, 'semanal', %s,
+                                %s, %s,
+                                %s, NOW(), %s, 'salvo_tela_demanda',
+                                NOW()
+                            )
+                        """, (
+                            cod_produto, cnpj_fornecedor, ano,
+                            semana, data_inicio_semana,
+                            float(previsao_val), float(previsao_val) / divisor,
+                            float(previsao_val), usuario
+                        ))
+                else:
+                    # Formato mensal: '2026-07-01' ou '2026-07'
+                    try:
+                        ano = int(periodo_str[:4])
+                        mes = int(periodo_str[5:7])
+                    except (ValueError, IndexError):
+                        continue
+
+                    # UPDATE primeiro (mensal) - logica original
+                    cursor.execute("""
+                        UPDATE demanda_pre_calculada
+                        SET demanda_prevista      = %s,
+                            demanda_diaria_base   = %s,
+                            ajuste_manual         = %s,
+                            ajuste_manual_data    = NOW(),
+                            ajuste_manual_usuario = %s,
+                            ajuste_manual_motivo  = 'salvo_tela_demanda',
+                            data_calculo          = NOW()
+                        WHERE cod_produto = %s
+                          AND cnpj_fornecedor = %s
+                          AND cod_empresa IS NULL
+                          AND ano = %s
+                          AND mes = %s
+                          AND tipo_granularidade = 'mensal'
+                    """, (
+                        float(previsao_val), float(previsao_val) / 30.0,
+                        float(previsao_val), usuario,
+                        cod_produto, cnpj_fornecedor, ano, mes
+                    ))
+                    if cursor.rowcount == 0:
+                        cursor.execute("""
+                            INSERT INTO demanda_pre_calculada (
+                                cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
+                                tipo_granularidade,
+                                demanda_prevista, demanda_diaria_base,
+                                ajuste_manual, ajuste_manual_data,
+                                ajuste_manual_usuario, ajuste_manual_motivo,
+                                data_calculo
+                            ) VALUES (
+                                %s, %s, NULL, %s, %s,
+                                'mensal',
+                                %s, %s,
+                                %s, NOW(), %s, 'salvo_tela_demanda',
+                                NOW()
+                            )
+                        """, (
+                            cod_produto, cnpj_fornecedor, ano, mes,
+                            float(previsao_val), float(previsao_val) / 30.0,
+                            float(previsao_val), usuario
+                        ))
+
                 total_registros += 1
 
             total_itens += 1
@@ -2319,13 +2406,13 @@ def api_exportar_relatorio_itens():
                 variacao_item = item.get('variacao_percentual', 0)
                 ws.cell(row=row_num, column=col_offset + 2, value=f'{variacao_item:.1f}%').border = border
 
-                # Emoji de alerta (converter para texto)
+                # Emoji de alerta (converter para texto) - V50: baseado em CV
                 sinal = item.get('sinal_emoji', '')
                 alerta_texto = {
-                    '🔴': 'CRITICO',
-                    '🟡': 'ALERTA',
-                    '🔵': 'ATENCAO',
-                    '🟢': 'NORMAL',
+                    '🔴': 'RISCO CRITICO',
+                    '🟡': 'ATENCAO',
+                    '🔵': 'BAIXO RISCO',
+                    '🟢': 'CONFIAVEL',
                     '⚪': 'SEM DADOS'
                 }.get(sinal, '-')
                 ws.cell(row=row_num, column=col_offset + 3, value=alerta_texto).border = border

@@ -3390,8 +3390,10 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
             const sinalVarItem = varItem > 0 ? '+' : '';
             bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; color: ${corVarItem}; font-weight: 500;">${sinalVarItem}${varItem.toFixed(1)}%</td>`;
 
-            // Alerta
-            bodyHtml += `<td style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 1.2em;">${item.sinal_emoji || '⚪'}</td>`;
+            // Alerta (V50: baseado em CV - Coeficiente de Variação)
+            const cvPct = item.cv ? (item.cv * 100).toFixed(1) : '-';
+            const cvTooltip = item.cv ? `CV: ${cvPct}% | Desvio mensal: ${formatNumber(item.desvio_padrao || 0)} un` : 'Sem dados';
+            bodyHtml += `<td title="${cvTooltip}" style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 1.2em; cursor: help;">${item.sinal_emoji || '⚪'}</td>`;
 
             // Situação de Compra
             const sitCompra = item.sit_compra || '';

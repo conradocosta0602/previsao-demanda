@@ -228,38 +228,38 @@
                     <div class="card-compact">
                         <h3>📊 Previsão por Fornecedor/Item</h3>
 
-                        <!-- Legenda dos Alertas -->
+                        <!-- Legenda dos Indicadores de Confiança (V50) -->
                         <div style="margin-bottom: 15px; padding: 12px; background-color: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef;">
                             <div style="font-weight: bold; color: #495057; margin-bottom: 8px; font-size: 0.9em;">
                                 🔍 Legenda dos Indicadores
                             </div>
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.85em;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; font-size: 0.85em;">
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <span style="font-size: 1.3em;">🔴</span>
                                     <div>
-                                        <strong style="color: #dc2626;">Crítico</strong>
-                                        <div style="color: #666; font-size: 0.9em;">Requer ação imediata</div>
+                                        <strong style="color: #dc2626;">Risco Critico</strong>
+                                        <div style="color: #666; font-size: 0.9em;">Previsao muito incerta (CV &gt; 80%)</div>
                                     </div>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <span style="font-size: 1.3em;">🟡</span>
                                     <div>
-                                        <strong style="color: #f59e0b;">Alerta</strong>
-                                        <div style="color: #666; font-size: 0.9em;">Variação &gt; 50%</div>
+                                        <strong style="color: #f59e0b;">Atencao</strong>
+                                        <div style="color: #666; font-size: 0.9em;">Alta variabilidade (CV &gt; 50%)</div>
                                     </div>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <span style="font-size: 1.3em;">🔵</span>
                                     <div>
-                                        <strong style="color: #3b82f6;">Atenção</strong>
-                                        <div style="color: #666; font-size: 0.9em;">Variação &gt; 20%</div>
+                                        <strong style="color: #3b82f6;">Baixo Risco</strong>
+                                        <div style="color: #666; font-size: 0.9em;">Variabilidade moderada (CV &gt; 30%)</div>
                                     </div>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <span style="font-size: 1.3em;">🟢</span>
                                     <div>
-                                        <strong style="color: #10b981;">Normal</strong>
-                                        <div style="color: #666; font-size: 0.9em;">Variação ≤ 20%</div>
+                                        <strong style="color: #10b981;">Confiavel</strong>
+                                        <div style="color: #666; font-size: 0.9em;">Previsao estavel (CV &le; 30%)</div>
                                     </div>
                                 </div>
                             </div>
@@ -290,11 +290,11 @@
                                 <label style="font-weight: 500; color: #495057; font-size: 0.9em;">Alerta:</label>
                                 <select id="filtroAlertaRelatorio" style="padding: 6px 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 0.85em;">
                                     <option value="">Todos</option>
-                                    <option value="vermelho">🔴 Crítico</option>
-                                    <option value="amarelo">🟡 Alerta</option>
-                                    <option value="azul">🔵 Atenção</option>
-                                    <option value="verde">🟢 Normal</option>
-                                    <option value="cinza">⚪ Sem Previsão</option>
+                                    <option value="vermelho">🔴 Risco Critico</option>
+                                    <option value="amarelo">🟡 Atencao</option>
+                                    <option value="azul">🔵 Baixo Risco</option>
+                                    <option value="verde">🟢 Confiavel</option>
+                                    <option value="cinza">⚪ Sem Dados</option>
                                 </select>
                             </div>
                             <button onclick="filtrarRelatorioDetalhado()" style="padding: 6px 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 0.85em;">
@@ -332,19 +332,19 @@
                                     <div id="resumoTotalItens" style="font-size: 1.4em; font-weight: bold; color: #495057;">-</div>
                                 </div>
                                 <div>
-                                    <div style="font-size: 0.75em; color: #666;">🔴 Críticos</div>
+                                    <div style="font-size: 0.75em; color: #666;">🔴 Risco Critico</div>
                                     <div id="resumoCriticos" style="font-size: 1.4em; font-weight: bold; color: #dc2626;">-</div>
                                 </div>
                                 <div>
-                                    <div style="font-size: 0.75em; color: #666;">🟡 Alertas</div>
+                                    <div style="font-size: 0.75em; color: #666;">🟡 Atencao</div>
                                     <div id="resumoAlertas" style="font-size: 1.4em; font-weight: bold; color: #f59e0b;">-</div>
                                 </div>
                                 <div>
-                                    <div style="font-size: 0.75em; color: #666;">🔵 Atenção</div>
+                                    <div style="font-size: 0.75em; color: #666;">🔵 Baixo Risco</div>
                                     <div id="resumoAtencao" style="font-size: 1.4em; font-weight: bold; color: #3b82f6;">-</div>
                                 </div>
                                 <div>
-                                    <div style="font-size: 0.75em; color: #666;">🟢 Normais</div>
+                                    <div style="font-size: 0.75em; color: #666;">🟢 Confiavel</div>
                                     <div id="resumoNormais" style="font-size: 1.4em; font-weight: bold; color: #10b981;">-</div>
                                 </div>
                             </div>
