@@ -101,7 +101,8 @@ def precarregar_demanda_em_lote(
     cnpj_fornecedor: str,
     cod_empresas: List[int] = None,
     ano: int = None,
-    mes: int = None
+    mes: int = None,
+    semana: int = None
 ) -> Dict:
     """
     Pre-carrega demanda de multiplos produtos em uma unica query.
@@ -116,6 +117,7 @@ def precarregar_demanda_em_lote(
         cod_empresas: Lista de codigos de empresas/lojas (None = consolidado)
         ano: Ano do periodo (default: ano atual)
         mes: Mes do periodo (default: mes atual)
+        semana: Semana ISO (1-53). Se fornecido, busca dados semanais (ignora mes)
 
     Returns:
         Dicionario com chave (cod_produto, cod_empresa) -> dados da demanda
@@ -126,7 +128,7 @@ def precarregar_demanda_em_lote(
 
     if ano is None:
         ano = datetime.now().year
-    if mes is None:
+    if semana is None and mes is None:
         mes = datetime.now().month
 
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -135,11 +137,18 @@ def precarregar_demanda_em_lote(
     cod_produtos_str = [str(c) for c in cod_produtos]
     placeholders = ','.join(['%s'] * len(cod_produtos_str))
 
+    # Determinar filtro de periodo: semanal ou mensal
+    if semana is not None:
+        periodo_filter = "AND semana = %s AND tipo_granularidade = 'semanal'"
+        periodo_params = [semana]
+    else:
+        periodo_filter = "AND mes = %s AND tipo_granularidade = 'mensal'"
+        periodo_params = [mes]
+
     # Query para buscar todos os produtos de uma vez
     if cod_empresas:
         # Buscar por lojas especificas + consolidado (NULL)
-        cod_empresas_query = cod_empresas + [None]
-        emp_placeholders = ','.join(['%s' if e is not None else 'NULL' for e in cod_empresas_query])
+        emp_placeholders = ','.join(['%s' for e in cod_empresas if e is not None])
 
         query = f"""
             SELECT *
@@ -147,10 +156,10 @@ def precarregar_demanda_em_lote(
             WHERE cod_produto IN ({placeholders})
               AND cnpj_fornecedor = %s
               AND ano = %s
-              AND mes = %s
+              {periodo_filter}
               AND (cod_empresa IN ({emp_placeholders}) OR cod_empresa IS NULL)
         """
-        params = cod_produtos_str + [cnpj_fornecedor, ano, mes] + [e for e in cod_empresas if e is not None]
+        params = cod_produtos_str + [cnpj_fornecedor, ano] + periodo_params + [e for e in cod_empresas if e is not None]
     else:
         # Buscar apenas consolidado (cod_empresa IS NULL)
         query = f"""
@@ -159,10 +168,10 @@ def precarregar_demanda_em_lote(
             WHERE cod_produto IN ({placeholders})
               AND cnpj_fornecedor = %s
               AND ano = %s
-              AND mes = %s
+              {periodo_filter}
               AND cod_empresa IS NULL
         """
-        params = cod_produtos_str + [cnpj_fornecedor, ano, mes]
+        params = cod_produtos_str + [cnpj_fornecedor, ano] + periodo_params
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -175,6 +184,72 @@ def precarregar_demanda_em_lote(
         cache[key] = dict(row)
 
     return cache
+
+
+def precarregar_demanda_semanal_range(
+    conn,
+    cod_produtos: List[str],
+    cnpj_fornecedor: str,
+    semanas: List[Tuple[int, int]],
+    cod_empresas: List[int] = None
+) -> Dict:
+    """
+    Pre-carrega demanda semanal para multiplas semanas ISO de uma vez.
+
+    Args:
+        conn: Conexao com o banco de dados
+        cod_produtos: Lista de codigos de produtos
+        cnpj_fornecedor: CNPJ do fornecedor
+        semanas: Lista de tuplas (ano_iso, semana_iso)
+        cod_empresas: Lista de codigos de empresas/lojas (None = consolidado)
+
+    Returns:
+        Dict {(ano_iso, semana_iso): {(cod_produto, cod_empresa): dados}}
+    """
+    if not cod_produtos or not semanas:
+        return {}
+
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    cod_produtos_str = [str(c) for c in cod_produtos]
+    placeholders_prod = ','.join(['%s'] * len(cod_produtos_str))
+
+    # Construir filtro para multiplas semanas: (ano, semana) IN (VALUES ...)
+    semanas_values = ','.join([f"({a},{s})" for a, s in semanas])
+
+    emp_filter = "AND cod_empresa IS NULL"
+    emp_params = []
+    if cod_empresas:
+        emp_placeholders = ','.join(['%s' for e in cod_empresas if e is not None])
+        emp_filter = f"AND (cod_empresa IN ({emp_placeholders}) OR cod_empresa IS NULL)"
+        emp_params = [e for e in cod_empresas if e is not None]
+
+    query = f"""
+        SELECT *
+        FROM vw_demanda_efetiva
+        WHERE cod_produto IN ({placeholders_prod})
+          AND cnpj_fornecedor = %s
+          AND tipo_granularidade = 'semanal'
+          AND (ano, semana) IN (VALUES {semanas_values})
+          {emp_filter}
+    """
+    params = cod_produtos_str + [cnpj_fornecedor] + emp_params
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    cursor.close()
+
+    # Organizar por (ano, semana) -> cache
+    resultado = {}
+    for row in rows:
+        row_dict = dict(row)
+        key_semana = (row_dict['ano'], row_dict['semana'])
+        key_prod = (str(row_dict['cod_produto']), row_dict.get('cod_empresa'))
+        if key_semana not in resultado:
+            resultado[key_semana] = {}
+        resultado[key_semana][key_prod] = row_dict
+
+    return resultado
 
 
 def obter_demanda_do_cache(
@@ -211,11 +286,18 @@ def obter_demanda_do_cache(
             usar_consolidado_rateado = True
 
     if demanda:
-        # IMPORTANTE: Usar demanda_efetiva (mensal com sazonalidade) dividida por 30
-        # em vez de demanda_diaria_base (media anual sem sazonalidade)
-        # Isso garante que o pedido considere a sazonalidade do mes
-        demanda_mensal = float(demanda.get('demanda_efetiva', 0) or demanda.get('demanda_prevista', 0) or 0)
-        demanda_diaria = demanda_mensal / 30 if demanda_mensal > 0 else 0
+        # Usar demanda_diaria_efetiva da view (divide por 7 para semanal, 30 para mensal)
+        # Fallback: calcular manualmente se a coluna nao existir (backward compat)
+        tipo_gran = demanda.get('tipo_granularidade', 'mensal') or 'mensal'
+        demanda_efetiva_val = float(demanda.get('demanda_efetiva', 0) or demanda.get('demanda_prevista', 0) or 0)
+
+        demanda_diaria_efetiva = demanda.get('demanda_diaria_efetiva')
+        if demanda_diaria_efetiva is not None and float(demanda_diaria_efetiva) > 0:
+            demanda_diaria = float(demanda_diaria_efetiva)
+        else:
+            divisor = 7.0 if tipo_gran == 'semanal' else 30.0
+            demanda_diaria = demanda_efetiva_val / divisor if demanda_efetiva_val > 0 else 0
+
         desvio = float(demanda.get('desvio_padrao', 0) or 0)
 
         # Se usando consolidado para loja especifica, aplicar rateio
@@ -253,10 +335,12 @@ def obter_demanda_do_cache(
                 'limitador_aplicado': demanda.get('limitador_aplicado', False),
                 'tem_ajuste_manual': demanda.get('tem_ajuste_manual', False),
                 'data_calculo': demanda.get('data_calculo'),
-                'demanda_mensal': float(demanda.get('demanda_efetiva', 0) or 0),
+                'demanda_mensal': demanda_efetiva_val,
                 'variacao_vs_aa': demanda.get('variacao_vs_aa'),
                 'metodo_rateio': metodo_rateio,
-                'proporcao_loja': proporcao_loja if usar_consolidado_rateado else None
+                'proporcao_loja': proporcao_loja if usar_consolidado_rateado else None,
+                'tipo_granularidade': tipo_gran,
+                'semana': demanda.get('semana')
             }
         )
 
@@ -269,7 +353,8 @@ def buscar_demanda_pre_calculada(
     cnpj_fornecedor: str,
     ano: int = None,
     mes: int = None,
-    cod_empresa: int = None
+    cod_empresa: int = None,
+    semana: int = None
 ) -> Optional[Dict]:
     """
     Busca demanda pre-calculada de um item para um periodo especifico.
@@ -281,27 +366,40 @@ def buscar_demanda_pre_calculada(
         ano: Ano do periodo (default: ano atual)
         mes: Mes do periodo (default: mes atual)
         cod_empresa: Codigo da empresa/loja (NULL = consolidado)
+        semana: Semana ISO (1-53). Se fornecido, busca semanal (ignora mes)
 
     Returns:
         Dicionario com dados da demanda ou None se nao encontrado
     """
     if ano is None:
         ano = datetime.now().year
-    if mes is None:
-        mes = datetime.now().month
 
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Usar a view que retorna demanda efetiva (ajuste manual ou calculada)
-    cursor.execute("""
-        SELECT *
-        FROM vw_demanda_efetiva
-        WHERE cod_produto = %s
-          AND cnpj_fornecedor = %s
-          AND ano = %s
-          AND mes = %s
-          AND (cod_empresa = %s OR (cod_empresa IS NULL AND %s IS NULL))
-    """, (str(cod_produto), cnpj_fornecedor, ano, mes, cod_empresa, cod_empresa))
+    if semana is not None:
+        cursor.execute("""
+            SELECT *
+            FROM vw_demanda_efetiva
+            WHERE cod_produto = %s
+              AND cnpj_fornecedor = %s
+              AND ano = %s
+              AND semana = %s
+              AND tipo_granularidade = 'semanal'
+              AND (cod_empresa = %s OR (cod_empresa IS NULL AND %s IS NULL))
+        """, (str(cod_produto), cnpj_fornecedor, ano, semana, cod_empresa, cod_empresa))
+    else:
+        if mes is None:
+            mes = datetime.now().month
+        cursor.execute("""
+            SELECT *
+            FROM vw_demanda_efetiva
+            WHERE cod_produto = %s
+              AND cnpj_fornecedor = %s
+              AND ano = %s
+              AND mes = %s
+              AND tipo_granularidade = 'mensal'
+              AND (cod_empresa = %s OR (cod_empresa IS NULL AND %s IS NULL))
+        """, (str(cod_produto), cnpj_fornecedor, ano, mes, cod_empresa, cod_empresa))
 
     row = cursor.fetchone()
     cursor.close()
@@ -343,6 +441,7 @@ def buscar_demanda_proximos_meses(
         WHERE cod_produto = %s
           AND cnpj_fornecedor = %s
           AND (cod_empresa = %s OR (cod_empresa IS NULL AND %s IS NULL))
+          AND tipo_granularidade = 'mensal'
           AND (ano * 100 + mes) >= %s
         ORDER BY ano, mes
         LIMIT %s
@@ -391,11 +490,16 @@ def obter_demanda_diaria_efetiva(
     )
 
     if demanda:
-        # IMPORTANTE: Usar demanda_efetiva (mensal com sazonalidade) dividida por 30
-        # em vez de demanda_diaria_base (media anual sem sazonalidade)
-        # Isso garante que o pedido considere a sazonalidade do mes
-        demanda_mensal = float(demanda.get('demanda_efetiva', 0) or demanda.get('demanda_prevista', 0) or 0)
-        demanda_diaria = demanda_mensal / 30 if demanda_mensal > 0 else 0
+        # Usar demanda_diaria_efetiva da view (divide por 7 ou 30 conforme granularidade)
+        tipo_gran = demanda.get('tipo_granularidade', 'mensal') or 'mensal'
+        demanda_efetiva_val = float(demanda.get('demanda_efetiva', 0) or demanda.get('demanda_prevista', 0) or 0)
+
+        demanda_diaria_efetiva = demanda.get('demanda_diaria_efetiva')
+        if demanda_diaria_efetiva is not None and float(demanda_diaria_efetiva) > 0:
+            demanda_diaria = float(demanda_diaria_efetiva)
+        else:
+            divisor = 7.0 if tipo_gran == 'semanal' else 30.0
+            demanda_diaria = demanda_efetiva_val / divisor if demanda_efetiva_val > 0 else 0
 
         return (
             demanda_diaria,
@@ -409,8 +513,10 @@ def obter_demanda_diaria_efetiva(
                 'limitador_aplicado': demanda.get('limitador_aplicado', False),
                 'tem_ajuste_manual': demanda.get('tem_ajuste_manual', False),
                 'data_calculo': demanda.get('data_calculo'),
-                'demanda_mensal': demanda_mensal,
-                'variacao_vs_aa': demanda.get('variacao_vs_aa')
+                'demanda_mensal': demanda_efetiva_val,
+                'variacao_vs_aa': demanda.get('variacao_vs_aa'),
+                'tipo_granularidade': tipo_gran,
+                'semana': demanda.get('semana')
             }
         )
 
@@ -468,68 +574,92 @@ def registrar_ajuste_manual(
     valor_ajuste: float,
     usuario: str,
     motivo: str = None,
-    cod_empresa: int = None
+    cod_empresa: int = None,
+    semana: int = None
 ) -> int:
     """
     Registra um ajuste manual de demanda.
 
     O ajuste manual sobrepoe o valor calculado automaticamente.
+    Usa padrao UPDATE+INSERT (nao ON CONFLICT) porque o indice UNIQUE
+    usa COALESCE e nao pode ser referenciado como constraint.
 
     Args:
         conn: Conexao com o banco de dados
         cod_produto: Codigo do produto
         cnpj_fornecedor: CNPJ do fornecedor
         ano: Ano do periodo
-        mes: Mes do periodo
+        mes: Mes do periodo (None para semanal)
         valor_ajuste: Novo valor de demanda
         usuario: Nome do usuario que fez o ajuste
         motivo: Motivo do ajuste (opcional)
         cod_empresa: Codigo da empresa/loja (NULL = consolidado)
+        semana: Semana ISO (1-53, None para mensal)
 
     Returns:
         ID do registro atualizado
     """
     cursor = conn.cursor()
 
-    cursor.execute("""
-        INSERT INTO demanda_pre_calculada (
-            cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
-            demanda_prevista, demanda_diaria_base,
-            ajuste_manual, ajuste_manual_data, ajuste_manual_usuario, ajuste_manual_motivo
-        ) VALUES (
-            %s, %s, %s, %s, %s,
-            %s, %s,
-            %s, NOW(), %s, %s
-        )
-        ON CONFLICT (cod_produto, cnpj_fornecedor, cod_empresa, ano, mes)
-        DO UPDATE SET
-            ajuste_manual = %s,
-            ajuste_manual_data = NOW(),
-            ajuste_manual_usuario = %s,
-            ajuste_manual_motivo = %s
-        RETURNING id
-    """, (
-        str(cod_produto), cnpj_fornecedor, cod_empresa, ano, mes,
-        valor_ajuste, valor_ajuste / 30.0,
-        valor_ajuste, usuario, motivo,
-        valor_ajuste, usuario, motivo
-    ))
+    is_semanal = semana is not None
+    divisor = 7.0 if is_semanal else 30.0
+    tipo_gran = 'semanal' if is_semanal else 'mensal'
 
-    registro_id = cursor.fetchone()[0]
+    # Tentar UPDATE primeiro
+    if is_semanal:
+        cursor.execute("""
+            UPDATE demanda_pre_calculada
+            SET ajuste_manual = %s,
+                ajuste_manual_data = NOW(),
+                ajuste_manual_usuario = %s,
+                ajuste_manual_motivo = %s
+            WHERE cod_produto = %s AND cnpj_fornecedor = %s
+              AND (cod_empresa = %s OR (cod_empresa IS NULL AND %s IS NULL))
+              AND ano = %s AND semana = %s AND tipo_granularidade = 'semanal'
+            RETURNING id
+        """, (valor_ajuste, usuario, motivo,
+              str(cod_produto), cnpj_fornecedor, cod_empresa, cod_empresa,
+              ano, semana))
+    else:
+        cursor.execute("""
+            UPDATE demanda_pre_calculada
+            SET ajuste_manual = %s,
+                ajuste_manual_data = NOW(),
+                ajuste_manual_usuario = %s,
+                ajuste_manual_motivo = %s
+            WHERE cod_produto = %s AND cnpj_fornecedor = %s
+              AND (cod_empresa = %s OR (cod_empresa IS NULL AND %s IS NULL))
+              AND ano = %s AND mes = %s AND tipo_granularidade = 'mensal'
+            RETURNING id
+        """, (valor_ajuste, usuario, motivo,
+              str(cod_produto), cnpj_fornecedor, cod_empresa, cod_empresa,
+              ano, mes))
 
-    # Registrar no historico
-    cursor.execute("""
-        INSERT INTO demanda_pre_calculada_historico (
-            demanda_id, cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
-            demanda_prevista, ajuste_manual, tipo_operacao
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s,
-            %s, %s, 'ajuste_manual'
-        )
-    """, (
-        registro_id, str(cod_produto), cnpj_fornecedor, cod_empresa, ano, mes,
-        valor_ajuste, valor_ajuste
-    ))
+    row = cursor.fetchone()
+    if row:
+        registro_id = row[0]
+    else:
+        # INSERT se nao existia
+        cursor.execute("""
+            INSERT INTO demanda_pre_calculada (
+                cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
+                semana, tipo_granularidade,
+                demanda_prevista, demanda_diaria_base,
+                ajuste_manual, ajuste_manual_data, ajuste_manual_usuario, ajuste_manual_motivo
+            ) VALUES (
+                %s, %s, %s, %s, %s,
+                %s, %s,
+                %s, %s,
+                %s, NOW(), %s, %s
+            )
+            RETURNING id
+        """, (
+            str(cod_produto), cnpj_fornecedor, cod_empresa, ano, mes,
+            semana, tipo_gran,
+            valor_ajuste, valor_ajuste / divisor,
+            valor_ajuste, usuario, motivo
+        ))
+        registro_id = cursor.fetchone()[0]
 
     conn.commit()
     return registro_id

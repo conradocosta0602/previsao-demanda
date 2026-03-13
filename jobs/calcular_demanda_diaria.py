@@ -60,6 +60,7 @@ from core.demand_calculator import DemandCalculator, calcular_fator_tendencia_yo
 
 # Configuracoes
 MESES_PREVISAO = 12  # Calcular 12 meses a frente
+SEMANAS_PREVISAO = 54  # Calcular ~13 meses de previsao semanal
 MAX_WORKERS = 4      # Threads para paralelizacao
 DIAS_HISTORICO = 730 # 2 anos de historico
 
@@ -566,6 +567,7 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
         execute_values(cursor, """
             DELETE FROM demanda_pre_calculada
             WHERE ajuste_manual IS NULL
+              AND tipo_granularidade = 'mensal'
               AND (cod_produto, cnpj_fornecedor, ano, mes) IN (VALUES %s)
               AND (cod_empresa IS NULL OR cod_empresa = 0)
         """, chaves_list, template="(%s, %s, %s, %s)")
@@ -581,6 +583,7 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
                 WHERE cnpj_fornecedor = %s
                   AND (cod_empresa IS NULL OR cod_empresa = 0)
                   AND ajuste_manual IS NOT NULL
+                  AND tipo_granularidade = 'mensal'
             """, (cnpj,))
             for row in cursor.fetchall():
                 chaves_com_ajuste.add((str(row[0]), str(row[1]), int(row[2]), int(row[3])))
@@ -632,6 +635,244 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             dias_historico, total_vendido_historico, data_calculo
         ) VALUES %s
     """, valores, template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())")
+
+    conn.commit()
+    return len(registros)
+
+
+def precarregar_historico_semanal_lote(conn, cod_produtos: List[int]) -> Dict[int, Dict]:
+    """
+    Pre-carrega historico de vendas agregado por semana ISO para TODOS os itens de uma vez.
+    OTIMIZACAO: 1 query em vez de N queries.
+
+    Returns:
+        Dict {cod_produto: {(ano_iso, semana_iso): qtd_venda_total}}
+    """
+    if not cod_produtos:
+        return {}
+
+    from psycopg2.extras import RealDictCursor
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    placeholders = ','.join(['%s'] * len(cod_produtos))
+    cursor.execute(f"""
+        SELECT
+            h.codigo,
+            EXTRACT(ISOYEAR FROM h.data)::INTEGER as ano_iso,
+            EXTRACT(WEEK FROM h.data)::INTEGER as semana_iso,
+            SUM(COALESCE(h.qtd_venda, 0)) as qtd_venda
+        FROM historico_vendas_diario h
+        WHERE h.codigo IN ({placeholders})
+          AND h.data >= CURRENT_DATE - INTERVAL '{DIAS_HISTORICO} days'
+          AND h.data < CURRENT_DATE
+        GROUP BY h.codigo, ano_iso, semana_iso
+        ORDER BY h.codigo, ano_iso, semana_iso
+    """, cod_produtos)
+
+    resultado = {}
+    for row in cursor.fetchall():
+        cod = int(row['codigo'])
+        if cod not in resultado:
+            resultado[cod] = {}
+        resultado[cod][(int(row['ano_iso']), int(row['semana_iso']))] = float(row['qtd_venda'])
+
+    cursor.close()
+    return resultado
+
+
+def calcular_demanda_item_semanal(
+    cod_produto: int,
+    cnpj_fornecedor: str,
+    historico_semanal: Dict[Tuple[int, int], float]
+) -> List[Dict]:
+    """
+    Calcula demanda pre-calculada SEMANAL para um item usando historico pre-carregado.
+    Gera registros para as proximas ~54 semanas ISO.
+
+    Args:
+        cod_produto: Codigo do produto
+        cnpj_fornecedor: CNPJ do fornecedor
+        historico_semanal: Dict {(ano_iso, semana_iso): qtd_venda} do cache
+
+    Returns:
+        Lista de registros semanais para INSERT
+    """
+    from datetime import date
+
+    if not historico_semanal:
+        return []
+
+    # Construir serie semanal ordenada
+    semanas_ordenadas = sorted(historico_semanal.keys())
+    if len(semanas_ordenadas) < 4:  # Minimo 4 semanas de historico
+        return []
+
+    vendas_semanais = [historico_semanal[s] for s in semanas_ordenadas]
+    total_vendido = sum(vendas_semanais)
+    media_semanal = total_vendido / len(vendas_semanais) if vendas_semanais else 0
+
+    if media_semanal <= 0:
+        return []
+
+    # Calcular desvio padrao semanal
+    import numpy as np
+    desvio_semanal = float(np.std(vendas_semanais)) if len(vendas_semanais) > 1 else 0
+
+    # Calcular indice sazonal por semana ISO (media_semana / media_geral)
+    vendas_por_semana_iso = {}
+    contagem_por_semana_iso = {}
+    for (ano_iso, sem_iso), qtd in historico_semanal.items():
+        if sem_iso not in vendas_por_semana_iso:
+            vendas_por_semana_iso[sem_iso] = 0
+            contagem_por_semana_iso[sem_iso] = 0
+        vendas_por_semana_iso[sem_iso] += qtd
+        contagem_por_semana_iso[sem_iso] += 1
+
+    indices_sazonais = {}
+    for sem_iso in range(1, 54):
+        if sem_iso in vendas_por_semana_iso and contagem_por_semana_iso[sem_iso] > 0:
+            media_semana = vendas_por_semana_iso[sem_iso] / contagem_por_semana_iso[sem_iso]
+            indices_sazonais[sem_iso] = media_semana / media_semanal if media_semanal > 0 else 1.0
+        else:
+            indices_sazonais[sem_iso] = 1.0
+
+    # Gerar registros para as proximas SEMANAS_PREVISAO semanas
+    registros = []
+    hoje = date.today()
+
+    for i in range(SEMANAS_PREVISAO):
+        alvo = hoje + timedelta(weeks=i)
+        ano_iso = alvo.isocalendar()[0]
+        semana_iso = alvo.isocalendar()[1]
+
+        # Segunda-feira da semana ISO
+        dia_semana = alvo.isocalendar()[2]  # 1=seg, 7=dom
+        monday = alvo - timedelta(days=dia_semana - 1)
+
+        # Fator sazonal da semana
+        fator_saz = indices_sazonais.get(semana_iso, 1.0)
+
+        # Demanda prevista = media_semanal * fator_sazonal
+        demanda_prevista = media_semanal * fator_saz
+
+        # Buscar ano anterior para mesma semana ISO
+        valor_aa_key = (ano_iso - 1, semana_iso)
+        valor_aa = historico_semanal.get(valor_aa_key, 0)
+
+        registros.append({
+            'cod_produto': str(cod_produto),
+            'cnpj_fornecedor': cnpj_fornecedor,
+            'cod_empresa': None,
+            'ano': ano_iso,
+            'mes': None,
+            'semana': semana_iso,
+            'tipo_granularidade': 'semanal',
+            'data_inicio_semana': monday,
+            'demanda_prevista': round(demanda_prevista, 2),
+            'demanda_diaria_base': round(demanda_prevista / 7.0, 4),
+            'desvio_padrao': round(desvio_semanal / 7.0, 4),
+            'fator_sazonal': round(fator_saz, 4),
+            'fator_tendencia_yoy': 1.0,
+            'classificacao_tendencia': 'nao_calculado',
+            'valor_ano_anterior': round(valor_aa, 2) if valor_aa else None,
+            'variacao_vs_aa': round(demanda_prevista / valor_aa, 4) if valor_aa > 0 else None,
+            'limitador_aplicado': False,
+            'metodo_usado': 'semanal_sazonal',
+            'categoria_serie': 'media',
+            'dias_historico': len(semanas_ordenadas),
+            'total_vendido_historico': round(total_vendido, 2)
+        })
+
+    return registros
+
+
+def salvar_demanda_batch_semanal(conn, registros: List[Dict]):
+    """
+    Salva batch de registros de demanda SEMANAL no banco.
+    Espelha salvar_demanda_batch() mas com chave (cod_produto, cnpj_forn, ano, semana).
+    """
+    if not registros:
+        return 0
+
+    from psycopg2.extras import execute_values
+
+    cursor = conn.cursor()
+
+    # Coletar chaves para deletar (apenas registros semanais sem ajuste manual)
+    chaves_para_deletar = set()
+    for reg in registros:
+        chaves_para_deletar.add((
+            reg['cod_produto'], reg['cnpj_fornecedor'],
+            reg['ano'], reg['semana']
+        ))
+
+    chaves_com_ajuste = set()
+    if chaves_para_deletar:
+        chaves_list = list(chaves_para_deletar)
+        execute_values(cursor, """
+            DELETE FROM demanda_pre_calculada
+            WHERE ajuste_manual IS NULL
+              AND tipo_granularidade = 'semanal'
+              AND (cod_produto, cnpj_fornecedor, ano, semana) IN (VALUES %s)
+              AND (cod_empresa IS NULL OR cod_empresa = 0)
+        """, chaves_list, template="(%s, %s, %s, %s)")
+
+        # Identificar chaves com ajuste manual (preservar)
+        cnpjs = set(c[1] for c in chaves_list)
+        for cnpj in cnpjs:
+            cursor.execute("""
+                SELECT cod_produto, cnpj_fornecedor, ano, semana
+                FROM demanda_pre_calculada
+                WHERE cnpj_fornecedor = %s
+                  AND (cod_empresa IS NULL OR cod_empresa = 0)
+                  AND ajuste_manual IS NOT NULL
+                  AND tipo_granularidade = 'semanal'
+            """, (cnpj,))
+            for row in cursor.fetchall():
+                chaves_com_ajuste.add((str(row[0]), str(row[1]), int(row[2]), int(row[3])))
+
+    # Filtrar e deduplicar
+    vistos = set()
+    registros_unicos = []
+    for reg in registros:
+        chave = (str(reg['cod_produto']), str(reg['cnpj_fornecedor']),
+                 int(reg['ano']), int(reg['semana']))
+        if chave in chaves_com_ajuste:
+            continue
+        if chave not in vistos:
+            vistos.add(chave)
+            registros_unicos.append(reg)
+
+    if not registros_unicos:
+        conn.commit()
+        return len(registros)
+
+    valores = [
+        (
+            reg['cod_produto'], reg['cnpj_fornecedor'], reg['cod_empresa'],
+            reg['ano'], None,  # mes = NULL para semanal
+            reg['semana'], reg['tipo_granularidade'], reg['data_inicio_semana'],
+            reg['demanda_prevista'], reg['demanda_diaria_base'], reg['desvio_padrao'],
+            reg['fator_sazonal'], reg['fator_tendencia_yoy'], reg['classificacao_tendencia'],
+            reg['valor_ano_anterior'], reg['variacao_vs_aa'],
+            reg['limitador_aplicado'], reg['metodo_usado'], reg['categoria_serie'],
+            reg['dias_historico'], reg['total_vendido_historico']
+        )
+        for reg in registros_unicos
+    ]
+
+    execute_values(cursor, """
+        INSERT INTO demanda_pre_calculada (
+            cod_produto, cnpj_fornecedor, cod_empresa,
+            ano, mes,
+            semana, tipo_granularidade, data_inicio_semana,
+            demanda_prevista, demanda_diaria_base, desvio_padrao,
+            fator_sazonal, fator_tendencia_yoy, classificacao_tendencia,
+            valor_ano_anterior, variacao_vs_aa,
+            limitador_aplicado, metodo_usado, categoria_serie,
+            dias_historico, total_vendido_historico, data_calculo
+        ) VALUES %s
+    """, valores, template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())")
 
     conn.commit()
     return len(registros)
@@ -834,10 +1075,32 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
                 total_erros += 1
                 logger.debug(f"Erro item {item['cod_produto']}: {e}")
 
-        # SALVAR TODOS OS REGISTROS EM UM UNICO BATCH
+        # SALVAR TODOS OS REGISTROS MENSAIS EM UM UNICO BATCH
         total_registros = 0
         if todos_registros:
             total_registros = salvar_demanda_batch(conn, todos_registros)
+
+        # V50: CALCULAR E SALVAR DEMANDA SEMANAL
+        total_registros_semanais = 0
+        try:
+            cache_hist_semanal = precarregar_historico_semanal_lote(conn, cod_produtos_ativos)
+
+            todos_registros_semanais = []
+            for item in itens_ativos:
+                try:
+                    cod_produto = item['cod_produto']
+                    hist_sem = cache_hist_semanal.get(cod_produto, {})
+                    registros_sem = calcular_demanda_item_semanal(
+                        cod_produto, cnpj_fornecedor, hist_sem
+                    )
+                    todos_registros_semanais.extend(registros_sem)
+                except Exception:
+                    pass
+
+            if todos_registros_semanais:
+                total_registros_semanais = salvar_demanda_batch_semanal(conn, todos_registros_semanais)
+        except Exception as e:
+            logger.warning(f"  Erro no calculo semanal: {e}")
 
         return {
             'cnpj': cnpj_fornecedor,
@@ -846,6 +1109,7 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
             'itens_ativos': len(itens_ativos),
             'itens_filtrados_en_fl': itens_filtrados,
             'registros': total_registros,
+            'registros_semanais': total_registros_semanais,
             'erros': total_erros,
             'sucesso': True
         }

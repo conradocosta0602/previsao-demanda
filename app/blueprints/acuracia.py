@@ -181,6 +181,7 @@ def build_cte_comparacao(meses, filtros):
         ) epa ON true
         WHERE dpc.demanda_prevista > 0
           AND rm.qtd_realizada >= 2
+          AND COALESCE(dpc.tipo_granularidade, 'mensal') = 'mensal'
           {filtros_where}
     )
     """

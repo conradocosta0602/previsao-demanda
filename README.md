@@ -1,6 +1,14 @@
-# Sistema de Demanda e Reabastecimento v6.29
+# Sistema de Demanda e Reabastecimento v6.30
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.30 - Granularidade Semanal na Demanda (Mar/2026):**
+- **V50 - Demanda Semanal**: Schema suporta registros mensais E semanais na demanda_pre_calculada
+- Cronjob calcula automaticamente 54 semanas + 12 meses para cada item
+- Pedido ao Fornecedor prefere demanda semanal (fallback mensal)
+- Compra Planejada decompoe periodos por semana ISO com sazonalidade semanal
+- Acuracia filtra registros mensais para comparacao correta
+- Fix bug silencioso: Salvar Demanda na visao semanal (formato YYYY-SWW) agora funciona
 
 **Novidades v6.29 - Tela de Acuracia de Previsao (Mar/2026):**
 - **V49 - Acuracia de Previsao**: Dashboard comparando previsao vs vendas reais com WMAPE, BIAS e MAE

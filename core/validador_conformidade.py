@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 32 verificacoes do checklist de conformidade.
+        Executa todas as 33 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -102,6 +102,7 @@ class ValidadorConformidade:
             ('V43', 'Fase 1 Negociacao via API + dias_ate_entrega', self._verificar_fase1_negociacao_api),
             ('V45', 'Delay Operacional Removido + Transit CD 15d', self._verificar_delay_removido_transit_15),
             ('V46', 'SOLIs Abertas no Calculo de Pedido', self._verificar_solis_abertas),
+            ('V50', 'Granularidade Semanal Disponivel', self._verificar_granularidade_semanal),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -3545,6 +3546,142 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V46: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_granularidade_semanal(self):
+        """
+        V50: Verifica que demanda semanal esta disponivel e consistente.
+
+        Testes:
+        1. Colunas semana, tipo_granularidade existem na tabela
+        2. Existem registros semanais para as proximas 4 semanas
+        3. demanda_diaria_base ~ demanda_prevista / 7 para semanais
+        4. Nao ha registros semanais com mes IS NOT NULL (violacao semantica)
+        """
+        try:
+            resultados = []
+            testes_ok = 0
+            testes_total = 4
+
+            cursor = self.conn.cursor()
+
+            # Teste 1: Colunas existem
+            try:
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'demanda_pre_calculada'
+                    AND column_name IN ('semana', 'tipo_granularidade', 'data_inicio_semana')
+                """)
+                colunas = [r[0] for r in cursor.fetchall()]
+                teste_1_ok = len(colunas) == 3
+                resultados.append({
+                    'teste': 'Colunas semanal existem (semana, tipo_granularidade, data_inicio_semana)',
+                    'colunas_encontradas': colunas,
+                    'correto': teste_1_ok
+                })
+                if teste_1_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Colunas semanal existem',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            # Teste 2: Registros semanais recentes
+            try:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM demanda_pre_calculada
+                    WHERE tipo_granularidade = 'semanal'
+                    AND ano = EXTRACT(ISOYEAR FROM CURRENT_DATE)::int
+                    AND semana BETWEEN EXTRACT(WEEK FROM CURRENT_DATE)::int
+                                 AND EXTRACT(WEEK FROM CURRENT_DATE)::int + 3
+                """)
+                total_semanais = cursor.fetchone()[0]
+                teste_2_ok = total_semanais > 0
+                resultados.append({
+                    'teste': 'Registros semanais para proximas 4 semanas',
+                    'total_registros': total_semanais,
+                    'correto': teste_2_ok
+                })
+                if teste_2_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Registros semanais recentes',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            # Teste 3: Consistencia demanda_diaria_base ~ prevista / 7
+            try:
+                cursor.execute("""
+                    SELECT COUNT(*) AS total,
+                           SUM(CASE WHEN ABS(demanda_diaria_base - demanda_prevista / 7.0)
+                                    < demanda_prevista * 0.01 + 0.01
+                                THEN 1 ELSE 0 END) AS consistentes
+                    FROM demanda_pre_calculada
+                    WHERE tipo_granularidade = 'semanal'
+                    AND demanda_prevista > 0
+                    LIMIT 1000
+                """)
+                row = cursor.fetchone()
+                total_check = row[0] or 0
+                consistentes = row[1] or 0
+                teste_3_ok = total_check == 0 or (consistentes / max(total_check, 1) >= 0.95)
+                resultados.append({
+                    'teste': 'Consistencia demanda_diaria_base = prevista / 7',
+                    'total_verificados': total_check,
+                    'consistentes': consistentes,
+                    'correto': teste_3_ok
+                })
+                if teste_3_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Consistencia demanda semanal',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            # Teste 4: Sem violacao semantica (semanal com mes preenchido)
+            try:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM demanda_pre_calculada
+                    WHERE tipo_granularidade = 'semanal' AND mes IS NOT NULL
+                """)
+                violacoes = cursor.fetchone()[0]
+                teste_4_ok = violacoes == 0
+                resultados.append({
+                    'teste': 'Sem registros semanais com mes preenchido',
+                    'violacoes': violacoes,
+                    'correto': teste_4_ok
+                })
+                if teste_4_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Violacao semantica semanal',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            detalhes = {
+                'testes': resultados,
+                'testes_ok': testes_ok,
+                'testes_total': testes_total
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V50 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V50 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V50 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V50: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

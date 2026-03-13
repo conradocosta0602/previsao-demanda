@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.29** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.30** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -125,7 +125,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**33 verificacoes** de conformidade com a metodologia documentada:
+**34 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
@@ -148,6 +148,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V47: Painel de parametros do calculo de pedido - transparencia dos parametros usados (LT, ciclo, seg. ABC, cobertura, ES); cobertura total do fornecedor (itens_pedido + itens_ok) com transferencias (V25/V29/V30) contabilizadas na projecao
 - V48: Backtesting universal + deteccao de outliers - selecao de metodo por WMAPE (walk-forward 6 metodos) e AutoOutlierDetector integrado ao pipeline (IQR/Z-Score antes do calculo)
 - V49: Tela de Acuracia de Previsao - dashboard previsto vs realizado com WMAPE, BIAS e MAE; drill-down por fornecedor, categoria, curva ABC e item; evolucao temporal e distribuicao por faixa
+- V50: Granularidade semanal na demanda_pre_calculada - schema suporta registros mensais E semanais; cronjob calcula ambos; consumidores (Pedido, Compra Planejada, Acuracia) preferem semanal com fallback mensal
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -848,6 +849,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V47: Painel de parametros do calculo - medias ponderadas de LT, ciclo, seg. ABC, cobertura e ES; cobertura total fornecedor (itens_pedido + itens_ok) com transferencias V25/V29/V30 na projecao; V37 alinhado (consumo LT so do disponivel, preserva transito) (v6.27)
 - V48: Backtesting universal + deteccao de outliers - selecao de metodo por WMAPE (walk-forward validation testando todos os 6 metodos) em vez de heuristica; AutoOutlierDetector (IQR/Z-Score) integrado ao pipeline do cronjob (v6.28)
 - V49: Tela de Acuracia de Previsao - dashboard previsto vs realizado com WMAPE, BIAS, MAE; drill-down por fornecedor, categoria, curva ABC e item; evolucao temporal e distribuicao por faixa de acuracia (v6.29)
+- V50: Granularidade semanal na demanda_pre_calculada - schema com colunas semana/tipo_granularidade/data_inicio_semana; cronjob calcula 54 semanas + 12 meses; Pedido prefere semanal; Compra Planejada decompoe por semana ISO; Acuracia filtra tipo_granularidade; fix bug silencioso Salvar Demanda formato YYYY-SWW (v6.30)
 
 ## Documentacao Complementar
 
@@ -863,4 +865,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.29)
+**Ultima atualizacao**: Marco 2026 (v6.30)

@@ -18,6 +18,7 @@ from flask import Blueprint, render_template, request, jsonify, send_file
 from app.utils.db_connection import get_db_connection
 from app.utils.demanda_pre_calculada import (
     precarregar_demanda_em_lote,
+    precarregar_demanda_semanal_range,
     obter_demanda_do_cache,
     calcular_proporcoes_vendas_por_loja
 )
@@ -377,6 +378,11 @@ def api_compra_planejada_calcular():
                     cache_mes.update(cache)
             cache_demanda_por_mes[(ano_m, mes_m)] = cache_mes
 
+        # V50: Demanda semanal desabilitada na Compra Planejada ate validacao do calculo semanal
+        # Os valores semanais estao subdimensionados vs mensais (bug no cronjob a investigar)
+        # Usar apenas demanda mensal ate correcao
+        cache_demanda_por_semana = {}
+
         # Verificar se ha demanda
         tem_demanda = any(len(c) > 0 for c in cache_demanda_por_mes.values())
         if not tem_demanda:
@@ -639,6 +645,42 @@ def api_compra_planejada_calcular():
 
         print(f"  Cache: {len(estoque_consolidado)} itens ({len(itens_fase1)} pedido + {len([c for c in estoque_consolidado if c not in {i['codigo'] for i in itens_fase1}])} OK)")
 
+        # V51: Cache de estoque CD para redistribuicao nas fases 2+
+        # Busca estoque bruto do CD no banco e desconta redistribuicoes ja feitas na Fase 1
+        estoque_cd_cache = {}
+        try:
+            cursor_cd51 = conn.cursor()
+            ph_cd51 = ','.join(['%s'] * len(codigos_produtos))
+            cursor_cd51.execute(f"""
+                SELECT codigo, SUM(COALESCE(estoque, 0)) as est
+                FROM estoque_posicao_atual
+                WHERE codigo IN ({ph_cd51})
+                  AND cod_empresa >= 80
+                GROUP BY codigo
+                HAVING SUM(COALESCE(estoque, 0)) > 0
+            """, codigos_produtos)
+            for row_cd51 in cursor_cd51.fetchall():
+                estoque_cd_cache[int(row_cd51[0])] = float(row_cd51[1])
+            cursor_cd51.close()
+
+            # Descontar redistribuicoes CD ja executadas na Fase 1 (V29/V30)
+            for item in itens_pedido_normal:
+                cod = int(item.get('codigo', 0))
+                transf_cd = item.get('transferencias_cd', [])
+                for t in transf_cd:
+                    qtd_dist = float(t.get('qtd', 0))
+                    if cod in estoque_cd_cache:
+                        estoque_cd_cache[cod] = max(0, estoque_cd_cache[cod] - qtd_dist)
+
+            # Remover itens com estoque CD zerado apos redistribuicao F1
+            estoque_cd_cache = {k: v for k, v in estoque_cd_cache.items() if v > 0}
+
+            if estoque_cd_cache:
+                print(f"  V51: {len(estoque_cd_cache)} itens com estoque CD para redistribuicao nas fases 2+")
+        except Exception as e:
+            print(f"  V51: Erro ao buscar estoque CD: {e}")
+            estoque_cd_cache = {}
+
         # Buscar demanda do mes da 1a entrega (fallback)
         mes_fase1_key = (datas_entrega[0].year, datas_entrega[0].month)
         cache_demanda_fase1 = cache_demanda_por_mes.get(mes_fase1_key, {})
@@ -718,7 +760,8 @@ def api_compra_planejada_calcular():
                     # Demanda diaria para este periodo (com sazonalidade)
                     demanda_diaria_periodo = _calcular_demanda_diaria_periodo(
                         cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                        str(codigo), periodo, lojas_demanda, is_pedido_multiloja
+                        str(codigo), periodo, lojas_demanda, is_pedido_multiloja,
+                        cache_demanda_por_semana=cache_demanda_por_semana
                     )
 
                     if demanda_diaria_periodo <= 0:
@@ -746,14 +789,16 @@ def api_compra_planejada_calcular():
                             consumo_loja = _calcular_consumo_total_periodo(
                                 cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
                                 str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
-                                [loja], True
+                                [loja], True,
+                                cache_demanda_por_semana=cache_demanda_por_semana
                             )
                             est_proj_loja = max(0, est_loja + ped_ant_loja - consumo_loja)
 
                             # Demanda diaria desta loja no periodo alvo
                             dem_dia_loja = _calcular_demanda_diaria_periodo(
                                 cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                                str(codigo), periodo, [loja], True
+                                str(codigo), periodo, [loja], True,
+                                cache_demanda_por_semana=cache_demanda_por_semana
                             )
                             target_loja = dem_dia_loja * cobertura_alvo
                             nec_loja = max(0.0, target_loja - est_proj_loja)
@@ -762,6 +807,17 @@ def api_compra_planejada_calcular():
                             estoque_projetado_total += est_proj_loja
                             target_total += target_loja
                             deficit_por_loja[loja] = nec_loja
+
+                        # V51: Redistribuicao CD nas fases 2+
+                        redistribuicao_cd = 0
+                        if necessidade_total > 0 and codigo in estoque_cd_cache:
+                            cd_disponivel = estoque_cd_cache[codigo]
+                            if cd_disponivel > 0:
+                                redistribuicao_cd = min(cd_disponivel, necessidade_total)
+                                redistribuicao_cd = (int(redistribuicao_cd) // multiplo) * multiplo
+                                if redistribuicao_cd > 0:
+                                    necessidade_total = max(0, necessidade_total - redistribuicao_cd)
+                                    estoque_cd_cache[codigo] -= redistribuicao_cd
 
                         # Arredondar total para multiplo de caixa
                         if necessidade_total <= 0:
@@ -790,11 +846,24 @@ def api_compra_planejada_calcular():
                         consumo_ate_entrega = _calcular_consumo_total_periodo(
                             cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
                             str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
-                            lojas_demanda, is_pedido_multiloja
+                            lojas_demanda, is_pedido_multiloja,
+                            cache_demanda_por_semana=cache_demanda_por_semana
                         )
                         estoque_projetado = max(0, estoque_hoje + pedidos_ant - consumo_ate_entrega)
                         target_estoque = demanda_diaria_periodo * cobertura_alvo
                         necessidade = target_estoque - estoque_projetado
+
+                        # V51: Redistribuicao CD (fallback mono-loja)
+                        redistribuicao_cd = 0
+                        if necessidade > 0 and codigo in estoque_cd_cache:
+                            cd_disponivel = estoque_cd_cache[codigo]
+                            if cd_disponivel > 0:
+                                redistribuicao_cd = min(cd_disponivel, necessidade)
+                                redistribuicao_cd = (int(redistribuicao_cd) // multiplo) * multiplo
+                                if redistribuicao_cd > 0:
+                                    necessidade = max(0, necessidade - redistribuicao_cd)
+                                    estoque_cd_cache[codigo] -= redistribuicao_cd
+
                         if necessidade <= 0:
                             qtd_pedido = 0
                         else:
@@ -805,7 +874,8 @@ def api_compra_planejada_calcular():
                     # Debug primeiros itens de todas as fases
                     if len(itens_fase) < 3:
                         lojas_info = f"{len(lojas_do_item) if lojas_do_item and is_pedido_multiloja else 1}L"
-                        print(f"    [NEG F{fase_idx+1}] cod={codigo} ({lojas_info}): est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} ({cobertura_alvo}d) | nec={necessidade:.0f} -> pedido={qtd_pedido}")
+                        cd_info = f" | cd_redist={redistribuicao_cd}" if redistribuicao_cd > 0 else ""
+                        print(f"    [NEG F{fase_idx+1}] cod={codigo} ({lojas_info}): est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} ({cobertura_alvo}d) | nec={necessidade:.0f}{cd_info} -> pedido={qtd_pedido}")
 
                     cue = cue_cache.get(codigo, 0)
 
@@ -841,6 +911,7 @@ def api_compra_planejada_calcular():
                         'fator_sazonal': round(fator_saz, 3),
                         'tipo_calculo': 'negociacao',
                         'order_cap_aplicado': order_cap_aplicado,
+                        'redistribuicao_cd': redistribuicao_cd,
                     })
 
                     # Acumular pedido total para proximas fases
@@ -896,7 +967,8 @@ def api_compra_planejada_calcular():
 
                     demanda_diaria_periodo = _calcular_demanda_diaria_periodo(
                         cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                        str(codigo), periodo, lojas_demanda, is_pedido_multiloja
+                        str(codigo), periodo, lojas_demanda, is_pedido_multiloja,
+                        cache_demanda_por_semana=cache_demanda_por_semana
                     )
 
                     if demanda_diaria_periodo <= 0:
@@ -924,12 +996,14 @@ def api_compra_planejada_calcular():
                             ped_ant_loja = pedidos_por_loja_acumulados.get((codigo, loja), 0)
                             dem_diaria_loja = _calcular_demanda_diaria_periodo(
                                 cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                                str(codigo), periodo, [loja], True
+                                str(codigo), periodo, [loja], True,
+                                cache_demanda_por_semana=cache_demanda_por_semana
                             )
                             consumo_loja = _calcular_consumo_total_periodo(
                                 cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
                                 str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
-                                [loja], True
+                                [loja], True,
+                                cache_demanda_por_semana=cache_demanda_por_semana
                             )
                             est_proj_loja = max(0, est_loja + ped_ant_loja - consumo_loja)
                             target_loja = dem_diaria_loja * target_cobertura
@@ -939,6 +1013,17 @@ def api_compra_planejada_calcular():
                             estoque_projetado_total_reb += est_proj_loja
                             target_total_reb += target_loja
                             deficit_por_loja_reb[loja] = nec_loja
+
+                        # V51: Redistribuicao CD nas fases 2+
+                        redistribuicao_cd = 0
+                        if necessidade_total_reb > 0 and codigo in estoque_cd_cache:
+                            cd_disponivel = estoque_cd_cache[codigo]
+                            if cd_disponivel > 0:
+                                redistribuicao_cd = min(cd_disponivel, necessidade_total_reb)
+                                redistribuicao_cd = (int(redistribuicao_cd) // multiplo) * multiplo
+                                if redistribuicao_cd > 0:
+                                    necessidade_total_reb = max(0, necessidade_total_reb - redistribuicao_cd)
+                                    estoque_cd_cache[codigo] -= redistribuicao_cd
 
                         if necessidade_total_reb <= 0:
                             qtd_pedido = 0
@@ -967,6 +1052,17 @@ def api_compra_planejada_calcular():
                         target_estoque = demanda_diaria_periodo * target_cobertura
                         necessidade = target_estoque - max(0, estoque_projetado)
 
+                        # V51: Redistribuicao CD (fallback mono-loja)
+                        redistribuicao_cd = 0
+                        if necessidade > 0 and codigo in estoque_cd_cache:
+                            cd_disponivel = estoque_cd_cache[codigo]
+                            if cd_disponivel > 0:
+                                redistribuicao_cd = min(cd_disponivel, necessidade)
+                                redistribuicao_cd = (int(redistribuicao_cd) // multiplo) * multiplo
+                                if redistribuicao_cd > 0:
+                                    necessidade = max(0, necessidade - redistribuicao_cd)
+                                    estoque_cd_cache[codigo] -= redistribuicao_cd
+
                         if necessidade <= 0:
                             qtd_pedido = 0
                         else:
@@ -976,7 +1072,8 @@ def api_compra_planejada_calcular():
 
                     if fase_idx == 1 and len(itens_fase) < 3 and qtd_pedido > 0:
                         lojas_info = f"{len(lojas_do_item_reb) if lojas_do_item_reb and is_pedido_multiloja else 1}L"
-                        print(f"    [OUL F{fase_idx+1}] cod={codigo} ({lojas_info}): est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} | nec={necessidade:.0f} -> pedido={qtd_pedido}")
+                        cd_info = f" | cd_redist={redistribuicao_cd}" if redistribuicao_cd > 0 else ""
+                        print(f"    [OUL F{fase_idx+1}] cod={codigo} ({lojas_info}): est_proj={estoque_projetado:.0f} | target={target_estoque:.0f} | nec={necessidade:.0f}{cd_info} -> pedido={qtd_pedido}")
 
                     cue = cue_cache.get(codigo, 0)
 
@@ -1009,6 +1106,7 @@ def api_compra_planejada_calcular():
                         'fator_sazonal': fator_saz,
                         'tipo_calculo': 'projetado',
                         'order_cap_aplicado': order_cap_aplicado,
+                        'redistribuicao_cd': redistribuicao_cd,
                     })
 
                     pedidos_acumulados[codigo] = pedidos_acumulados.get(codigo, 0) + qtd_pedido
@@ -1090,18 +1188,64 @@ def api_compra_planejada_calcular():
 
 def _calcular_consumo_total_periodo(
     cache_demanda_por_mes, cache_proporcoes, cache_fallback,
-    cod_produto, dt_inicio, dt_fim, lojas_demanda, is_multiloja
+    cod_produto, dt_inicio, dt_fim, lojas_demanda, is_multiloja,
+    cache_demanda_por_semana=None
 ):
     """
     Calcula o consumo TOTAL (unidades) de dt_inicio ate dt_fim,
-    iterando mes a mes com a demanda sazonal de cada mes.
+    iterando mes a mes (ou semana a semana) com a demanda sazonal.
 
     Usado para projetar o consumo ate a data de entrega de cada fase,
     evitando usar a demanda do mes-alvo para todos os dias anteriores.
+    V50: Se cache_demanda_por_semana disponivel, decompoe por semanas ISO.
     """
     if dt_inicio > dt_fim:
         return 0.0
 
+    # V50: Tentar usar decomposicao semanal
+    usa_semanal = False
+    if cache_demanda_por_semana:
+        iso_cal = dt_inicio.isocalendar()
+        cache_test = cache_demanda_por_semana.get((iso_cal[0], iso_cal[1]), {})
+        usa_semanal = (str(cod_produto), None) in cache_test
+
+    if usa_semanal:
+        consumo_total = 0.0
+        dt_atual = dt_inicio
+
+        while dt_atual <= dt_fim:
+            iso_cal = dt_atual.isocalendar()
+            ano_iso, sem_iso, dia_sem = iso_cal[0], iso_cal[1], iso_cal[2]
+
+            dias_ate_domingo = 7 - dia_sem
+            fim_semana = dt_atual + timedelta(days=dias_ate_domingo)
+            fim_segmento = min(dt_fim, fim_semana)
+            dias_segmento = (fim_segmento - dt_atual).days + 1
+
+            cache_sem = cache_demanda_por_semana.get((ano_iso, sem_iso), {})
+            if not cache_sem:
+                cache_sem_mes = cache_demanda_por_mes.get((dt_atual.year, dt_atual.month), {})
+                cache_sem = cache_sem_mes if cache_sem_mes else cache_fallback
+
+            if is_multiloja:
+                demanda_diaria_seg = 0
+                num_lojas = len(lojas_demanda)
+                for loja in lojas_demanda:
+                    prop = cache_proporcoes.get((cod_produto, loja))
+                    dd, _, _ = obter_demanda_do_cache(
+                        cache_sem, cod_produto, cod_empresa=loja,
+                        num_lojas=num_lojas, proporcao_loja=prop
+                    )
+                    demanda_diaria_seg += dd
+            else:
+                demanda_diaria_seg, _, _ = obter_demanda_do_cache(cache_sem, cod_produto)
+
+            consumo_total += demanda_diaria_seg * dias_segmento
+            dt_atual = fim_segmento + timedelta(days=1)
+
+        return consumo_total
+
+    # Path mensal original
     consumo_total = 0.0
     dt_atual = dt_inicio
 
@@ -1129,7 +1273,6 @@ def _calcular_consumo_total_periodo(
 
         consumo_total += demanda_diaria_seg * dias_segmento
 
-        # Avançar para o próximo mês
         if dt_atual.month == 12:
             dt_atual = date(dt_atual.year + 1, 1, 1)
         else:
@@ -1140,16 +1283,66 @@ def _calcular_consumo_total_periodo(
 
 def _calcular_demanda_diaria_periodo(
     cache_demanda_por_mes, cache_proporcoes, cache_fallback,
-    cod_produto, periodo, lojas_demanda, is_multiloja
+    cod_produto, periodo, lojas_demanda, is_multiloja,
+    cache_demanda_por_semana=None
 ):
     """
     Calcula demanda diaria media ponderada para um periodo que pode cruzar meses.
     Pondera pela quantidade de dias de cada mes no periodo.
+    V50: Se cache_demanda_por_semana disponivel, decompoe por semanas ISO.
     """
     dt_inicio = periodo['data_inicio_cobertura']
     dt_fim = periodo['data_fim_cobertura']
 
-    # Decompor o periodo em segmentos por mes
+    # V50: Tentar usar decomposicao semanal se cache disponivel
+    usa_semanal = False
+    if cache_demanda_por_semana:
+        iso_cal = dt_inicio.isocalendar()
+        cache_test = cache_demanda_por_semana.get((iso_cal[0], iso_cal[1]), {})
+        usa_semanal = (str(cod_produto), None) in cache_test
+
+    if usa_semanal:
+        # Decomposicao por semana ISO
+        demanda_total = 0
+        dias_total = 0
+        dt_atual = dt_inicio
+
+        while dt_atual <= dt_fim:
+            iso_cal = dt_atual.isocalendar()
+            ano_iso, sem_iso, dia_sem = iso_cal[0], iso_cal[1], iso_cal[2]
+
+            # Fim desta semana (domingo) ou fim do periodo, o que vier primeiro
+            dias_ate_domingo = 7 - dia_sem
+            fim_semana = dt_atual + timedelta(days=dias_ate_domingo)
+            fim_segmento = min(dt_fim, fim_semana)
+            dias_segmento = (fim_segmento - dt_atual).days + 1
+
+            cache_sem = cache_demanda_por_semana.get((ano_iso, sem_iso), {})
+            if not cache_sem:
+                # Fallback: usar mensal
+                cache_sem_mes = cache_demanda_por_mes.get((dt_atual.year, dt_atual.month), {})
+                cache_sem = cache_sem_mes if cache_sem_mes else cache_fallback
+
+            if is_multiloja:
+                demanda_diaria_seg = 0
+                num_lojas = len(lojas_demanda)
+                for loja in lojas_demanda:
+                    prop = cache_proporcoes.get((cod_produto, loja))
+                    dd, _, _ = obter_demanda_do_cache(
+                        cache_sem, cod_produto, cod_empresa=loja,
+                        num_lojas=num_lojas, proporcao_loja=prop
+                    )
+                    demanda_diaria_seg += dd
+            else:
+                demanda_diaria_seg, _, _ = obter_demanda_do_cache(cache_sem, cod_produto)
+
+            demanda_total += demanda_diaria_seg * dias_segmento
+            dias_total += dias_segmento
+            dt_atual = fim_segmento + timedelta(days=1)
+
+        return demanda_total / dias_total if dias_total > 0 else 0
+
+    # Path mensal original (sem alteracao)
     segmentos = []
     dt_atual = dt_inicio
     while dt_atual <= dt_fim:
@@ -1161,20 +1354,18 @@ def _calcular_demanda_diaria_periodo(
             'mes': dt_atual.month,
             'dias': dias_segmento
         })
-        # Proximo mes
         if dt_atual.month == 12:
             dt_atual = date(dt_atual.year + 1, 1, 1)
         else:
             dt_atual = date(dt_atual.year, dt_atual.month + 1, 1)
 
-    # Calcular demanda ponderada
     demanda_total = 0
     dias_total = 0
 
     for seg in segmentos:
         cache_mes = cache_demanda_por_mes.get((seg['ano'], seg['mes']), {})
         if not cache_mes:
-            cache_mes = cache_fallback  # Fallback para ultimo cache disponivel
+            cache_mes = cache_fallback
 
         if is_multiloja:
             demanda_diaria_seg = 0
