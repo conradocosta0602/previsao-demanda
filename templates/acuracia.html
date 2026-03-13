@@ -155,7 +155,7 @@
         /* Cards de KPI */
         .kpi-cards {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
             gap: 20px;
             margin-bottom: 25px;
         }
@@ -176,6 +176,7 @@
 
         .kpi-card.wmape { border-left-color: var(--cor-wmape); }
         .kpi-card.bias { border-left-color: var(--cor-bias); }
+        .kpi-card.fva { border-left-color: #10b981; }
         .kpi-card.distribuicao { border-left-color: var(--cor-distribuicao); }
 
         .kpi-header {
@@ -529,6 +530,19 @@
                 <div class="kpi-tendencia" id="kpi-bias-tendencia">-</div>
             </div>
 
+            <!-- Card FVA -->
+            <div class="kpi-card fva">
+                <div class="kpi-header">
+                    <span class="kpi-label">
+                        FVA
+                        <span class="kpi-sublabel">Forecast Value Added</span>
+                    </span>
+                    <span class="kpi-badge badge-cinza" id="kpi-fva-badge">-</span>
+                </div>
+                <div class="kpi-valor" id="kpi-fva-valor">-</div>
+                <div class="kpi-tendencia" id="kpi-fva-tendencia">-</div>
+            </div>
+
             <!-- Card Distribuicao -->
             <div class="kpi-card distribuicao">
                 <div class="kpi-header">
@@ -569,6 +583,7 @@
                             <th class="sortable" data-sort="wmape">WMAPE <span class="sort-icon">&#8597;</span></th>
                             <th class="sortable" data-sort="bias_pct">BIAS <span class="sort-icon">&#8597;</span></th>
                             <th class="sortable" data-sort="mae">MAE <span class="sort-icon">&#8597;</span></th>
+                            <th class="sortable" data-sort="fva">FVA <span class="sort-icon">&#8597;</span></th>
                             <th>Itens</th>
                             <th>Volume Realizado</th>
                             <th id="th-metodo" style="display:none;">Metodo</th>
@@ -576,7 +591,7 @@
                     </thead>
                     <tbody id="ranking-tbody">
                         <tr>
-                            <td colspan="7" class="text-center text-muted py-4">
+                            <td colspan="8" class="text-center text-muted py-4">
                                 Carregando dados...
                             </td>
                         </tr>

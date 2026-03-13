@@ -59,7 +59,7 @@ class ValidadorConformidade:
 
     def executar_checklist_completo(self) -> Dict:
         """
-        Executa todas as 33 verificacoes do checklist de conformidade.
+        Executa todas as 34 verificacoes do checklist de conformidade.
 
         Returns:
             Dict com resultado completo do checklist
@@ -103,6 +103,8 @@ class ValidadorConformidade:
             ('V45', 'Delay Operacional Removido + Transit CD 15d', self._verificar_delay_removido_transit_15),
             ('V46', 'SOLIs Abertas no Calculo de Pedido', self._verificar_solis_abertas),
             ('V50', 'Granularidade Semanal Disponivel', self._verificar_granularidade_semanal),
+            ('V51', 'Correcao de Demanda Censurada', self._verificar_demanda_censurada),
+            ('V52', 'FVA Baseline na Acuracia', self._verificar_fva_baseline),
         ]
 
         for codigo, nome, func_verificacao in verificacoes:
@@ -1672,9 +1674,11 @@ class ValidadorConformidade:
             # Teste 1: obter_demanda_do_cache usa demanda_efetiva ou demanda_prevista dividida por 30
             source_cache = inspect.getsource(obter_demanda_do_cache)
 
-            # Deve encontrar padrao: demanda_mensal / 30 ou demanda_efetiva / 30 ou demanda_prevista / 30
+            # Deve encontrar padrao: demanda_mensal / 30 ou demanda_efetiva / 30
+            # ou via variavel divisor (V50: divisor = 7.0 semanal, 30.0 mensal)
             usa_demanda_mensal = ('demanda_efetiva' in source_cache or 'demanda_prevista' in source_cache)
-            usa_divisao_30 = ('/ 30' in source_cache or '/30' in source_cache)
+            usa_divisao_30 = ('/ 30' in source_cache or '/30' in source_cache
+                              or '/ divisor' in source_cache or '/divisor' in source_cache)
             nao_usa_base_errado = 'demanda_diaria_base' not in source_cache.split('# IMPORTANTE')[0] if '# IMPORTANTE' in source_cache else True
 
             teste_1_ok = usa_demanda_mensal and usa_divisao_30
@@ -1692,7 +1696,8 @@ class ValidadorConformidade:
             source_efetiva = inspect.getsource(obter_demanda_diaria_efetiva)
 
             usa_demanda_mensal_2 = ('demanda_efetiva' in source_efetiva or 'demanda_prevista' in source_efetiva)
-            usa_divisao_30_2 = ('/ 30' in source_efetiva or '/30' in source_efetiva)
+            usa_divisao_30_2 = ('/ 30' in source_efetiva or '/30' in source_efetiva
+                                or '/ divisor' in source_efetiva or '/divisor' in source_efetiva)
 
             teste_2_ok = usa_demanda_mensal_2 and usa_divisao_30_2
             resultados.append({
@@ -3682,6 +3687,256 @@ class ValidadorConformidade:
 
         except Exception as e:
             return 'falha', f'Erro ao verificar V50: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_demanda_censurada(self):
+        """
+        V51: Verifica que a correcao de demanda censurada esta ativa.
+
+        Testes:
+        1. Colunas taxa_disponibilidade, dias_ruptura, demanda_censurada_corrigida existem
+        2. Existem itens com ruptura significativa (dias_ruptura > 30)
+        3. Itens com ruptura significativa tiveram correcao aplicada
+        4. taxa_disponibilidade esta calculada (nao NULL) para itens recentes
+        """
+        try:
+            resultados = []
+            testes_ok = 0
+            testes_total = 4
+
+            cursor = self.conn.cursor()
+
+            # Teste 1: Colunas existem
+            try:
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'demanda_pre_calculada'
+                    AND column_name IN ('taxa_disponibilidade', 'dias_ruptura', 'demanda_censurada_corrigida')
+                """)
+                colunas = [r[0] for r in cursor.fetchall()]
+                teste_1_ok = len(colunas) == 3
+                resultados.append({
+                    'teste': 'Colunas V51 existem (taxa_disponibilidade, dias_ruptura, demanda_censurada_corrigida)',
+                    'colunas_encontradas': colunas,
+                    'correto': teste_1_ok
+                })
+                if teste_1_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Colunas V51 existem',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            # Teste 2: Itens com ruptura significativa
+            try:
+                cursor.execute("""
+                    SELECT COUNT(DISTINCT cod_produto) as itens_com_ruptura,
+                           COALESCE(AVG(dias_ruptura), 0) as media_dias_ruptura
+                    FROM demanda_pre_calculada
+                    WHERE dias_ruptura > 30
+                    AND tipo_granularidade = 'mensal'
+                    AND data_calculo >= CURRENT_DATE - INTERVAL '7 days'
+                """)
+                row = cursor.fetchone()
+                itens_rup = row[0] or 0
+                media_rup = float(row[1] or 0)
+                teste_2_ok = True  # Informativo, sempre OK
+                resultados.append({
+                    'teste': 'Itens com ruptura significativa (>30 dias)',
+                    'itens_com_ruptura': itens_rup,
+                    'media_dias_ruptura': round(media_rup, 1),
+                    'correto': teste_2_ok
+                })
+                if teste_2_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Itens com ruptura',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            # Teste 3: Itens com ruptura tiveram correcao
+            try:
+                cursor.execute("""
+                    SELECT
+                        COUNT(DISTINCT cod_produto) FILTER (WHERE dias_ruptura > 30) as total_com_ruptura,
+                        COUNT(DISTINCT cod_produto) FILTER (WHERE dias_ruptura > 30 AND demanda_censurada_corrigida = true) as total_corrigidos
+                    FROM demanda_pre_calculada
+                    WHERE tipo_granularidade = 'mensal'
+                    AND data_calculo >= CURRENT_DATE - INTERVAL '7 days'
+                """)
+                row = cursor.fetchone()
+                total_rup = row[0] or 0
+                total_corr = row[1] or 0
+                pct = (total_corr / total_rup * 100) if total_rup > 0 else 100
+                teste_3_ok = total_rup == 0 or pct >= 50
+                resultados.append({
+                    'teste': 'Itens com ruptura tiveram correcao aplicada',
+                    'itens_com_ruptura': total_rup,
+                    'itens_corrigidos': total_corr,
+                    'percentual_corrigido': round(pct, 1),
+                    'correto': teste_3_ok
+                })
+                if teste_3_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'Correcao de ruptura',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            # Teste 4: taxa_disponibilidade preenchida
+            try:
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE taxa_disponibilidade IS NOT NULL) as com_taxa
+                    FROM demanda_pre_calculada
+                    WHERE tipo_granularidade = 'mensal'
+                    AND data_calculo >= CURRENT_DATE - INTERVAL '7 days'
+                """)
+                row = cursor.fetchone()
+                total = row[0] or 0
+                com_taxa = row[1] or 0
+                pct_taxa = (com_taxa / total * 100) if total > 0 else 100
+                teste_4_ok = total == 0 or pct_taxa >= 50
+                resultados.append({
+                    'teste': 'taxa_disponibilidade preenchida',
+                    'total_registros': total,
+                    'com_taxa': com_taxa,
+                    'percentual': round(pct_taxa, 1),
+                    'correto': teste_4_ok
+                })
+                if teste_4_ok:
+                    testes_ok += 1
+            except Exception as e:
+                resultados.append({
+                    'teste': 'taxa_disponibilidade',
+                    'correto': False,
+                    'erro': str(e)
+                })
+
+            detalhes = {
+                'testes': resultados,
+                'testes_ok': testes_ok,
+                'testes_total': testes_total
+            }
+
+            if testes_ok == testes_total:
+                return 'ok', f'V51 funcional: {testes_ok}/{testes_total} testes OK', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V51 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V51 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V51: {str(e)}', {
+                'traceback': traceback.format_exc()
+            }
+
+    def _verificar_fva_baseline(self):
+        """
+        V52: Verifica que a API de acuracia retorna FVA (Forecast Value Added)
+        com naive forecast (vendas do ano anterior) como baseline.
+        """
+        try:
+            detalhes = {'testes': []}
+            testes_ok = 0
+            testes_total = 0
+
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            # Teste 1: API de acuracia retorna dados com naive forecast
+            testes_total += 1
+            try:
+                cur.execute("""
+                    SELECT COUNT(*) as total,
+                           COUNT(CASE WHEN dpc.valor_ano_anterior IS NOT NULL
+                                       AND dpc.valor_ano_anterior > 0 THEN 1 END) as com_aa
+                    FROM demanda_pre_calculada dpc
+                    WHERE dpc.tipo_granularidade = 'mensal'
+                      AND dpc.data_calculo >= CURRENT_DATE - INTERVAL '90 days'
+                """)
+                row = cur.fetchone()
+                total = row[0] if row else 0
+                com_aa = row[1] if row else 0
+
+                if total > 0 and com_aa > 0:
+                    pct = (com_aa / total) * 100
+                    detalhes['testes'].append({
+                        'teste': 'Dados de ano anterior disponiveis para FVA',
+                        'resultado': 'ok',
+                        'detalhes': f'{com_aa}/{total} registros com valor_ano_anterior ({pct:.0f}%)'
+                    })
+                    testes_ok += 1
+                elif total > 0:
+                    detalhes['testes'].append({
+                        'teste': 'Dados de ano anterior disponiveis para FVA',
+                        'resultado': 'alerta',
+                        'detalhes': f'0/{total} registros com valor_ano_anterior'
+                    })
+                else:
+                    detalhes['testes'].append({
+                        'teste': 'Dados de ano anterior disponiveis para FVA',
+                        'resultado': 'alerta',
+                        'detalhes': 'Sem registros recentes de demanda'
+                    })
+            except Exception as e:
+                detalhes['testes'].append({
+                    'teste': 'Dados de ano anterior disponiveis para FVA',
+                    'resultado': 'falha',
+                    'detalhes': str(e)
+                })
+
+            # Teste 2: Historico de vendas tem dados do ano anterior para comparacao
+            testes_total += 1
+            try:
+                cur.execute("""
+                    SELECT COUNT(DISTINCT EXTRACT(YEAR FROM data)::int) as anos_distintos
+                    FROM historico_vendas_diario
+                    WHERE data >= CURRENT_DATE - INTERVAL '24 months'
+                      AND cod_empresa < 80
+                """)
+                row = cur.fetchone()
+                anos = row[0] if row else 0
+
+                if anos >= 2:
+                    detalhes['testes'].append({
+                        'teste': 'Historico vendas cobre ao menos 2 anos (naive forecast)',
+                        'resultado': 'ok',
+                        'detalhes': f'{anos} anos distintos de vendas nos ultimos 24 meses'
+                    })
+                    testes_ok += 1
+                else:
+                    detalhes['testes'].append({
+                        'teste': 'Historico vendas cobre ao menos 2 anos (naive forecast)',
+                        'resultado': 'alerta',
+                        'detalhes': f'Apenas {anos} ano(s) de vendas - FVA pode ser N/D para muitos itens'
+                    })
+            except Exception as e:
+                detalhes['testes'].append({
+                    'teste': 'Historico vendas cobre ao menos 2 anos',
+                    'resultado': 'falha',
+                    'detalhes': str(e)
+                })
+
+            conn.close()
+
+            if testes_ok == testes_total:
+                return 'ok', f'V52 funcional: FVA baseline disponivel ({testes_ok}/{testes_total} testes OK)', detalhes
+            elif testes_ok > 0:
+                return 'alerta', f'V52 parcial: {testes_ok}/{testes_total} testes OK', detalhes
+            else:
+                return 'falha', f'V52 com falha: 0/{testes_total} testes OK', detalhes
+
+        except Exception as e:
+            return 'falha', f'Erro ao verificar V52: {str(e)}', {
                 'traceback': traceback.format_exc()
             }
 

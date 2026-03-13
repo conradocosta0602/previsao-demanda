@@ -30,6 +30,7 @@ let filtrosData = {};
 const CORES = {
     wmape: '#3b82f6',
     bias: '#f59e0b',
+    fva: '#10b981',
     meta20: '#10b981',
     zero: '#9ca3af'
 };
@@ -342,6 +343,37 @@ function atualizarCardsKPI(data) {
             ? 'tendencia-positiva' : 'tendencia-negativa');
     }
 
+    // FVA
+    const fva = data.fva || {};
+    const fvaVal = fva.valor;
+    const fvaElem = document.getElementById('kpi-fva-valor');
+    const badgeFva = document.getElementById('kpi-fva-badge');
+    const tendFva = document.getElementById('kpi-fva-tendencia');
+
+    if (fvaElem) {
+        if (fvaVal !== null && fvaVal !== undefined) {
+            const sinalFva = fvaVal > 0 ? '+' : '';
+            fvaElem.textContent = sinalFva + fvaVal.toFixed(1) + '%';
+
+            const corFva = getCorFva(fvaVal);
+            if (badgeFva) {
+                badgeFva.className = `kpi-badge badge-${corFva.badge}`;
+                badgeFva.textContent = corFva.texto;
+            }
+            if (tendFva) {
+                tendFva.textContent = fva.interpretacao || '';
+                tendFva.className = 'kpi-tendencia';
+            }
+        } else {
+            fvaElem.textContent = 'N/D';
+            if (badgeFva) {
+                badgeFva.className = 'kpi-badge badge-cinza';
+                badgeFva.textContent = 'Sem dados';
+            }
+            if (tendFva) tendFva.textContent = 'Sem vendas do ano anterior';
+        }
+    }
+
     // Total itens badge
     document.getElementById('kpi-total-itens').textContent =
         (data.total_itens || 0) + ' itens';
@@ -439,6 +471,7 @@ function atualizarGraficoEvolucao(dados) {
     const labels = dados.map(d => d.periodo_label);
     const wmapeVals = dados.map(d => d.wmape);
     const biasVals = dados.map(d => d.bias_pct);
+    const fvaVals = dados.map(d => d.fva);
 
     charts.evolucao = new Chart(ctx, {
         type: 'line',
@@ -481,6 +514,18 @@ function atualizarGraficoEvolucao(dados) {
                     yAxisID: 'y'
                 },
                 {
+                    label: 'FVA (%)',
+                    data: fvaVals,
+                    borderColor: CORES.fva,
+                    backgroundColor: hexToRgba(CORES.fva, 0.1),
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    yAxisID: 'y1'
+                },
+                {
                     label: 'BIAS ideal (0%)',
                     data: dados.map(() => 0),
                     borderColor: CORES.zero,
@@ -520,9 +565,10 @@ function atualizarGraficoEvolucao(dados) {
                         label: function(context) {
                             const val = context.raw;
                             if (context.dataset.label.includes('Meta') || context.dataset.label.includes('ideal')) {
-                                return null; // Nao mostrar tooltip para linhas de referencia
+                                return null;
                             }
-                            const sinal = val > 0 && context.dataset.label.includes('BIAS') ? '+' : '';
+                            if (val === null || val === undefined) return null;
+                            const sinal = val > 0 && (context.dataset.label.includes('BIAS') || context.dataset.label.includes('FVA')) ? '+' : '';
                             return ` ${context.dataset.label}: ${sinal}${val.toFixed(1)}%`;
                         }
                     }
@@ -583,7 +629,7 @@ function atualizarTabelaRanking(data) {
         thMetodo.style.display = state.agregacao === 'item' ? '' : 'none';
     }
 
-    const numCols = state.agregacao === 'item' ? 7 : 6;
+    const numCols = state.agregacao === 'item' ? 8 : 7;
 
     if (!data || !data.itens || data.itens.length === 0) {
         tbody.innerHTML = `
@@ -629,11 +675,23 @@ function atualizarTabelaRanking(data) {
             ? `<td><small>${item.metodo_predominante || '-'}</small></td>`
             : '';
 
+        // FVA
+        const fvaItemVal = item.fva;
+        let fvaCell = '';
+        if (fvaItemVal !== null && fvaItemVal !== undefined) {
+            const corF = getCorFva(fvaItemVal);
+            const sinalF = fvaItemVal > 0 ? '+' : '';
+            fvaCell = `<td><span class="badge badge-${corF.badge}">${sinalF}${fvaItemVal.toFixed(1)}%</span></td>`;
+        } else {
+            fvaCell = '<td><span class="badge badge-cinza">N/D</span></td>';
+        }
+
         tr.innerHTML = `
             <td class="fw-medium">${identificador}${descExtra}</td>
             <td><span class="badge badge-${corW.badge}">${wmapeVal.toFixed(1)}%</span></td>
             <td><span class="badge badge-${corB.badge}">${sinalBias}${biasVal.toFixed(1)}%</span></td>
             <td>${maeVal.toFixed(1)}</td>
+            ${fvaCell}
             <td>${item.total_itens || '-'}</td>
             <td>${totalFormatado}</td>
             ${colMetodo}
@@ -704,6 +762,13 @@ function getCorBias(valor) {
     if (abs < 5) return { badge: 'verde', texto: 'OK' };
     if (abs < 10) return { badge: 'amarelo', texto: 'Atencao' };
     return { badge: 'vermelho', texto: 'Critico' };
+}
+
+function getCorFva(valor) {
+    if (valor === null || valor === undefined) return { badge: 'cinza', texto: 'N/D' };
+    if (valor > 10) return { badge: 'verde', texto: 'Agrega valor' };
+    if (valor >= 0) return { badge: 'amarelo', texto: 'Neutro' };
+    return { badge: 'vermelho', texto: 'Abaixo do naive' };
 }
 
 // ========================================

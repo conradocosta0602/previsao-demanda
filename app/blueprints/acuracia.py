@@ -102,7 +102,7 @@ def build_cte_comparacao(meses, filtros):
 
     # Filtros WHERE adicionais
     where_parts = []
-    params = [data_inicio]  # %(data_inicio)s
+    params = [data_inicio]  # realizado_mensal
 
     if filtros['fornecedores']:
         placeholders = ','.join(['%s'] * len(filtros['fornecedores']))
@@ -153,6 +153,14 @@ def build_cte_comparacao(meses, filtros):
         GROUP BY hvd.codigo,
                  EXTRACT(YEAR FROM hvd.data), EXTRACT(MONTH FROM hvd.data)
     ),
+    curva_item AS (
+        SELECT DISTINCT ON (codigo)
+            codigo::text AS cod_produto,
+            curva_abc
+        FROM estoque_posicao_atual
+        WHERE curva_abc IS NOT NULL
+        ORDER BY codigo, cod_empresa
+    ),
     comparacao AS (
         SELECT
             dpc.cod_produto,
@@ -166,7 +174,11 @@ def build_cte_comparacao(meses, filtros):
             cpc.categoria,
             cpc.codigo_linha,
             cpc.descricao AS descricao_item,
-            COALESCE(epa.curva_abc, 'B') AS curva_abc
+            COALESCE(ci.curva_abc, 'B') AS curva_abc,
+            -- V52: Naive forecast = valor_ano_anterior (vendas do mesmo mes, ano anterior)
+            COALESCE(dpc.valor_ano_anterior, 0) AS vendas_aa,
+            ABS(rm.qtd_realizada - COALESCE(dpc.ajuste_manual, dpc.demanda_prevista)) AS erro_modelo,
+            ABS(rm.qtd_realizada - COALESCE(dpc.valor_ano_anterior, 0)) AS erro_naive
         FROM demanda_pre_calculada dpc
         INNER JOIN realizado_mensal rm
             ON dpc.cod_produto = rm.codigo::text
@@ -174,11 +186,8 @@ def build_cte_comparacao(meses, filtros):
             AND dpc.mes = rm.mes
         LEFT JOIN cadastro_produtos_completo cpc
             ON dpc.cod_produto = cpc.cod_produto
-        LEFT JOIN LATERAL (
-            SELECT curva_abc FROM estoque_posicao_atual
-            WHERE codigo::text = dpc.cod_produto
-            LIMIT 1
-        ) epa ON true
+        LEFT JOIN curva_item ci
+            ON ci.cod_produto = dpc.cod_produto
         WHERE dpc.demanda_prevista > 0
           AND rm.qtd_realizada >= 2
           AND COALESCE(dpc.tipo_granularidade, 'mensal') = 'mensal'
@@ -301,7 +310,12 @@ def api_acuracia_resumo():
                 SUM(qtd_prevista - qtd_realizada)::numeric
                 / NULLIF(SUM(qtd_realizada), 0) * 100
             , 2) AS bias_pct,
-            ROUND(AVG(ABS(qtd_realizada - qtd_prevista)), 2) AS mae
+            ROUND(AVG(ABS(qtd_realizada - qtd_prevista)), 2) AS mae,
+            -- V52: FVA = 1 - (erro_modelo / erro_naive)
+            ROUND(
+                1.0 - (SUM(erro_modelo)::numeric / NULLIF(SUM(erro_naive), 0))
+            , 4) AS fva,
+            SUM(CASE WHEN vendas_aa > 0 THEN 1 ELSE 0 END) AS comparacoes_com_naive
         FROM comparacao
         """
         cursor.execute(query_resumo, cte_params)
@@ -401,6 +415,22 @@ def api_acuracia_resumo():
         ano_fim = hoje.year if hoje.month > 1 else hoje.year - 1
         periodo_texto = f"{meses_nomes[mes_ini]}/{str(ano_ini)[2:]} a {meses_nomes[mes_fim]}/{str(ano_fim)[2:]}"
 
+        # V52: FVA
+        fva_val = resumo.get('fva')
+        fva_val = float(fva_val) if fva_val is not None else None
+        fva_pct = round(fva_val * 100, 1) if fva_val is not None else None
+        comparacoes_naive = resumo.get('comparacoes_com_naive') or 0
+
+        if fva_val is not None:
+            if fva_val > 0.10:
+                fva_interpretacao = f'Modelo {fva_pct}% melhor que naive (ano anterior)'
+            elif fva_val >= 0:
+                fva_interpretacao = f'Modelo marginalmente melhor que naive (+{fva_pct}%)'
+            else:
+                fva_interpretacao = f'Modelo {abs(fva_pct)}% pior que naive (ano anterior)'
+        else:
+            fva_interpretacao = 'Sem dados de ano anterior para calcular FVA'
+
         return jsonify({
             'periodo': periodo_texto,
             'meses_analisados': meses,
@@ -420,6 +450,11 @@ def api_acuracia_resumo():
             },
             'mae': {
                 'valor': resumo.get('mae') or 0
+            },
+            'fva': {
+                'valor': fva_pct,
+                'interpretacao': fva_interpretacao,
+                'comparacoes_com_naive': comparacoes_naive
             },
             'distribuicao_wmape': {
                 'excelente': dist.get('excelente') or 0,
@@ -471,7 +506,11 @@ def api_acuracia_evolucao():
                 / NULLIF(SUM(qtd_realizada), 0) * 100
             , 2) AS bias_pct,
             COUNT(DISTINCT cod_produto) AS total_itens,
-            SUM(qtd_realizada)::numeric AS total_realizado
+            SUM(qtd_realizada)::numeric AS total_realizado,
+            -- V52: FVA mensal
+            ROUND(
+                1.0 - (SUM(erro_modelo)::numeric / NULLIF(SUM(erro_naive), 0))
+            , 4) AS fva
         FROM comparacao
         GROUP BY ano, mes
         ORDER BY ano, mes
@@ -489,11 +528,14 @@ def api_acuracia_evolucao():
         for r in rows:
             ano = r.get('ano', 0)
             mes = r.get('mes', 0)
+            fva_raw = r.get('fva')
+            fva_pct = round(float(fva_raw) * 100, 1) if fva_raw is not None else None
             evolucao.append({
                 'periodo': f"{mes:02d}/{ano}",
                 'periodo_label': f"{meses_nomes[mes]}/{str(ano)[2:]}",
                 'wmape': r.get('wmape') or 0,
                 'bias_pct': r.get('bias_pct') or 0,
+                'fva': fva_pct,
                 'total_itens': r.get('total_itens') or 0,
                 'total_realizado': r.get('total_realizado') or 0
             })
@@ -531,7 +573,7 @@ def api_acuracia_ranking():
         # Validar
         if agregacao not in ('fornecedor', 'categoria', 'curva', 'item'):
             agregacao = 'fornecedor'
-        if ordenar_por not in ('wmape', 'bias_pct', 'mae'):
+        if ordenar_por not in ('wmape', 'bias_pct', 'mae', 'fva'):
             ordenar_por = 'wmape'
         ordem_sql = 'DESC' if ordem.lower() == 'desc' else 'ASC'
 
@@ -540,7 +582,8 @@ def api_acuracia_ranking():
         col_order = {
             'wmape': 'wmape',
             'bias_pct': 'ABS(bias_pct)',
-            'mae': 'mae'
+            'mae': 'mae',
+            'fva': 'fva'
         }.get(ordenar_por, 'wmape')
 
         offset = (pagina - 1) * por_pagina
@@ -580,6 +623,10 @@ def api_acuracia_ranking():
                 / NULLIF(SUM(qtd_realizada), 0) * 100
             , 2) AS bias_pct,
             ROUND(AVG(ABS(qtd_realizada - qtd_prevista)), 2) AS mae,
+            -- V52: FVA por grupo
+            ROUND(
+                1.0 - (SUM(erro_modelo)::numeric / NULLIF(SUM(erro_naive), 0))
+            , 4) AS fva,
             COUNT(DISTINCT cod_produto) AS total_itens,
             SUM(qtd_realizada)::numeric AS total_realizado
             {select_metodo}
@@ -609,11 +656,14 @@ def api_acuracia_ranking():
         # Formatar itens
         itens = []
         for r in ranking:
+            fva_raw = r.get('fva')
+            fva_pct = round(float(fva_raw) * 100, 1) if fva_raw is not None else None
             item = {
                 'identificador': r.get('identificador') or '',
                 'wmape': r.get('wmape') or 0,
                 'bias_pct': r.get('bias_pct') or 0,
                 'mae': r.get('mae') or 0,
+                'fva': fva_pct,
                 'total_itens': r.get('total_itens') or 0,
                 'total_realizado': r.get('total_realizado') or 0,
                 'metodo_predominante': r.get('metodo_predominante') or ''

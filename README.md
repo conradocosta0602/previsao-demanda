@@ -2,7 +2,9 @@
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
 
-**Novidades v6.31 - Redistribuicao CD na Compra Planejada + Indicador CV (Mar/2026):**
+**Novidades v6.31 - Demanda Censurada + FVA Baseline + Redistribuicao CD (Mar/2026):**
+- **V51b - Correcao de Demanda Censurada**: Corrige subestimacao sistematica causada por ruptura (vendas=0 por falta de estoque, nao por falta de demanda); pre-carrega estoque diario consolidado; correcao dia-a-dia e semanal com limiter 3x media
+- **V52 - FVA Baseline na Acuracia**: Forecast Value Added com naive forecast (vendas do ano anterior); card FVA no dashboard, coluna no ranking, linha no grafico de evolucao
 - **V51 - Redistribuicao CD nas fases 2+**: Estoque do CD e redistribuido para lojas com deficit nas fases 2+ da Compra Planejada, reduzindo pedidos inflados em fornecedores centralizados
 - **Indicador de risco CV**: Bolinhas coloridas na tela de demanda agora baseadas no Coeficiente de Variacao (CV) em vez de variacao % ano-a-ano
 - Fix: Demanda semanal desabilitada no Pedido e Compra Planejada ate validacao (valores subdimensionados)

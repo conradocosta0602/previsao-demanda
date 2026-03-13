@@ -266,7 +266,8 @@ def precarregar_historico_lote(conn, cod_produtos: List[int], cnpj_fornecedor: s
                 'dias_historico': dias_total,
                 'dias_com_venda': len(vendas_por_data),
                 'total_vendido': sum(vendas_por_data.values()),
-                'vendas_por_mes': vendas_por_mes
+                'vendas_por_mes': vendas_por_mes,
+                'vendas_por_data': vendas_por_data  # V51: necessario para correcao censurada
             }
         else:
             serie = []
@@ -274,12 +275,189 @@ def precarregar_historico_lote(conn, cod_produtos: List[int], cnpj_fornecedor: s
                 'dias_historico': 0,
                 'dias_com_venda': 0,
                 'total_vendido': 0,
-                'vendas_por_mes': {}
+                'vendas_por_mes': {},
+                'vendas_por_data': {}
             }
 
         resultado[cod_produto] = (serie, metadata)
 
     return resultado
+
+
+def precarregar_estoque_diario_lote(conn, cod_produtos: List[int]) -> Dict[int, Dict]:
+    """
+    V51: Pre-carrega estoque diario CONSOLIDADO (todas as lojas) para cada item.
+    Usado para detectar e corrigir demanda censurada (vendas=0 por ruptura).
+
+    Returns:
+        Dict {cod_produto: {data: estoque_diario_total}}
+        Se estoque_total <= 0 em uma data, significa ruptura consolidada.
+    """
+    if not cod_produtos:
+        return {}
+
+    from psycopg2.extras import RealDictCursor
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    placeholders = ','.join(['%s'] * len(cod_produtos))
+    cursor.execute(f"""
+        SELECT
+            e.codigo,
+            e.data,
+            SUM(COALESCE(e.estoque_diario, 0)) as estoque_total
+        FROM historico_estoque_diario e
+        WHERE e.codigo IN ({placeholders})
+          AND e.data >= CURRENT_DATE - INTERVAL '{DIAS_HISTORICO} days'
+          AND e.data < CURRENT_DATE
+        GROUP BY e.codigo, e.data
+        ORDER BY e.codigo, e.data
+    """, cod_produtos)
+
+    resultado = {}
+    for row in cursor.fetchall():
+        cod = int(row['codigo'])
+        if cod not in resultado:
+            resultado[cod] = {}
+        resultado[cod][row['data']] = float(row['estoque_total'])
+
+    cursor.close()
+    return resultado
+
+
+def corrigir_demanda_censurada(
+    serie_vendas: List[float],
+    vendas_por_data: Dict,
+    estoque_por_data: Dict
+) -> Tuple[List[float], Dict]:
+    """
+    V51: Corrige serie de vendas substituindo zeros causados por ruptura
+    (vendas=0 AND estoque_consolidado<=0) por valores estimados.
+
+    Args:
+        serie_vendas: Lista de vendas diarias (ja preenchida com zeros)
+        vendas_por_data: Dict {data: qtd_venda} original
+        estoque_por_data: Dict {data: estoque_total_consolidado} ou None
+
+    Returns:
+        (serie_corrigida, metadata_censura)
+        metadata_censura = {
+            'dias_ruptura': int,
+            'dias_corrigidos': int,
+            'taxa_disponibilidade': float,
+            'houve_correcao': bool
+        }
+    """
+    import numpy as np
+
+    meta = {
+        'dias_ruptura': 0,
+        'dias_corrigidos': 0,
+        'taxa_disponibilidade': 1.0,
+        'houve_correcao': False
+    }
+
+    if not estoque_por_data or not vendas_por_data:
+        return serie_vendas, meta
+
+    # Reconstruir datas da serie (mesma logica do precarregar_historico_lote)
+    datas_ordenadas = sorted(vendas_por_data.keys())
+    if not datas_ordenadas:
+        return serie_vendas, meta
+
+    data_min = min(datas_ordenadas)
+    data_max = max(datas_ordenadas)
+
+    # Construir mapeamento indice -> data
+    datas_serie = []
+    data_atual = data_min
+    while data_atual <= data_max:
+        datas_serie.append(data_atual)
+        data_atual += timedelta(days=1)
+
+    if len(datas_serie) != len(serie_vendas):
+        # Tamanho inconsistente — nao corrigir
+        return serie_vendas, meta
+
+    serie_corrigida = list(serie_vendas)
+    dias_com_estoque = 0
+    dias_verificados = 0
+    dias_ruptura = 0
+    dias_corrigidos = 0
+
+    # Calcular media dos dias com estoque > 0 E vendas > 0 (para limiter)
+    vendas_com_estoque = []
+    for i, data in enumerate(datas_serie):
+        estoque_dia = estoque_por_data.get(data, None)
+        if estoque_dia is not None:
+            dias_verificados += 1
+            if estoque_dia > 0:
+                dias_com_estoque += 1
+                if serie_vendas[i] > 0:
+                    vendas_com_estoque.append(serie_vendas[i])
+
+    if dias_verificados == 0:
+        return serie_vendas, meta
+
+    media_com_estoque = np.mean(vendas_com_estoque) if vendas_com_estoque else 0
+    limite_correcao = media_com_estoque * 3.0 if media_com_estoque > 0 else 0
+
+    # Corrigir dias de ruptura
+    for i, data in enumerate(datas_serie):
+        estoque_dia = estoque_por_data.get(data, None)
+        if estoque_dia is None:
+            continue  # Sem dados de estoque, nao corrigir
+
+        if serie_vendas[i] == 0 and estoque_dia <= 0:
+            dias_ruptura += 1
+            valor_estimado = 0
+
+            # 1. Mesmo dia da semana, semana anterior
+            for delta_semanas in [1, -1, 2, -2]:
+                idx_ref = i + (delta_semanas * 7)
+                if 0 <= idx_ref < len(serie_vendas):
+                    data_ref = datas_serie[idx_ref]
+                    estoque_ref = estoque_por_data.get(data_ref, None)
+                    if estoque_ref is not None and estoque_ref > 0 and serie_vendas[idx_ref] > 0:
+                        valor_estimado = serie_vendas[idx_ref]
+                        break
+
+            # 2. Media de dias adjacentes com estoque
+            if valor_estimado == 0:
+                vals_adj = []
+                for delta in [-1, 1, -2, 2, -3, 3]:
+                    idx_adj = i + delta
+                    if 0 <= idx_adj < len(serie_vendas):
+                        data_adj = datas_serie[idx_adj]
+                        estoque_adj = estoque_por_data.get(data_adj, None)
+                        if estoque_adj is not None and estoque_adj > 0 and serie_vendas[idx_adj] > 0:
+                            vals_adj.append(serie_vendas[idx_adj])
+                    if len(vals_adj) >= 2:
+                        break
+                if vals_adj:
+                    valor_estimado = np.mean(vals_adj)
+
+            # 3. Mediana global dos dias com estoque e vendas positivas
+            if valor_estimado == 0 and vendas_com_estoque:
+                valor_estimado = float(np.median(vendas_com_estoque))
+
+            # Aplicar limiter de seguranca (max 3x media)
+            if limite_correcao > 0 and valor_estimado > limite_correcao:
+                valor_estimado = limite_correcao
+
+            if valor_estimado > 0:
+                serie_corrigida[i] = valor_estimado
+                dias_corrigidos += 1
+
+    taxa_disponibilidade = dias_com_estoque / dias_verificados if dias_verificados > 0 else 1.0
+
+    meta = {
+        'dias_ruptura': dias_ruptura,
+        'dias_corrigidos': dias_corrigidos,
+        'taxa_disponibilidade': round(taxa_disponibilidade, 4),
+        'houve_correcao': dias_corrigidos > 0
+    }
+
+    return serie_corrigida, meta
 
 
 def buscar_historico_item(conn, cod_produto: int, cnpj_fornecedor: str) -> Tuple[List[float], Dict]:
@@ -614,7 +792,11 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             reg['fator_sazonal'], reg['fator_tendencia_yoy'], reg['classificacao_tendencia'],
             reg['valor_ano_anterior'], reg['variacao_vs_aa'],
             reg['limitador_aplicado'], reg['metodo_usado'], reg['categoria_serie'],
-            reg['dias_historico'], reg['total_vendido_historico']
+            reg['dias_historico'], reg['total_vendido_historico'],
+            # V51: Metadata de demanda censurada
+            reg.get('taxa_disponibilidade'),
+            reg.get('dias_ruptura', 0),
+            reg.get('demanda_censurada_corrigida', False)
         )
         for reg in registros_unicos
     ]
@@ -632,9 +814,11 @@ def salvar_demanda_batch(conn, registros: List[Dict]):
             fator_sazonal, fator_tendencia_yoy, classificacao_tendencia,
             valor_ano_anterior, variacao_vs_aa,
             limitador_aplicado, metodo_usado, categoria_serie,
-            dias_historico, total_vendido_historico, data_calculo
+            dias_historico, total_vendido_historico,
+            taxa_disponibilidade, dias_ruptura, demanda_censurada_corrigida,
+            data_calculo
         ) VALUES %s
-    """, valores, template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())")
+    """, valores, template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())")
 
     conn.commit()
     return len(registros)
@@ -680,24 +864,79 @@ def precarregar_historico_semanal_lote(conn, cod_produtos: List[int]) -> Dict[in
     return resultado
 
 
+def precarregar_estoque_semanal_lote(conn, cod_produtos: List[int]) -> Dict[int, Dict]:
+    """
+    V51: Pre-carrega dias com estoque por semana ISO (consolidado).
+    Usado para corrigir demanda censurada na serie semanal.
+
+    Returns:
+        {cod_produto: {(ano_iso, semana_iso): (dias_com_estoque, dias_totais)}}
+    """
+    if not cod_produtos:
+        return {}
+
+    from psycopg2.extras import RealDictCursor
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    placeholders = ','.join(['%s'] * len(cod_produtos))
+    cursor.execute(f"""
+        SELECT
+            sub.codigo,
+            sub.ano_iso,
+            sub.semana_iso,
+            COUNT(*) FILTER (WHERE sub.estoque_total > 0) as dias_com_estoque,
+            COUNT(*) as dias_totais
+        FROM (
+            SELECT
+                e.codigo,
+                EXTRACT(ISOYEAR FROM e.data)::INTEGER as ano_iso,
+                EXTRACT(WEEK FROM e.data)::INTEGER as semana_iso,
+                SUM(COALESCE(e.estoque_diario, 0)) as estoque_total
+            FROM historico_estoque_diario e
+            WHERE e.codigo IN ({placeholders})
+              AND e.data >= CURRENT_DATE - INTERVAL '{DIAS_HISTORICO} days'
+              AND e.data < CURRENT_DATE
+            GROUP BY e.codigo, e.data
+        ) sub
+        GROUP BY sub.codigo, sub.ano_iso, sub.semana_iso
+    """, cod_produtos)
+
+    resultado = {}
+    for row in cursor.fetchall():
+        cod = int(row['codigo'])
+        if cod not in resultado:
+            resultado[cod] = {}
+        resultado[cod][(int(row['ano_iso']), int(row['semana_iso']))] = (
+            int(row['dias_com_estoque']),
+            int(row['dias_totais'])
+        )
+
+    cursor.close()
+    return resultado
+
+
 def calcular_demanda_item_semanal(
     cod_produto: int,
     cnpj_fornecedor: str,
-    historico_semanal: Dict[Tuple[int, int], float]
+    historico_semanal: Dict[Tuple[int, int], float],
+    estoque_semanal: Dict = None
 ) -> List[Dict]:
     """
     Calcula demanda pre-calculada SEMANAL para um item usando historico pre-carregado.
     Gera registros para as proximas ~54 semanas ISO.
+    V51: Correcao de demanda censurada por taxa de disponibilidade semanal.
 
     Args:
         cod_produto: Codigo do produto
         cnpj_fornecedor: CNPJ do fornecedor
         historico_semanal: Dict {(ano_iso, semana_iso): qtd_venda} do cache
+        estoque_semanal: Dict {(ano_iso, semana_iso): (dias_com_estoque, dias_totais)} ou None
 
     Returns:
         Lista de registros semanais para INSERT
     """
     from datetime import date
+    import numpy as np
 
     if not historico_semanal:
         return []
@@ -707,7 +946,69 @@ def calcular_demanda_item_semanal(
     if len(semanas_ordenadas) < 4:  # Minimo 4 semanas de historico
         return []
 
-    vendas_semanais = [historico_semanal[s] for s in semanas_ordenadas]
+    # V51: Corrigir vendas semanais por taxa de disponibilidade
+    vendas_semanais_raw = [historico_semanal[s] for s in semanas_ordenadas]
+    vendas_semanais = list(vendas_semanais_raw)
+    meta_censura_sem = {
+        'dias_ruptura': 0,
+        'dias_corrigidos_semanas': 0,
+        'taxa_disponibilidade': None,
+        'houve_correcao': False
+    }
+
+    if estoque_semanal:
+        # Calcular media das semanas com boa disponibilidade para limiter
+        vendas_boas = [vendas_semanais_raw[i] for i, s in enumerate(semanas_ordenadas)
+                       if s in estoque_semanal and estoque_semanal[s][1] > 0
+                       and estoque_semanal[s][0] / estoque_semanal[s][1] >= 0.5
+                       and vendas_semanais_raw[i] > 0]
+        media_boa = np.mean(vendas_boas) if vendas_boas else 0
+        limite = media_boa * 3.0
+
+        total_dias_rup = 0
+        total_dias_verif = 0
+        total_dias_ok = 0
+        semanas_corrigidas = 0
+
+        for i, s in enumerate(semanas_ordenadas):
+            if s in estoque_semanal:
+                dias_ok, dias_tot = estoque_semanal[s]
+                total_dias_verif += dias_tot
+                total_dias_ok += dias_ok
+                total_dias_rup += max(0, dias_tot - dias_ok)
+
+                if dias_tot > 0:
+                    taxa = dias_ok / dias_tot
+                    if taxa < 1.0 and vendas_semanais_raw[i] >= 0:
+                        if taxa >= 0.3:
+                            # Correcao proporcional
+                            corrigido = vendas_semanais_raw[i] / taxa if taxa > 0 else 0
+                        elif taxa > 0:
+                            corrigido = vendas_semanais_raw[i] / taxa
+                        else:
+                            # Ruptura total na semana: usar media sazonal
+                            mesma_sem = [vendas_semanais_raw[j] for j, ss in enumerate(semanas_ordenadas)
+                                         if ss[1] == s[1] and ss != s
+                                         and ss in estoque_semanal
+                                         and estoque_semanal[ss][1] > 0
+                                         and estoque_semanal[ss][0] / estoque_semanal[ss][1] >= 0.5]
+                            corrigido = np.mean(mesma_sem) if mesma_sem else media_boa
+
+                        # Limiter de seguranca
+                        if limite > 0 and corrigido > limite:
+                            corrigido = limite
+
+                        if corrigido > vendas_semanais_raw[i]:
+                            vendas_semanais[i] = corrigido
+                            semanas_corrigidas += 1
+
+        meta_censura_sem = {
+            'dias_ruptura': total_dias_rup,
+            'dias_corrigidos_semanas': semanas_corrigidas,
+            'taxa_disponibilidade': round(total_dias_ok / total_dias_verif, 4) if total_dias_verif > 0 else None,
+            'houve_correcao': semanas_corrigidas > 0
+        }
+
     total_vendido = sum(vendas_semanais)
     media_semanal = total_vendido / len(vendas_semanais) if vendas_semanais else 0
 
@@ -780,7 +1081,11 @@ def calcular_demanda_item_semanal(
             'metodo_usado': 'semanal_sazonal',
             'categoria_serie': 'media',
             'dias_historico': len(semanas_ordenadas),
-            'total_vendido_historico': round(total_vendido, 2)
+            'total_vendido_historico': round(total_vendido, 2),
+            # V51: Metadata de demanda censurada
+            'taxa_disponibilidade': meta_censura_sem.get('taxa_disponibilidade'),
+            'dias_ruptura': meta_censura_sem.get('dias_ruptura', 0),
+            'demanda_censurada_corrigida': meta_censura_sem.get('houve_correcao', False),
         })
 
     return registros
@@ -856,7 +1161,11 @@ def salvar_demanda_batch_semanal(conn, registros: List[Dict]):
             reg['fator_sazonal'], reg['fator_tendencia_yoy'], reg['classificacao_tendencia'],
             reg['valor_ano_anterior'], reg['variacao_vs_aa'],
             reg['limitador_aplicado'], reg['metodo_usado'], reg['categoria_serie'],
-            reg['dias_historico'], reg['total_vendido_historico']
+            reg['dias_historico'], reg['total_vendido_historico'],
+            # V51: Metadata de demanda censurada
+            reg.get('taxa_disponibilidade'),
+            reg.get('dias_ruptura', 0),
+            reg.get('demanda_censurada_corrigida', False)
         )
         for reg in registros_unicos
     ]
@@ -870,9 +1179,11 @@ def salvar_demanda_batch_semanal(conn, registros: List[Dict]):
             fator_sazonal, fator_tendencia_yoy, classificacao_tendencia,
             valor_ano_anterior, variacao_vs_aa,
             limitador_aplicado, metodo_usado, categoria_serie,
-            dias_historico, total_vendido_historico, data_calculo
+            dias_historico, total_vendido_historico,
+            taxa_disponibilidade, dias_ruptura, demanda_censurada_corrigida,
+            data_calculo
         ) VALUES %s
-    """, valores, template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())")
+    """, valores, template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())")
 
     conn.commit()
     return len(registros)
@@ -883,24 +1194,41 @@ def calcular_demanda_item_com_cache(
     cnpj_fornecedor: str,
     serie: List[float],
     meta_hist: Dict,
-    ano_base: int
+    ano_base: int,
+    estoque_por_data: Dict = None
 ) -> List[Dict]:
     """
     Calcula demanda para um item usando historico pre-carregado.
     OTIMIZADO: Nao faz query no banco, usa dados do cache.
     V48: Deteccao de outliers antes do calculo.
+    V51: Correcao de demanda censurada antes do calculo.
     """
     if not serie or len(serie) < 7:
         return []
 
+    # V51: Correcao de demanda censurada ANTES de outliers
+    meta_censura = {
+        'dias_ruptura': 0,
+        'dias_corrigidos': 0,
+        'taxa_disponibilidade': None,
+        'houve_correcao': False
+    }
+    serie_censurada = serie
+    if estoque_por_data:
+        vendas_por_data = meta_hist.get('vendas_por_data', {})
+        if vendas_por_data:
+            serie_censurada, meta_censura = corrigir_demanda_censurada(
+                serie, vendas_por_data, estoque_por_data
+            )
+
     # V48: Deteccao e tratamento de outliers ANTES do calculo
     outlier_info = None
-    serie_limpa = serie
-    if len(serie) >= 30:  # Minimo para deteccao confiavel (1 mes de dados diarios)
+    serie_limpa = serie_censurada
+    if len(serie_censurada) >= 30:  # Minimo para deteccao confiavel (1 mes de dados diarios)
         try:
             from core.outlier_detector import AutoOutlierDetector
             detector = AutoOutlierDetector()
-            resultado_outliers = detector.analyze_and_clean(serie)
+            resultado_outliers = detector.analyze_and_clean(serie_censurada)
             if resultado_outliers['outliers_count'] > 0:
                 serie_limpa = resultado_outliers['cleaned_data']
                 outlier_info = {
@@ -994,7 +1322,11 @@ def calcular_demanda_item_com_cache(
             'metodo_usado': meta_calc.get('metodo_usado', 'auto'),
             'categoria_serie': meta_calc.get('categoria_serie', 'media'),
             'dias_historico': meta_hist.get('dias_historico', 0),
-            'total_vendido_historico': round(meta_hist.get('total_vendido', 0), 2)
+            'total_vendido_historico': round(meta_hist.get('total_vendido', 0), 2),
+            # V51: Metadata de demanda censurada
+            'taxa_disponibilidade': meta_censura.get('taxa_disponibilidade'),
+            'dias_ruptura': meta_censura.get('dias_ruptura', 0),
+            'demanda_censurada_corrigida': meta_censura.get('houve_correcao', False),
         })
 
     return registros
@@ -1054,6 +1386,15 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
         logger.debug(f"  Pre-carregando historico de {len(cod_produtos_ativos)} itens ativos...")
         cache_historico = precarregar_historico_lote(conn, cod_produtos_ativos, cnpj_fornecedor)
 
+        # V51: Pre-carregar estoque diario para correcao de demanda censurada
+        cache_estoque = {}
+        try:
+            cache_estoque = precarregar_estoque_diario_lote(conn, cod_produtos_ativos)
+            if cache_estoque:
+                logger.debug(f"  Estoque diario carregado para {len(cache_estoque)} itens")
+        except Exception as e:
+            logger.debug(f"  Sem dados de estoque diario: {e}")
+
         # Processar itens usando cache
         todos_registros = []
         total_erros = 0
@@ -1063,12 +1404,16 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
                 cod_produto = item['cod_produto']
                 serie, meta_hist = cache_historico.get(cod_produto, ([], {}))
 
+                # V51: Passar estoque diario para correcao de censura
+                estoque_item = cache_estoque.get(cod_produto, None)
+
                 registros = calcular_demanda_item_com_cache(
                     cod_produto,
                     cnpj_fornecedor,
                     serie,
                     meta_hist,
-                    ano_base
+                    ano_base,
+                    estoque_por_data=estoque_item
                 )
                 todos_registros.extend(registros)
             except Exception as e:
@@ -1085,13 +1430,22 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
         try:
             cache_hist_semanal = precarregar_historico_semanal_lote(conn, cod_produtos_ativos)
 
+            # V51: Pre-carregar estoque semanal para correcao censurada
+            cache_estoque_semanal = {}
+            try:
+                cache_estoque_semanal = precarregar_estoque_semanal_lote(conn, cod_produtos_ativos)
+            except Exception:
+                pass
+
             todos_registros_semanais = []
             for item in itens_ativos:
                 try:
                     cod_produto = item['cod_produto']
                     hist_sem = cache_hist_semanal.get(cod_produto, {})
+                    est_sem = cache_estoque_semanal.get(cod_produto, None)
                     registros_sem = calcular_demanda_item_semanal(
-                        cod_produto, cnpj_fornecedor, hist_sem
+                        cod_produto, cnpj_fornecedor, hist_sem,
+                        estoque_semanal=est_sem
                     )
                     todos_registros_semanais.extend(registros_sem)
                 except Exception:

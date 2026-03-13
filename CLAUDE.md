@@ -125,7 +125,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 
 **Cronjob**: `jobs/checklist_diario.py` (06:00)
 
-**34 verificacoes** de conformidade com a metodologia documentada:
+**35 verificacoes** de conformidade com a metodologia documentada:
 - V01-V12: Verificacoes de calculo de demanda e pedido
 - V13: Logica Hibrida de Transferencias entre Lojas
 - V14: Rateio Proporcional de Demanda Multi-Loja
@@ -149,6 +149,8 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V48: Backtesting universal + deteccao de outliers - selecao de metodo por WMAPE (walk-forward 6 metodos) e AutoOutlierDetector integrado ao pipeline (IQR/Z-Score antes do calculo)
 - V49: Tela de Acuracia de Previsao - dashboard previsto vs realizado com WMAPE, BIAS e MAE; drill-down por fornecedor, categoria, curva ABC e item; evolucao temporal e distribuicao por faixa
 - V50: Granularidade semanal na demanda_pre_calculada - schema suporta registros mensais E semanais; cronjob calcula ambos; consumidores (Pedido, Compra Planejada, Acuracia) preferem semanal com fallback mensal
+- V51: Correcao de demanda censurada - corrige subestimacao causada por ruptura (vendas=0 por falta de estoque); metadata taxa_disponibilidade, dias_ruptura, demanda_censurada_corrigida
+- V52: FVA Baseline na acuracia - Forecast Value Added com naive forecast (vendas ano anterior); card, ranking e evolucao temporal
 - V51: Redistribuicao CD nas fases 2+ da Compra Planejada - simula distribuicao do estoque CD para lojas com deficit; estoque_cd_cache construido apos Fase 1 (query banco - redistribuicoes F1); reduz necessidade_total antes de arredondar pedido; atua em ambos os modos (Negociacao e Reabastecimento)
 
 ### 5. Transferencias entre Lojas (V13/V25)
@@ -607,13 +609,15 @@ N+1. Consolidado (todos itens × todas fases)
 **Rota**: `/acuracia`
 
 Dashboard de comparacao sistematica entre previsao (demanda_pre_calculada) e vendas reais
-(historico_vendas_diario), com metricas WMAPE, BIAS e MAE.
+(historico_vendas_diario), com metricas WMAPE, BIAS, MAE e FVA.
 
 **Metricas**:
 ```
 WMAPE = SUM(|realizado - previsto|) / SUM(realizado) × 100
 BIAS% = SUM(previsto - realizado) / SUM(realizado) × 100
 MAE   = AVG(|realizado - previsto|)
+FVA   = 1 - (SUM(erro_modelo) / SUM(erro_naive)) × 100
+        Naive = vendas do mesmo mes do ano anterior
 ```
 
 **Faixas WMAPE**: <10% Excelente, 10-20% Boa, 20-30% Aceitavel, 30-50% Fraca, >50% Muito Fraca
@@ -632,9 +636,9 @@ Demanda e consolidada (cod_empresa=NULL), vendas sao agregadas por item antes do
 | Endpoint | Metodo | Descricao |
 |----------|--------|-----------|
 | `/api/acuracia/filtros` | GET | Opcoes de filtro |
-| `/api/acuracia/resumo` | GET | Cards WMAPE, BIAS, MAE + distribuicao |
-| `/api/acuracia/evolucao` | GET | Serie temporal mensal |
-| `/api/acuracia/ranking` | GET | Ranking drill-down por agregacao |
+| `/api/acuracia/resumo` | GET | Cards WMAPE, BIAS, MAE, FVA + distribuicao |
+| `/api/acuracia/evolucao` | GET | Serie temporal mensal WMAPE + BIAS + FVA |
+| `/api/acuracia/ranking` | GET | Ranking drill-down por agregacao com FVA |
 
 ## APIs Importantes
 
@@ -652,9 +656,9 @@ Demanda e consolidada (cod_empresa=NULL), vendas sao agregadas por item antes do
 | `/api/compra_planejada/exportar` | POST | Exporta compra planejada para Excel |
 | `/api/compra_planejada/lead_time` | GET | Lead time para data padrao de entrega |
 | `/api/acuracia/filtros` | GET | Opcoes de filtro (fornecedores, categorias, curvas) |
-| `/api/acuracia/resumo` | GET | Cards WMAPE, BIAS, MAE + distribuicao por faixa |
-| `/api/acuracia/evolucao` | GET | Serie temporal mensal WMAPE + BIAS |
-| `/api/acuracia/ranking` | GET | Ranking drill-down por agregacao |
+| `/api/acuracia/resumo` | GET | Cards WMAPE, BIAS, MAE, FVA + distribuicao por faixa |
+| `/api/acuracia/evolucao` | GET | Serie temporal mensal WMAPE + BIAS + FVA |
+| `/api/acuracia/ranking` | GET | Ranking drill-down por agregacao com FVA |
 
 ## Tabelas Principais
 
@@ -852,6 +856,8 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V49: Tela de Acuracia de Previsao - dashboard previsto vs realizado com WMAPE, BIAS, MAE; drill-down por fornecedor, categoria, curva ABC e item; evolucao temporal e distribuicao por faixa de acuracia (v6.29)
 - V50: Granularidade semanal na demanda_pre_calculada - schema com colunas semana/tipo_granularidade/data_inicio_semana; cronjob calcula 54 semanas + 12 meses; Pedido prefere semanal; Compra Planejada decompoe por semana ISO; Acuracia filtra tipo_granularidade; fix bug silencioso Salvar Demanda formato YYYY-SWW (v6.30)
 - V51: Redistribuicao CD nas fases 2+ da Compra Planejada - estoque CD residual redistribuido para lojas com deficit nas fases 2+; corrige inflacao de pedidos futuros em fornecedores centralizados; fix demanda semanal desabilitada no Pedido e Compra Planejada ate validacao do cronjob (v6.31)
+- V51b: Correcao de demanda censurada no cronjob - corrige subestimacao sistematica causada por ruptura (vendas=0 por falta de estoque); pre-carrega estoque diario consolidado; correcao dia-a-dia e semanal com limiter 3x; metadata taxa_disponibilidade, dias_ruptura, demanda_censurada_corrigida na demanda_pre_calculada (v6.31)
+- V52: FVA Baseline na acuracia - Forecast Value Added com naive forecast (vendas do ano anterior) como baseline; card FVA no dashboard; coluna FVA no ranking por fornecedor/categoria/item; linha FVA no grafico de evolucao temporal (v6.31)
 
 ## Documentacao Complementar
 
