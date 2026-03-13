@@ -1,6 +1,11 @@
-# Sistema de Demanda e Reabastecimento v6.30
+# Sistema de Demanda e Reabastecimento v6.31
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.31 - Redistribuicao CD na Compra Planejada + Indicador CV (Mar/2026):**
+- **V51 - Redistribuicao CD nas fases 2+**: Estoque do CD e redistribuido para lojas com deficit nas fases 2+ da Compra Planejada, reduzindo pedidos inflados em fornecedores centralizados
+- **Indicador de risco CV**: Bolinhas coloridas na tela de demanda agora baseadas no Coeficiente de Variacao (CV) em vez de variacao % ano-a-ano
+- Fix: Demanda semanal desabilitada no Pedido e Compra Planejada ate validacao (valores subdimensionados)
 
 **Novidades v6.30 - Granularidade Semanal na Demanda (Mar/2026):**
 - **V50 - Demanda Semanal**: Schema suporta registros mensais E semanais na demanda_pre_calculada
