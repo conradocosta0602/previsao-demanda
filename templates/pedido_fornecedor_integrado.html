@@ -1665,6 +1665,12 @@
                     transfBadge += ` <span class="badge-transf badge-transf-receber" style="margin-left: 4px; background: linear-gradient(135deg, #dbeafe 0%, #93c5fd 100%); color: #1e40af; border-color: #60a5fa;" title="Receber ${qtdCD} un do CD ${cdOrigem}"><span class="icon">📦</span>CD ${qtdCD} un</span>`;
                 }
 
+                // Badge de ajuste manual (V56)
+                let ajusteBadge = '';
+                if (item.tem_ajuste_manual) {
+                    ajusteBadge = `<br><span style="display: inline-block; margin-top: 2px; padding: 1px 6px; font-size: 0.7em; background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; border-radius: 3px;" title="Demanda com ajuste manual salvo na Tela de Demanda">Ajuste Manual</span>`;
+                }
+
                 const qtdPedido = item._status === 'bloqueado' ? 0 : (item.quantidade_pedido || 0);
                 const valorPedido = item._status === 'bloqueado' ? 0 : (item.valor_pedido || 0);
 
@@ -1684,7 +1690,7 @@
 
                 return `
                     <tr class="${rowClass}">
-                        <td>${item.codigo}${transfBadge}</td>
+                        <td>${item.codigo}${transfBadge}${ajusteBadge}</td>
                         <td title="${item.descricao || ''}">${(item.descricao || '').substring(0, 30)}</td>
                         <td style="text-align: center;"><span class="badge badge-${(item.curva_abc || 'B').toLowerCase()}">${item.curva_abc || 'B'}</span></td>
                         <td style="text-align: center;">${statusBadge}</td>
@@ -2018,8 +2024,15 @@
                         // CUE (preco) - usar o primeiro encontrado
                         cue: item.cue || item.preco || 0,
                         // Multiplo de caixa (para re-arredondamento apos ajuste de transferencia)
-                        multiplo_caixa: item.multiplo_caixa || 1
+                        multiplo_caixa: item.multiplo_caixa || 1,
+                        // V56: Ajuste manual
+                        tem_ajuste_manual: item.tem_ajuste_manual || false
                     };
+                }
+
+                // Propagar ajuste manual de qualquer loja
+                if (item.tem_ajuste_manual) {
+                    itensAgregados[chaveAgregacao].tem_ajuste_manual = true;
                 }
 
                 // Agregar valores
@@ -2418,12 +2431,18 @@
                 statusInfo += `<span style="background: #fef3c7; color: #92400e; padding: 1px 4px; border-radius: 3px; font-size: 0.65em; margin-left: 4px;" title="Item sem padrao de compra">⚠️</span>`;
             }
 
+            // Badge de ajuste manual (V56)
+            let ajusteBadgeAgr = '';
+            if (item.tem_ajuste_manual) {
+                ajusteBadgeAgr = `<br><span style="display: inline-block; margin-top: 2px; padding: 1px 6px; font-size: 0.7em; background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; border-radius: 3px;" title="Demanda com ajuste manual salvo na Tela de Demanda">Ajuste Manual</span>`;
+            }
+
             // Formatacao da quantidade
             let qtdCell = `<span style="font-weight: 600;">${item.quantidade_pedido.toLocaleString('pt-BR')}</span>`;
 
             return `
                 <tr class="${rowClass}">
-                    <td>${item.codigo}${statusInfo}${transfBadge}</td>
+                    <td>${item.codigo}${statusInfo}${transfBadge}${ajusteBadgeAgr}</td>
                     <td title="${item.descricao}">${item.descricao.substring(0, 35)}</td>
                     <td style="text-align: center;"><span class="badge badge-${item.curva_abc.toLowerCase()}">${item.curva_abc}</span></td>
                     <td style="text-align: center;">${badgeLojas}</td>

@@ -155,6 +155,7 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V53: Saneamento de ruptura por loja - cronjob corrige demanda censurada por loja individual com limiter 3x; recalcula fatores sazonais e bypassa limitador V11 em meses com ruptura
 - V54: Tela de Demanda usa demanda_pre_calculada - previsao lida da tabela em vez de recalcular; consistencia entre todas as telas
 - V55: Demanda semanal derivada da mensal - cronjob decompoe demanda mensal em semanas usando pesos sazonais semanais (consistencia mensal-semanal garantida); correcao do desvio padrao no ES (era dividido por sqrt(30) duas vezes); demanda semanal reabilitada na Compra Planejada
+- V56: Sinalizacao persistente de ajuste manual - celulas com ajuste_manual ficam amarelas permanentemente na Tela de Demanda (ao carregar, nao apenas na sessao); badge "Ajuste Manual" amarelo na Tela de Pedido ao Fornecedor (ambas visualizacoes: por loja e por padrao de compra agregado)
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -864,6 +865,7 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V53: Saneamento de ruptura por loja - correcao censurada opera por loja individual (nao mais consolidado); corrige TODOS os dias de ruptura de TODAS as lojas (sem threshold global); limiter 3x protege contra correcoes absurdas; CDs (>=80) excluidos; reconsolidacao apos correcao; fatores sazonais recalculados a partir da serie corrigida (evita subestimacao sazonal por ruptura); limitador V11 desabilitado em meses com ruptura significativa (valor_aa corrigido >2x o original); detecta ruptura parcial (ex: 93% lojas em ruptura mas estoque consolidado >0) (v6.32)
 - V54: Tela de Demanda usa demanda_pre_calculada - endpoint previsao.py busca previsao da tabela demanda_pre_calculada (COALESCE ajuste_manual, demanda_prevista) em vez de recalcular em tempo real; garante consistencia com Pedido, Compra Planejada e Acuracia; herda automaticamente V53 (saneamento por loja), backtesting V48, e todas as correcoes do cronjob; query de estoque removida; DemandCalculator removido do endpoint; eventos mantidos; backtest e grafico mantidos; Salvar Demanda continua gravando ajuste_manual na mesma tabela (v6.32)
 - V55: Demanda semanal derivada da mensal + correcao ES - cronjob decompoe demanda mensal em semanas ISO usando pesos sazonais (soma semanal = mensal); herda metodo, YoY, desvio, limitador do registro mensal; fix desvio_padrao no ES (era diario da tabela mas dividido por sqrt(30) como se fosse mensal, subestimando ES ~5.5x); conversao mensal->diario no fallback DemandCalculator; demanda semanal reabilitada na Compra Planejada (v6.33)
+- V56: Sinalizacao persistente de ajuste manual - celulas com ajuste_manual ficam amarelas permanentemente na Tela de Demanda (ao carregar, nao apenas durante a sessao); badge "Ajuste Manual" amarelo na Tela de Pedido ao Fornecedor em ambas visualizacoes (por loja e por padrao de compra agregado); campo tem_ajuste_manual incluido na API de pedido (v6.33)
 
 ## Documentacao Complementar
 

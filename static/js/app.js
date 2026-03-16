@@ -3364,7 +3364,9 @@ function renderizarTabelaRelatorioDetalhado(itens, periodos, granularidade) {
             if (item.previsao_por_periodo && item.previsao_por_periodo.length > 0) {
                 item.previsao_por_periodo.forEach((p, idx) => {
                     if (idx < numColunasPeriodos) {
-                        bodyHtml += `<td data-cod-produto="${item.cod_produto}" data-periodo="${p.periodo}" style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.85em;">${formatNumber(p.previsao || 0)}</td>`;
+                        const bgAjuste = p.ajuste_manual ? 'background: #fef3c7;' : '';
+                        const titleAjuste = p.ajuste_manual ? ` title="Ajuste manual salvo"` : '';
+                        bodyHtml += `<td data-cod-produto="${item.cod_produto}" data-periodo="${p.periodo}"${titleAjuste} style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.85em; ${bgAjuste}">${formatNumber(p.previsao || 0)}</td>`;
                     }
                 });
                 // Preencher colunas faltantes
@@ -3548,7 +3550,8 @@ function renderizarTabelaRelatorioCusto(itens, periodos, granularidade) {
                 item.previsao_por_periodo.forEach((p, idx) => {
                     if (idx < numColunasPeriodos) {
                         const valorCusto = (p.previsao || 0) * cue;
-                        bodyHtml += `<td data-custo-cod-produto="${item.cod_produto}" data-custo-periodo="${p.periodo}" style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.85em;">${cue > 0 ? formatCurrency(valorCusto) : '-'}</td>`;
+                        const bgCustoAjuste = p.ajuste_manual ? 'background: #fef3c7;' : '';
+                        bodyHtml += `<td data-custo-cod-produto="${item.cod_produto}" data-custo-periodo="${p.periodo}" style="padding: 6px; text-align: center; border: 1px solid #ddd; font-size: 0.85em; ${bgCustoAjuste}">${cue > 0 ? formatCurrency(valorCusto) : '-'}</td>`;
                     }
                 });
                 for (let i = item.previsao_por_periodo.length; i < numColunasPeriodos; i++) {

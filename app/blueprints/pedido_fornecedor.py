@@ -713,6 +713,7 @@ def api_pedido_fornecedor_integrado():
                         resultado['fonte_demanda'] = metadata.get('fonte', 'tempo_real')  # pre_calculada ou tempo_real
                         resultado['metodo_rateio'] = metadata.get('metodo_rateio')  # proporcional ou uniforme
                         resultado['proporcao_loja'] = metadata.get('proporcao_loja')  # 0.0 a 1.0
+                        resultado['tem_ajuste_manual'] = metadata.get('tem_ajuste_manual', False)
                         resultado['lojas_consideradas'] = 1
                         resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
                         resultado['lead_time_usado'] = lead_time_forn + dias_transferencia_cd
@@ -842,6 +843,7 @@ def api_pedido_fornecedor_integrado():
                         resultado['codigo_fornecedor'] = row.get('codigo_fornecedor', '')
                         resultado['metodo_previsao'] = metadata.get('metodo_usado', 'auto')
                         resultado['fonte_demanda'] = metadata.get('fonte', 'tempo_real')  # pre_calculada ou tempo_real
+                        resultado['tem_ajuste_manual'] = metadata.get('tem_ajuste_manual', False)
                         resultado['lojas_consideradas'] = len(lojas_demanda)
                         resultado['fornecedor_cadastrado'] = fornecedor_cadastrado
                         resultado['lead_time_usado'] = lead_time_forn + dias_transferencia_cd
