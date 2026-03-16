@@ -1352,11 +1352,12 @@ class PedidoFornecedorIntegrado:
 
         # 7. Calcular estoque de segurança
         # ES usa lead_time_base (LT do fornecedor, sem transit CD)
-        # ES = Z x sigma x sqrt(LT_fornecedor)
+        # ES = Z x sigma_diario x sqrt(LT_fornecedor)
+        # V55: desvio_padrao ja chega DIARIO (convertido pelo chamador)
         # Garantir que desvio_padrao nao seja NaN
         if desvio_padrao is None or np.isnan(desvio_padrao) or np.isinf(desvio_padrao):
             desvio_padrao = previsao_diaria * 0.3 if previsao_diaria > 0 else 0.1
-        desvio_diario = desvio_padrao / np.sqrt(30) if desvio_padrao > 0 else previsao_diaria * 0.3
+        desvio_diario = desvio_padrao if desvio_padrao > 0 else previsao_diaria * 0.3
         # Garantir que desvio_diario nao seja NaN
         if np.isnan(desvio_diario) or np.isinf(desvio_diario):
             desvio_diario = 0.1

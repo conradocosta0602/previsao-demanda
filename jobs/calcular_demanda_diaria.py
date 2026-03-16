@@ -1147,22 +1147,77 @@ def precarregar_estoque_semanal_lote(conn, cod_produtos: List[int]) -> Dict[int,
     return resultado
 
 
+def semanas_iso_do_mes(ano: int, mes: int) -> List[int]:
+    """
+    V55: Retorna lista de semanas ISO cujas segundas-feiras caem no mes dado.
+    Usado para mapear semanas -> meses na decomposicao mensal->semanal.
+    """
+    from datetime import date as d_date
+    semanas = []
+    dia = d_date(ano, mes, 1)
+    while dia.month == mes:
+        if dia.weekday() == 0:  # segunda-feira
+            semanas.append(dia.isocalendar()[1])
+        dia += timedelta(days=1)
+    return semanas
+
+
+def calcular_pesos_semanais(historico_semanal: Dict) -> Dict[int, float]:
+    """
+    V55: Calcula peso medio de cada semana ISO (1-53) baseado no historico de vendas.
+    peso = media_vendas_semana_iso / media_geral
+    Usado para distribuir demanda mensal entre semanas com sazonalidade intra-mensal.
+    """
+    vendas_por_semana_iso = {}
+    contagem = {}
+    for (ano, sem), qtd in historico_semanal.items():
+        if sem not in vendas_por_semana_iso:
+            vendas_por_semana_iso[sem] = 0
+            contagem[sem] = 0
+        vendas_por_semana_iso[sem] += qtd
+        contagem[sem] += 1
+
+    medias = {}
+    for sem in range(1, 54):
+        if sem in vendas_por_semana_iso and contagem.get(sem, 0) > 0:
+            medias[sem] = vendas_por_semana_iso[sem] / contagem[sem]
+        else:
+            medias[sem] = None
+
+    # Media geral (apenas semanas com dados)
+    vals = [v for v in medias.values() if v is not None and v > 0]
+    media_geral = sum(vals) / len(vals) if vals else 1.0
+
+    pesos = {}
+    for sem in range(1, 54):
+        if medias[sem] is not None and media_geral > 0:
+            pesos[sem] = medias[sem] / media_geral
+        else:
+            pesos[sem] = 1.0
+    return pesos
+
+
 def calcular_demanda_item_semanal(
     cod_produto: int,
     cnpj_fornecedor: str,
     historico_semanal: Dict[Tuple[int, int], float],
+    registros_mensais: List[Dict] = None,
     estoque_semanal: Dict = None,
     vendas_semanal_por_loja: Dict = None
 ) -> List[Dict]:
     """
-    Calcula demanda pre-calculada SEMANAL para um item usando historico pre-carregado.
-    Gera registros para as proximas ~54 semanas ISO.
-    V53: Correcao de demanda censurada por loja (limiter 3x, sem threshold global).
+    V55: Calcula demanda semanal DERIVADA da demanda mensal.
+    Em vez de calcular independentemente, decompoe cada mes em semanas usando
+    pesos sazonais semanais (vendas historicas por semana ISO).
+
+    Garante: soma das semanas de um mes = demanda mensal (consistencia).
+    Herda do mensal: metodo, YoY, desvio, limitador, classificacao.
 
     Args:
         cod_produto: Codigo do produto
         cnpj_fornecedor: CNPJ do fornecedor
-        historico_semanal: Dict {(ano_iso, semana_iso): qtd_venda} consolidado
+        historico_semanal: Dict {(ano_iso, semana_iso): qtd_venda} - para pesos sazonais
+        registros_mensais: Lista de registros mensais ja calculados para este item
         estoque_semanal: Dict {(ano_iso, semana_iso, cod_empresa): (dias_ok, dias_tot)} por loja
         vendas_semanal_por_loja: Dict {(ano_iso, semana_iso, cod_empresa): qtd} por loja
 
@@ -1172,172 +1227,130 @@ def calcular_demanda_item_semanal(
     from datetime import date
     import numpy as np
 
-    if not historico_semanal:
+    if not registros_mensais:
         return []
 
-    # Construir serie semanal ordenada
-    semanas_ordenadas = sorted(historico_semanal.keys())
-    if len(semanas_ordenadas) < 4:  # Minimo 4 semanas de historico
+    # 1. Construir mapa mes -> registro mensal
+    mapa_mensal = {}
+    for reg in registros_mensais:
+        mapa_mensal[(reg['ano'], reg['mes'])] = reg
+
+    if not mapa_mensal:
         return []
 
-    # V53: Corrigir vendas semanais POR LOJA e reconsolidar
-    vendas_semanais_raw = [historico_semanal[s] for s in semanas_ordenadas]
-    vendas_semanais = list(vendas_semanais_raw)
-    meta_censura_sem = {
-        'dias_ruptura': 0,
-        'dias_corrigidos_semanas': 0,
-        'taxa_disponibilidade': None,
-        'houve_correcao': False
-    }
+    # 2. Calcular pesos sazonais semanais a partir do historico
+    #    Se nao ha historico semanal, usar peso uniforme (1.0)
+    if historico_semanal and len(historico_semanal) >= 4:
+        # V53: Corrigir vendas semanais por loja antes de calcular pesos
+        historico_corrigido = dict(historico_semanal)  # copia
 
-    if estoque_semanal and vendas_semanal_por_loja:
-        # V53: Extrair lojas distintas do estoque (excluir CDs >= 80)
-        lojas = set()
-        for chave in estoque_semanal.keys():
-            if isinstance(chave, tuple) and len(chave) == 3 and chave[2] < 80:
-                lojas.add(chave[2])  # cod_empresa (apenas lojas fisicas)
+        if estoque_semanal and vendas_semanal_por_loja:
+            semanas_ordenadas = sorted(historico_semanal.keys())
+            lojas = set()
+            for chave in estoque_semanal.keys():
+                if isinstance(chave, tuple) and len(chave) == 3 and chave[2] < 80:
+                    lojas.add(chave[2])
 
-        if lojas:
-            total_dias_rup = 0
-            total_dias_verif = 0
-            total_dias_ok = 0
-            semanas_corrigidas = 0
-            lojas_corrigidas_count = 0
+            if lojas:
+                for loja in sorted(lojas):
+                    loja_dias_verif = 0
+                    loja_dias_ok = 0
+                    for s in semanas_ordenadas:
+                        chave_loja = (s[0], s[1], loja)
+                        if chave_loja in estoque_semanal:
+                            d_ok, d_tot = estoque_semanal[chave_loja]
+                            loja_dias_verif += d_tot
+                            loja_dias_ok += d_ok
 
-            # V53: Corrigir TODAS as lojas com ruptura (limiter 3x protege)
-            for loja in sorted(lojas):
-                # Contar dias verificados e ruptura globais da loja
-                loja_dias_verif = 0
-                loja_dias_ok = 0
-                for s in semanas_ordenadas:
-                    chave_loja = (s[0], s[1], loja)
-                    if chave_loja in estoque_semanal:
-                        d_ok, d_tot = estoque_semanal[chave_loja]
-                        loja_dias_verif += d_tot
-                        loja_dias_ok += d_ok
-
-                if loja_dias_verif == 0:
-                    continue
-
-                total_dias_verif += loja_dias_verif
-                total_dias_ok += loja_dias_ok
-
-                loja_dias_rup = loja_dias_verif - loja_dias_ok
-                total_dias_rup += loja_dias_rup
-
-                if loja_dias_rup == 0:
-                    continue  # Loja sem ruptura, nada a corrigir
-
-                lojas_corrigidas_count += 1
-
-                # Calcular limiter para esta loja
-                vendas_boas_loja = []
-                for i, s in enumerate(semanas_ordenadas):
-                    chave_loja = (s[0], s[1], loja)
-                    venda_loja = vendas_semanal_por_loja.get(chave_loja, 0)
-                    if chave_loja in estoque_semanal:
-                        d_ok, d_tot = estoque_semanal[chave_loja]
-                        if d_tot > 0 and d_ok / d_tot >= 0.5 and venda_loja > 0:
-                            vendas_boas_loja.append(venda_loja)
-
-                media_boa_loja = np.mean(vendas_boas_loja) if vendas_boas_loja else 0
-                limite_loja = media_boa_loja * LIMITER_CORRECAO
-
-                # Corrigir cada semana da loja
-                for i, s in enumerate(semanas_ordenadas):
-                    chave_loja = (s[0], s[1], loja)
-                    if chave_loja not in estoque_semanal:
-                        continue
-                    d_ok, d_tot = estoque_semanal[chave_loja]
-                    if d_tot == 0:
+                    if loja_dias_verif == 0 or (loja_dias_verif - loja_dias_ok) == 0:
                         continue
 
-                    taxa = d_ok / d_tot
-                    if taxa >= 1.0:
-                        continue  # Semana sem ruptura nesta loja
+                    vendas_boas_loja = []
+                    for i, s in enumerate(semanas_ordenadas):
+                        chave_loja = (s[0], s[1], loja)
+                        venda_loja = vendas_semanal_por_loja.get(chave_loja, 0)
+                        if chave_loja in estoque_semanal:
+                            d_ok, d_tot = estoque_semanal[chave_loja]
+                            if d_tot > 0 and d_ok / d_tot >= 0.5 and venda_loja > 0:
+                                vendas_boas_loja.append(venda_loja)
 
-                    venda_loja_raw = vendas_semanal_por_loja.get(chave_loja, 0)
+                    media_boa_loja = np.mean(vendas_boas_loja) if vendas_boas_loja else 0
+                    limite_loja = media_boa_loja * LIMITER_CORRECAO
 
-                    if taxa > 0:
-                        corrigido = venda_loja_raw / taxa
-                    else:
-                        # Ruptura total na semana: media sazonal da loja
-                        mesma_sem = [vendas_semanal_por_loja.get((ss[0], ss[1], loja), 0)
-                                     for ss in semanas_ordenadas
-                                     if ss[1] == s[1] and ss != s
-                                     and (ss[0], ss[1], loja) in estoque_semanal
-                                     and estoque_semanal[(ss[0], ss[1], loja)][1] > 0
-                                     and estoque_semanal[(ss[0], ss[1], loja)][0] / estoque_semanal[(ss[0], ss[1], loja)][1] >= 0.5]
-                        mesma_sem = [v for v in mesma_sem if v > 0]
-                        corrigido = np.mean(mesma_sem) if mesma_sem else media_boa_loja
+                    for i, s in enumerate(semanas_ordenadas):
+                        chave_loja = (s[0], s[1], loja)
+                        if chave_loja not in estoque_semanal:
+                            continue
+                        d_ok, d_tot = estoque_semanal[chave_loja]
+                        if d_tot == 0 or d_ok / d_tot >= 1.0:
+                            continue
 
-                    # Limiter 3x
-                    if limite_loja > 0 and corrigido > limite_loja:
-                        corrigido = limite_loja
+                        taxa = d_ok / d_tot
+                        venda_loja_raw = vendas_semanal_por_loja.get(chave_loja, 0)
 
-                    # Adicionar diferenca ao consolidado
-                    diferenca = corrigido - venda_loja_raw
-                    if diferenca > 0:
-                        vendas_semanais[i] += diferenca
-                        semanas_corrigidas += 1
+                        if taxa > 0:
+                            corrigido = venda_loja_raw / taxa
+                        else:
+                            mesma_sem = [vendas_semanal_por_loja.get((ss[0], ss[1], loja), 0)
+                                         for ss in semanas_ordenadas
+                                         if ss[1] == s[1] and ss != s
+                                         and (ss[0], ss[1], loja) in estoque_semanal
+                                         and estoque_semanal[(ss[0], ss[1], loja)][1] > 0
+                                         and estoque_semanal[(ss[0], ss[1], loja)][0] / estoque_semanal[(ss[0], ss[1], loja)][1] >= 0.5]
+                            mesma_sem = [v for v in mesma_sem if v > 0]
+                            corrigido = np.mean(mesma_sem) if mesma_sem else media_boa_loja
 
-            meta_censura_sem = {
-                'dias_ruptura': total_dias_rup,
-                'dias_corrigidos_semanas': semanas_corrigidas,
-                'taxa_disponibilidade': round(total_dias_ok / total_dias_verif, 4) if total_dias_verif > 0 else None,
-                'houve_correcao': semanas_corrigidas > 0
-            }
+                        if limite_loja > 0 and corrigido > limite_loja:
+                            corrigido = limite_loja
 
-    total_vendido = sum(vendas_semanais)
-    media_semanal = total_vendido / len(vendas_semanais) if vendas_semanais else 0
+                        diferenca = corrigido - venda_loja_raw
+                        if diferenca > 0:
+                            historico_corrigido[s] = historico_corrigido.get(s, 0) + diferenca
 
-    if media_semanal <= 0:
-        return []
+        pesos = calcular_pesos_semanais(historico_corrigido)
+    else:
+        pesos = {s: 1.0 for s in range(1, 54)}
 
-    # Calcular desvio padrao semanal
-    import numpy as np
-    desvio_semanal = float(np.std(vendas_semanais)) if len(vendas_semanais) > 1 else 0
-
-    # Calcular indice sazonal por semana ISO (media_semana / media_geral)
-    vendas_por_semana_iso = {}
-    contagem_por_semana_iso = {}
-    for (ano_iso, sem_iso), qtd in historico_semanal.items():
-        if sem_iso not in vendas_por_semana_iso:
-            vendas_por_semana_iso[sem_iso] = 0
-            contagem_por_semana_iso[sem_iso] = 0
-        vendas_por_semana_iso[sem_iso] += qtd
-        contagem_por_semana_iso[sem_iso] += 1
-
-    indices_sazonais = {}
-    for sem_iso in range(1, 54):
-        if sem_iso in vendas_por_semana_iso and contagem_por_semana_iso[sem_iso] > 0:
-            media_semana = vendas_por_semana_iso[sem_iso] / contagem_por_semana_iso[sem_iso]
-            indices_sazonais[sem_iso] = media_semana / media_semanal if media_semanal > 0 else 1.0
-        else:
-            indices_sazonais[sem_iso] = 1.0
-
-    # Gerar registros para as proximas SEMANAS_PREVISAO semanas
+    # 3. Gerar registros semanais derivados dos mensais
     registros = []
     hoje = date.today()
 
     for i in range(SEMANAS_PREVISAO):
         alvo = hoje + timedelta(weeks=i)
-        ano_iso = alvo.isocalendar()[0]
-        semana_iso = alvo.isocalendar()[1]
-
-        # Segunda-feira da semana ISO
-        dia_semana = alvo.isocalendar()[2]  # 1=seg, 7=dom
+        ano_iso, semana_iso, dia_semana = alvo.isocalendar()
         monday = alvo - timedelta(days=dia_semana - 1)
 
-        # Fator sazonal da semana
-        fator_saz = indices_sazonais.get(semana_iso, 1.0)
+        # Determinar mes correspondente pela segunda-feira
+        mes_ref = monday.month
+        ano_ref = monday.year
 
-        # Demanda prevista = media_semanal * fator_sazonal
-        demanda_prevista = media_semanal * fator_saz
+        # Buscar registro mensal correspondente
+        reg_mensal = mapa_mensal.get((ano_ref, mes_ref))
+        if not reg_mensal:
+            continue
 
-        # Buscar ano anterior para mesma semana ISO
+        demanda_mensal = float(reg_mensal['demanda_prevista'] or 0)
+        if demanda_mensal <= 0:
+            continue
+
+        # Semanas ISO com segunda-feira neste mes
+        semanas_do_mes = semanas_iso_do_mes(ano_ref, mes_ref)
+        if not semanas_do_mes:
+            continue
+
+        # Peso desta semana e soma dos pesos do mes (normalizacao)
+        peso_semana = pesos.get(semana_iso, 1.0)
+        soma_pesos_mes = sum(pesos.get(s, 1.0) for s in semanas_do_mes)
+
+        # Demanda semanal = mensal * (peso / soma_pesos) -> garante soma = mensal
+        if soma_pesos_mes > 0:
+            demanda_prevista = demanda_mensal * (peso_semana / soma_pesos_mes)
+        else:
+            demanda_prevista = demanda_mensal / len(semanas_do_mes)
+
+        # Valor ano anterior semanal
         valor_aa_key = (ano_iso - 1, semana_iso)
-        valor_aa = historico_semanal.get(valor_aa_key, 0)
+        valor_aa = historico_semanal.get(valor_aa_key, 0) if historico_semanal else 0
 
         registros.append({
             'cod_produto': str(cod_produto),
@@ -1350,21 +1363,20 @@ def calcular_demanda_item_semanal(
             'data_inicio_semana': monday,
             'demanda_prevista': round(demanda_prevista, 2),
             'demanda_diaria_base': round(demanda_prevista / 7.0, 4),
-            'desvio_padrao': round(desvio_semanal / 7.0, 4),
-            'fator_sazonal': round(fator_saz, 4),
-            'fator_tendencia_yoy': 1.0,
-            'classificacao_tendencia': 'nao_calculado',
+            'desvio_padrao': reg_mensal.get('desvio_padrao', 0),
+            'fator_sazonal': reg_mensal.get('fator_sazonal', 1.0),
+            'fator_tendencia_yoy': reg_mensal.get('fator_tendencia_yoy', 1.0),
+            'classificacao_tendencia': reg_mensal.get('classificacao_tendencia', 'nao_calculado'),
             'valor_ano_anterior': round(valor_aa, 2) if valor_aa else None,
-            'variacao_vs_aa': round(demanda_prevista / valor_aa, 4) if valor_aa > 0 else None,
-            'limitador_aplicado': False,
-            'metodo_usado': 'semanal_sazonal',
-            'categoria_serie': 'media',
-            'dias_historico': len(semanas_ordenadas),
-            'total_vendido_historico': round(total_vendido, 2),
-            # V51: Metadata de demanda censurada
-            'taxa_disponibilidade': meta_censura_sem.get('taxa_disponibilidade'),
-            'dias_ruptura': meta_censura_sem.get('dias_ruptura', 0),
-            'demanda_censurada_corrigida': meta_censura_sem.get('houve_correcao', False),
+            'variacao_vs_aa': round(demanda_prevista / valor_aa, 4) if valor_aa and valor_aa > 0 else None,
+            'limitador_aplicado': reg_mensal.get('limitador_aplicado', False),
+            'metodo_usado': reg_mensal.get('metodo_usado', 'auto'),
+            'categoria_serie': reg_mensal.get('categoria_serie', 'media'),
+            'dias_historico': reg_mensal.get('dias_historico', 0),
+            'total_vendido_historico': reg_mensal.get('total_vendido_historico', 0),
+            'taxa_disponibilidade': reg_mensal.get('taxa_disponibilidade'),
+            'dias_ruptura': reg_mensal.get('dias_ruptura', 0),
+            'demanda_censurada_corrigida': reg_mensal.get('demanda_censurada_corrigida', False),
         })
 
     return registros
@@ -1734,12 +1746,20 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
         if todos_registros:
             total_registros = salvar_demanda_batch(conn, todos_registros)
 
-        # V50: CALCULAR E SALVAR DEMANDA SEMANAL
+        # V55: CALCULAR E SALVAR DEMANDA SEMANAL (derivada da mensal)
         total_registros_semanais = 0
         try:
+            # Construir mapa de registros mensais por item para o calculo semanal
+            registros_mensais_por_item = {}
+            for reg in todos_registros:
+                cod = reg['cod_produto']
+                if cod not in registros_mensais_por_item:
+                    registros_mensais_por_item[cod] = []
+                registros_mensais_por_item[cod].append(reg)
+
             cache_hist_semanal = precarregar_historico_semanal_lote(conn, cod_produtos_ativos)
 
-            # V51: Pre-carregar estoque semanal para correcao censurada
+            # V51: Pre-carregar estoque semanal para correcao censurada (pesos sazonais)
             cache_estoque_semanal = {}
             try:
                 cache_estoque_semanal = precarregar_estoque_semanal_lote(conn, cod_produtos_ativos)
@@ -1758,10 +1778,13 @@ def processar_fornecedor(cnpj_fornecedor: str, nome_fornecedor: str) -> Dict:
                         hist_sem = hist_sem_data
                         hist_sem_loja = {}
                     est_sem = cache_estoque_semanal.get(cod_produto, None)
+                    # V55: Passar registros mensais para decomposicao
+                    regs_mensais = registros_mensais_por_item.get(str(cod_produto), [])
                     registros_sem = calcular_demanda_item_semanal(
                         cod_produto, cnpj_fornecedor, hist_sem,
+                        registros_mensais=regs_mensais,
                         estoque_semanal=est_sem,
-                        vendas_semanal_por_loja=hist_sem_loja  # V53
+                        vendas_semanal_por_loja=hist_sem_loja
                     )
                     todos_registros_semanais.extend(registros_sem)
                 except Exception:

@@ -378,10 +378,35 @@ def api_compra_planejada_calcular():
                     cache_mes.update(cache)
             cache_demanda_por_mes[(ano_m, mes_m)] = cache_mes
 
-        # V50: Demanda semanal desabilitada na Compra Planejada ate validacao do calculo semanal
-        # Os valores semanais estao subdimensionados vs mensais (bug no cronjob a investigar)
-        # Usar apenas demanda mensal ate correcao
+        # V55: Demanda semanal reabilitada (derivada da mensal no cronjob)
         cache_demanda_por_semana = {}
+        semanas_necessarias = set()
+        for p in periodos:
+            dt_atual = p['data_inicio_cobertura']
+            while dt_atual <= p['data_fim_cobertura']:
+                iso_cal = dt_atual.isocalendar()
+                semanas_necessarias.add((iso_cal[0], iso_cal[1]))
+                dt_atual += timedelta(days=7)
+        # Tambem incluir semanas desde hoje ate primeira entrega (consumo durante LT)
+        dt_atual = hoje
+        while dt_atual <= periodos[-1]['data_fim_cobertura']:
+            iso_cal = dt_atual.isocalendar()
+            semanas_necessarias.add((iso_cal[0], iso_cal[1]))
+            dt_atual += timedelta(days=7)
+
+        for ano_s, sem_s in sorted(semanas_necessarias):
+            cache_sem = {}
+            for cnpj_forn in cnpjs_unicos:
+                if cnpj_forn:
+                    produtos_forn = df_produtos[df_produtos['codigo_fornecedor'] == cnpj_forn]['codigo'].tolist()
+                    cache = precarregar_demanda_em_lote(
+                        conn, produtos_forn, cnpj_forn,
+                        cod_empresas=lojas_demanda if is_pedido_multiloja else None,
+                        ano=ano_s, semana=sem_s
+                    )
+                    cache_sem.update(cache)
+            if cache_sem:
+                cache_demanda_por_semana[(ano_s, sem_s)] = cache_sem
 
         # Verificar se ha demanda
         tem_demanda = any(len(c) > 0 for c in cache_demanda_por_mes.values())

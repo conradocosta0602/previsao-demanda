@@ -664,6 +664,9 @@ def api_pedido_fornecedor_integrado():
                                 demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_loja, metodo='auto')
                                 # calcular_demanda_inteligente retorna demanda MENSAL
                                 demanda_diaria = (demanda_media / 30) if demanda_media > 0 else 0
+                                # V55: Converter desvio mensal para diario (processar_item espera diario)
+                                import numpy as np
+                                desvio_padrao = desvio_padrao / np.sqrt(30) if desvio_padrao > 0 else 0
                                 metadata['fonte'] = 'tempo_real'
                             else:
                                 demanda_diaria = 0
@@ -812,6 +815,9 @@ def api_pedido_fornecedor_integrado():
                         demanda_media, desvio_padrao, metadata = DemandCalculator.calcular_demanda_inteligente(historico_total, metodo='auto')
                         # calcular_demanda_inteligente retorna demanda MENSAL
                         demanda_diaria = demanda_media / 30 if demanda_media > 0 else 0
+                        # V55: Converter desvio mensal para diario (processar_item espera diario)
+                        import numpy as np
+                        desvio_padrao = desvio_padrao / np.sqrt(30) if desvio_padrao > 0 else 0
                         metadata['fonte'] = 'tempo_real'
 
                     if demanda_diaria <= 0:
