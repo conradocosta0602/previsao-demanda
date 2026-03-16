@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.31** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.32** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -152,6 +152,8 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V51: Correcao de demanda censurada - corrige subestimacao causada por ruptura (vendas=0 por falta de estoque); metadata taxa_disponibilidade, dias_ruptura, demanda_censurada_corrigida
 - V52: FVA Baseline na acuracia - Forecast Value Added com naive forecast (vendas ano anterior); card, ranking e evolucao temporal
 - V51: Redistribuicao CD nas fases 2+ da Compra Planejada - simula distribuicao do estoque CD para lojas com deficit; estoque_cd_cache construido apos Fase 1 (query banco - redistribuicoes F1); reduz necessidade_total antes de arredondar pedido; atua em ambos os modos (Negociacao e Reabastecimento)
+- V53: Saneamento de ruptura por loja - cronjob corrige demanda censurada por loja individual com limiter 3x; recalcula fatores sazonais e bypassa limitador V11 em meses com ruptura
+- V54: Tela de Demanda usa demanda_pre_calculada - previsao lida da tabela em vez de recalcular; consistencia entre todas as telas
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -858,6 +860,8 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V51: Redistribuicao CD nas fases 2+ da Compra Planejada - estoque CD residual redistribuido para lojas com deficit nas fases 2+; corrige inflacao de pedidos futuros em fornecedores centralizados; fix demanda semanal desabilitada no Pedido e Compra Planejada ate validacao do cronjob (v6.31)
 - V51b: Correcao de demanda censurada no cronjob - corrige subestimacao sistematica causada por ruptura (vendas=0 por falta de estoque); pre-carrega estoque diario consolidado; correcao dia-a-dia e semanal com limiter 3x; metadata taxa_disponibilidade, dias_ruptura, demanda_censurada_corrigida na demanda_pre_calculada (v6.31)
 - V52: FVA Baseline na acuracia - Forecast Value Added com naive forecast (vendas do ano anterior) como baseline; card FVA no dashboard; coluna FVA no ranking por fornecedor/categoria/item; linha FVA no grafico de evolucao temporal (v6.31)
+- V53: Saneamento de ruptura por loja - correcao censurada opera por loja individual (nao mais consolidado); corrige TODOS os dias de ruptura de TODAS as lojas (sem threshold global); limiter 3x protege contra correcoes absurdas; CDs (>=80) excluidos; reconsolidacao apos correcao; fatores sazonais recalculados a partir da serie corrigida (evita subestimacao sazonal por ruptura); limitador V11 desabilitado em meses com ruptura significativa (valor_aa corrigido >2x o original); detecta ruptura parcial (ex: 93% lojas em ruptura mas estoque consolidado >0) (v6.32)
+- V54: Tela de Demanda usa demanda_pre_calculada - endpoint previsao.py busca previsao da tabela demanda_pre_calculada (COALESCE ajuste_manual, demanda_prevista) em vez de recalcular em tempo real; garante consistencia com Pedido, Compra Planejada e Acuracia; herda automaticamente V53 (saneamento por loja), backtesting V48, e todas as correcoes do cronjob; query de estoque removida; DemandCalculator removido do endpoint; eventos mantidos; backtest e grafico mantidos; Salvar Demanda continua gravando ajuste_manual na mesma tabela (v6.32)
 
 ## Documentacao Complementar
 
@@ -873,4 +877,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.31)
+**Ultima atualizacao**: Marco 2026 (v6.32)

@@ -109,7 +109,6 @@ def _api_gerar_previsao_banco_v2_interno():
     from datetime import datetime as dt, timedelta
     from calendar import monthrange
     from app.utils.db_connection import get_db_connection, DB_CONFIG
-    from core.demand_calculator import DemandCalculator, calcular_fator_tendencia_yoy
 
     try:
         dados = request.get_json()
@@ -275,29 +274,6 @@ def _api_gerar_previsao_banco_v2_interno():
         vendas_por_item_raw = cursor.fetchall()
 
         # =====================================================
-        # BUSCAR DADOS DE ESTOQUE PARA CALCULAR COBERTURA
-        # Usado para decidir entre saneamento de rupturas vs normalização
-        # =====================================================
-        # Ajustar filtros para usar alias 'e' em vez de 'h'
-        where_sql_estoque = where_sql.replace("h.cod_empresa", "e.cod_empresa").replace("h.codigo", "e.codigo")
-        corte_sql_estoque = corte_sql.replace("h.data", "e.data")
-
-        query_estoque = f"""
-            SELECT
-                e.codigo as cod_produto,
-                e.data as periodo,
-                e.estoque_diario
-            FROM historico_estoque_diario e
-            JOIN cadastro_produtos_completo p ON e.codigo::text = p.cod_produto
-            WHERE e.data >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 years')
-            {where_sql_estoque}
-            {corte_sql_estoque}
-            ORDER BY e.codigo, e.data
-        """
-        cursor.execute(query_estoque, params_com_corte)
-        estoque_por_item_raw = cursor.fetchall()
-
-        # =====================================================
         # BUSCAR CUE (Custo Unitario de Estoque) POR ITEM
         # Media ponderada pelo estoque de cada loja
         # =====================================================
@@ -316,15 +292,6 @@ def _api_gerar_previsao_banco_v2_interno():
         cue_por_item = {}
         for row in cue_rows:
             cue_por_item[row['cod_produto']] = float(row['cue_medio'] or 0)
-
-        # Organizar estoque por item
-        estoque_item_dict = {}
-        for est in estoque_por_item_raw:
-            cod = est['cod_produto']
-            if cod not in estoque_item_dict:
-                estoque_item_dict[cod] = {}
-            data_str = est['periodo'].strftime('%Y-%m-%d')
-            estoque_item_dict[cod][data_str] = float(est['estoque_diario'] or 0)
 
         # Organizar vendas por item
         vendas_item_dict = {}
@@ -418,35 +385,119 @@ def _api_gerar_previsao_banco_v2_interno():
                     datas_previsao.append(data_prev.strftime('%Y-%m-%d'))
 
         # =====================================================
-        # CALCULAR PREVISAO POR ITEM usando DemandCalculator
-        # Conforme app_original.py - usa demanda diaria especifica por periodo
+        # BUSCAR DEMANDA PRE-CALCULADA (V54)
+        # Fonte primaria de previsao - ja inclui saneamento V53 por loja,
+        # fatores sazonais corrigidos e bypass do limitador V11
         # =====================================================
         relatorio_itens = []
         previsoes_agregadas_por_periodo = {d: 0 for d in datas_previsao}
         contagem_modelos = {}
 
-        # =====================================================
-        # CARREGAR AJUSTES MANUAIS DO BANCO DE DADOS
-        # Se existir ajuste para item/periodo, usar valor_ajustado
-        # =====================================================
-        ajustes_por_item_periodo = {}
-        try:
-            cursor.execute("""
-                SELECT cod_produto, periodo, valor_ajustado
-                FROM ajuste_previsao
-                WHERE ativo = TRUE
-                  AND granularidade = %s
-            """, (granularidade,))
-            ajustes_rows = cursor.fetchall()
-            for ajuste in ajustes_rows:
-                chave = (str(ajuste['cod_produto']), ajuste['periodo'])
-                ajustes_por_item_periodo[chave] = float(ajuste['valor_ajustado'])
-            print(f"[Ajustes] Carregados {len(ajustes_por_item_periodo)} ajustes manuais do banco")
-        except Exception as e:
-            print(f"[Ajustes] Erro ao carregar ajustes: {e}")
+        demanda_pre_calc = {}  # {(cod_produto_str, periodo_str): {campos...}}
 
-        # Calcular total de dias no periodo historico (para detectar intermitencia real)
-        dias_historico_total = len(datas_ordenadas) if datas_ordenadas else 1
+        if granularidade in ('mensal', 'semanal') and datas_previsao:
+            try:
+                if granularidade == 'mensal':
+                    periodos_query = []
+                    for dp in datas_previsao:
+                        periodos_query.append((int(dp[:4]), int(dp[5:7])))
+
+                    if periodos_query:
+                        periodo_conditions = ' OR '.join(
+                            [f'(d.ano = %s AND d.mes = %s)' for _ in periodos_query]
+                        )
+                        params_periodos = []
+                        for a, m in periodos_query:
+                            params_periodos.extend([a, m])
+
+                        cursor.execute(f"""
+                            SELECT d.cod_produto, d.ano, d.mes,
+                                   COALESCE(d.ajuste_manual, d.demanda_prevista) as demanda_efetiva,
+                                   d.demanda_prevista,
+                                   d.demanda_diaria_base,
+                                   d.fator_sazonal,
+                                   d.fator_tendencia_yoy,
+                                   d.valor_ano_anterior,
+                                   d.metodo_usado,
+                                   d.classificacao_tendencia,
+                                   d.desvio_padrao,
+                                   d.taxa_disponibilidade,
+                                   d.demanda_censurada_corrigida,
+                                   d.ajuste_manual,
+                                   d.limitador_aplicado
+                            FROM demanda_pre_calculada d
+                            WHERE d.cod_empresa IS NULL
+                              AND d.tipo_granularidade = 'mensal'
+                              AND ({periodo_conditions})
+                        """, params_periodos)
+
+                        for row in cursor.fetchall():
+                            periodo_str = f"{row['ano']:04d}-{int(row['mes']):02d}-01"
+                            demanda_pre_calc[(str(row['cod_produto']), periodo_str)] = dict(row)
+
+                elif granularidade == 'semanal':
+                    periodos_query = []
+                    for dp in datas_previsao:
+                        if '-S' in dp:
+                            partes = dp.split('-S')
+                            periodos_query.append((int(partes[0]), int(partes[1])))
+
+                    if periodos_query:
+                        periodo_conditions = ' OR '.join(
+                            [f'(d.ano = %s AND d.semana = %s)' for _ in periodos_query]
+                        )
+                        params_periodos = []
+                        for a, s in periodos_query:
+                            params_periodos.extend([a, s])
+
+                        cursor.execute(f"""
+                            SELECT d.cod_produto, d.ano, d.semana,
+                                   COALESCE(d.ajuste_manual, d.demanda_prevista) as demanda_efetiva,
+                                   d.demanda_prevista,
+                                   d.demanda_diaria_base,
+                                   d.fator_sazonal,
+                                   d.fator_tendencia_yoy,
+                                   d.valor_ano_anterior,
+                                   d.metodo_usado,
+                                   d.classificacao_tendencia,
+                                   d.desvio_padrao,
+                                   d.taxa_disponibilidade,
+                                   d.demanda_censurada_corrigida,
+                                   d.ajuste_manual,
+                                   d.limitador_aplicado
+                            FROM demanda_pre_calculada d
+                            WHERE d.cod_empresa IS NULL
+                              AND d.tipo_granularidade = 'semanal'
+                              AND ({periodo_conditions})
+                        """, params_periodos)
+
+                        for row in cursor.fetchall():
+                            periodo_str = f"{row['ano']}-S{int(row['semana']):02d}"
+                            demanda_pre_calc[(str(row['cod_produto']), periodo_str)] = dict(row)
+
+                print(f"  [V54] Carregados {len(demanda_pre_calc)} registros de demanda_pre_calculada", flush=True)
+            except Exception as e_pc:
+                print(f"  [V54] Erro ao carregar demanda_pre_calculada: {e_pc}", flush=True)
+
+        # Mapeamento de metodos para nomes simplificados
+        mapeamento_metodos = {
+            'media_simples': 'SMA',
+            'media_ponderada': 'WMA',
+            'media_movel_exp': 'EMA',
+            'tendencia': 'Regressao com Tendencia',
+            'sazonal': 'Decomposicao Sazonal',
+            'tsb': 'TSB',
+            'tsb_simplificado': 'TSB',
+            'wma': 'WMA',
+            'ema': 'EMA',
+            'wma_adaptativo_estavel': 'WMA',
+            'wma_adaptativo_crescente': 'Regressao com Tendencia',
+            'wma_adaptativo_decrescente': 'Regressao com Tendencia',
+            'tsb_intermitente_extremo': 'TSB',
+            'sma': 'SMA',
+            'tendencia_linear': 'Tendencia',
+            'sazonal_decomposicao': 'Sazonal'
+        }
 
         for item in lista_itens:
             cod_produto = item['cod_produto']
@@ -457,9 +508,6 @@ def _api_gerar_previsao_banco_v2_interno():
             # Nao calcular demanda, mas incluir na tabela com demanda zerada
             # =====================================================
             if situacao_compra and situacao_compra != 'ATIVO' and ('EN' in situacao_compra or 'FL' in situacao_compra):
-                # Item bloqueado - incluir na tabela com demanda zerada
-                # previsao_por_periodo deve ser um array para o frontend processar
-                # Determinar a situacao principal (EN ou FL)
                 sit_principal = 'FL' if 'FL' in situacao_compra else 'EN'
                 sit_descricao = 'Fora de Linha' if sit_principal == 'FL' else 'Em Negociacao'
 
@@ -469,330 +517,74 @@ def _api_gerar_previsao_banco_v2_interno():
                     'nome_fornecedor': item['nome_fornecedor'] or 'SEM FORNECEDOR',
                     'categoria': item['categoria'],
                     'situacao_compra': situacao_compra,
-                    'sit_compra': sit_principal,  # Campo esperado pelo frontend
-                    'sit_compra_descricao': sit_descricao,  # Campo esperado pelo frontend
+                    'sit_compra': sit_principal,
+                    'sit_compra_descricao': sit_descricao,
                     'demanda_prevista_total': 0,
                     'demanda_ano_anterior': 0,
                     'variacao_percentual': 0,
-                    'sinal_emoji': '⚫',  # Preto para bloqueado
+                    'sinal_emoji': '⚫',
                     'metodo_estatistico': 'BLOQUEADO',
                     'fator_tendencia_yoy': 0,
                     'classificacao_tendencia': 'bloqueado',
-                    'previsao_por_periodo': [],  # Array vazio para compatibilidade com frontend
+                    'previsao_por_periodo': [],
                     'cue': round(cue_por_item.get(cod_produto, 0), 4)
                 })
                 continue
 
-            vendas_hist = vendas_item_dict.get(cod_produto, [])
-            vendas_hist_sorted = sorted(vendas_hist, key=lambda x: x['periodo'])
-
-            if not vendas_hist_sorted:
-                continue
-
             # =====================================================
-            # LOGICA DE COBERTURA DE ESTOQUE (LIMIAR 50%)
-            # - >= 50%: Sanear rupturas (excluir rupturas)
-            # - < 50%: Normalizar pelo total de dias do periodo
+            # V54: Usar demanda_pre_calculada como fonte primaria
             # =====================================================
-            estoque_item = estoque_item_dict.get(cod_produto, {})
-            dias_com_registro_estoque = len(estoque_item)
-            cobertura_estoque = dias_com_registro_estoque / dias_historico_total if dias_historico_total > 0 else 0
-
-            # Calcular total vendido para normalizacao
-            total_vendido_item = sum(v['qtd_venda'] for v in vendas_hist_sorted)
-            dias_com_venda = len(vendas_hist_sorted)
-
-            if cobertura_estoque >= 0.50:
-                # =====================================================
-                # COBERTURA >= 50%: Sanear rupturas
-                # Exclui dias com estoque=0 E venda=0 (ruptura)
-                # Inclui dias com estoque>0 E venda=0 (demanda zero real)
-                # =====================================================
-                serie_saneada = []
-                dias_validos = 0
-
-                # Para cada data no periodo historico
-                for data_str in datas_ordenadas:
-                    # Buscar venda e estoque nessa data
-                    venda_dia = 0
-                    for v in vendas_hist_sorted:
-                        if v['periodo'] == data_str:
-                            venda_dia = v['qtd_venda']
-                            break
-
-                    estoque_dia = estoque_item.get(data_str, None)
-
-                    # Logica de saneamento:
-                    # - estoque > 0 ou sem registro de estoque: incluir a venda (real ou zero)
-                    # - estoque = 0 E venda = 0: ruptura, EXCLUIR
-                    if estoque_dia is not None and estoque_dia == 0 and venda_dia == 0:
-                        # Ruptura detectada - nao incluir no calculo
-                        continue
-                    else:
-                        # Incluir: ou tinha estoque, ou vendeu, ou sem info de estoque
-                        serie_saneada.append(venda_dia)
-                        dias_validos += 1
-
-                serie_item = serie_saneada if serie_saneada else [0]
-                metodo_usado = 'ruptura_saneada'
-
-                # Taxa de presenca baseada em dias validos
-                taxa_presenca = dias_com_venda / dias_validos if dias_validos > 0 else 0
-
-            else:
-                # =====================================================
-                # COBERTURA < 50%: Normalizar pelo total de dias
-                # Nao temos dados suficientes de estoque para identificar rupturas
-                # Entao dividimos total vendido pelo total de dias do periodo
-                # =====================================================
-                # Calcular demanda diaria normalizada
-                demanda_diaria_normalizada = total_vendido_item / dias_historico_total if dias_historico_total > 0 else 0
-
-                # Criar serie artificial para o DemandCalculator
-                # com a demanda diaria normalizada
-                serie_item = [demanda_diaria_normalizada] * dias_historico_total
-                metodo_usado = 'normalizado_sem_estoque'
-
-                # Taxa de presenca baseada no total de dias
-                taxa_presenca = dias_com_venda / dias_historico_total if dias_historico_total > 0 else 0
-
-            # Usar DemandCalculator para calcular demanda unificada
-            demanda_total_unificada, desvio_total, metadata = DemandCalculator.calcular_demanda_diaria_unificada(
-                vendas_diarias=serie_item,
-                dias_periodo=dias_periodo_total,
-                granularidade_exibicao=granularidade
-            )
-
-            demanda_diaria_base = metadata.get('demanda_diaria_base', 0)
-            desvio_diario_base = metadata.get('desvio_diario_base', 0)
-            metodo_calc = metadata.get('metodo_usado', 'media_simples')
-
-            # Preservar metodo de saneamento/normalizacao se foi aplicado
-            if metodo_usado in ['ruptura_saneada', 'normalizado_sem_estoque']:
-                metodo_usado = f"{metodo_usado}+{metodo_calc}"
-            else:
-                metodo_usado = metodo_calc
-
-            # AJUSTE PARA DEMANDA EXTREMAMENTE INTERMITENTE
-            # Se vendeu em menos de 5% dos dias, aplicar fator de correcao
-            if taxa_presenca < 0.05 and dias_com_venda > 0:
-                # Calculo TSB: probabilidade de demanda x media quando ha demanda
-                media_quando_vende = total_vendido_item / dias_com_venda
-                # Demanda esperada = prob_venda * media_venda
-                demanda_diaria_base = taxa_presenca * media_quando_vende
-                metodo_usado = 'tsb_intermitente_extremo'
-
-            # =====================================================
-            # CALCULAR DEMANDA DIARIA ESPECIFICA POR PERIODO
-            # Agrupa historico por mes/semana para calcular media especifica
-            # =====================================================
-            vendas_por_periodo_hist = {}
-            for venda in vendas_hist_sorted:
-                data_venda = venda['periodo']
-                if not data_venda:
-                    continue
-
-                if granularidade == 'mensal':
-                    chave = int(data_venda[5:7])  # mes (1-12)
-                elif granularidade == 'semanal':
-                    try:
-                        data_obj = dt.strptime(data_venda, '%Y-%m-%d')
-                        chave = data_obj.isocalendar()[1]  # semana ISO
-                    except:
-                        continue
-                else:
-                    try:
-                        data_obj = dt.strptime(data_venda, '%Y-%m-%d')
-                        chave = data_obj.weekday()  # dia da semana
-                    except:
-                        continue
-
-                if chave not in vendas_por_periodo_hist:
-                    vendas_por_periodo_hist[chave] = []
-                vendas_por_periodo_hist[chave].append(venda['qtd_venda'])
-
-            # =====================================================
-            # CALCULO DE FATORES SAZONAIS (como multiplicadores)
-            # O fator sazonal indica se um periodo eh acima/abaixo da media
-            # Ex: fator=1.2 significa 20% acima da media geral
-            # =====================================================
-            media_por_periodo = {}
-            for chave, vendas_lista in vendas_por_periodo_hist.items():
-                if len(vendas_lista) > 0:
-                    media_por_periodo[chave] = sum(vendas_lista) / len(vendas_lista)
-                else:
-                    media_por_periodo[chave] = 0
-
-            # Calcular media geral de TODOS os periodos historicos
-            todas_medias = [m for m in media_por_periodo.values() if m > 0]
-            media_geral_hist = sum(todas_medias) / len(todas_medias) if todas_medias else 0
-
-            # Calcular fator sazonal para cada periodo
-            # fator = media_do_periodo / media_geral
-            fatores_sazonais = {}
-            for chave, media_periodo in media_por_periodo.items():
-                if media_geral_hist > 0 and media_periodo > 0:
-                    fator = media_periodo / media_geral_hist
-                    # Limitar fator entre 0.5 e 2.0 para evitar distorcoes extremas
-                    fatores_sazonais[chave] = max(0.5, min(2.0, fator))
-                else:
-                    fatores_sazonais[chave] = 1.0
-
-            # Usar demanda_diaria_base dos 6 metodos estatisticos
-            demanda_diaria_inteligente = demanda_diaria_base
-            if demanda_diaria_inteligente == 0 and len(serie_item) > 0:
-                # Fallback apenas se DemandCalculator retornou 0
-                demanda_diaria_inteligente = sum(serie_item) / len(serie_item)
-
-            # =====================================================
-            # FATOR DE TENDENCIA YoY (V5.7)
-            # Corrige subestimacao em itens com crescimento historico
-            # Ex: Item com +29% de crescimento real nao deve prever queda
-            # =====================================================
-            vendas_por_mes_yoy = {}
-            for venda in vendas_hist_sorted:
-                data_venda = venda['periodo']
-                try:
-                    ano_v = int(data_venda[:4])
-                    mes_v = int(data_venda[5:7])
-                    chave_yoy = (ano_v, mes_v)
-                    if chave_yoy not in vendas_por_mes_yoy:
-                        vendas_por_mes_yoy[chave_yoy] = 0
-                    vendas_por_mes_yoy[chave_yoy] += venda['qtd_venda']
-                except:
-                    continue
-
-            fator_tendencia_yoy = 1.0
-            classificacao_tendencia = 'nao_calculado'
-            if vendas_por_mes_yoy:
-                fator_tendencia_yoy, classificacao_tendencia, _ = calcular_fator_tendencia_yoy(
-                    vendas_por_mes=vendas_por_mes_yoy,
-                    min_anos=2,
-                    fator_amortecimento=0.7
-                )
-
-            # Calcular previsao de cada periodo usando demanda diaria especifica
             previsao_item_periodos = []
             total_previsao_item = 0
             total_ano_anterior_item = 0
+            metodo_usado = None
+            fator_tendencia_yoy = 1.0
+            classificacao_tendencia = 'nao_calculado'
+            desvio_diario_base = 0
+            tem_dados_pre_calc = False
 
-            # Criar dicionario de vendas por data para lookup rapido (para ano anterior)
-            vendas_item_por_data = {}
-            for venda in vendas_hist_sorted:
-                data_venda = venda['periodo']
-                if granularidade == 'mensal':
-                    # Agregar por mes: YYYY-MM-01
-                    chave_data = data_venda[:7] + '-01'
-                elif granularidade == 'semanal':
-                    try:
-                        data_obj = dt.strptime(data_venda, '%Y-%m-%d')
-                        ano_iso, semana_iso, _ = data_obj.isocalendar()
-                        chave_data = f"{ano_iso}-S{semana_iso:02d}"
-                    except:
-                        continue
+            for data_prev in datas_previsao:
+                chave_pc = (str(cod_produto), data_prev)
+                dados_pc = demanda_pre_calc.get(chave_pc)
+
+                if dados_pc:
+                    tem_dados_pre_calc = True
+                    previsao_periodo_int = round(float(dados_pc['demanda_efetiva'] or 0))
+                    valor_aa_periodo = round(float(dados_pc['valor_ano_anterior'] or 0))
+                    tem_ajuste = dados_pc['ajuste_manual'] is not None
+
+                    # Capturar metadados do primeiro periodo encontrado
+                    if metodo_usado is None:
+                        metodo_usado = dados_pc.get('metodo_usado', 'sma')
+                        fator_tendencia_yoy = float(dados_pc.get('fator_tendencia_yoy') or 1.0)
+                        classificacao_tendencia = dados_pc.get('classificacao_tendencia') or 'nao_calculado'
+                        desvio_diario_base = float(dados_pc.get('desvio_padrao') or 0)
                 else:
-                    chave_data = data_venda
-
-                if chave_data not in vendas_item_por_data:
-                    vendas_item_por_data[chave_data] = 0
-                vendas_item_por_data[chave_data] += venda['qtd_venda']
-
-            for i, data_prev in enumerate(datas_previsao):
-                if granularidade == 'mensal':
-                    ano = int(data_prev[:4])
-                    mes = int(data_prev[5:7])
-                    dias_periodo = monthrange(ano, mes)[1]
-                    chave_periodo = mes
-                    # Chave do ano anterior para este periodo
-                    chave_ano_anterior = f"{ano - 1:04d}-{mes:02d}-01"
-                elif granularidade == 'semanal':
-                    dias_periodo = 7
-                    if '-S' in data_prev:
-                        ano_str, sem_str = data_prev.split('-S')
-                        chave_periodo = int(sem_str)
-                        chave_ano_anterior = f"{int(ano_str) - 1}-S{sem_str}"
-                    else:
-                        data_obj = dt.strptime(data_prev, '%Y-%m-%d')
-                        chave_periodo = data_obj.isocalendar()[1]
-                        chave_ano_anterior = f"{data_obj.year - 1}-S{chave_periodo:02d}"
-                else:
-                    dias_periodo = 1
-                    data_obj = dt.strptime(data_prev, '%Y-%m-%d')
-                    chave_periodo = data_obj.weekday()
-                    chave_ano_anterior = f"{data_obj.year - 1}-{data_obj.month:02d}-{data_obj.day:02d}"
-
-                # =====================================================
-                # FORMULA CORRETA V5.7: demanda * fator_sazonal * fator_tendencia_yoy * dias
-                # - demanda_inteligente: vem dos 6 metodos (SMA, WMA, EMA, Tendencia, Sazonal, TSB)
-                # - fator_sazonal: multiplicador baseado na sazonalidade historica
-                # - fator_tendencia_yoy: ajuste para crescimento/queda historica YoY
-                # - dias: quantidade de dias no periodo
-                # =====================================================
-                fator_sazonal = fatores_sazonais.get(chave_periodo, 1.0)
-                previsao_periodo = demanda_diaria_inteligente * fator_sazonal * fator_tendencia_yoy * dias_periodo
-
-                # Buscar valor do ano anterior para este item neste periodo
-                valor_aa_periodo = vendas_item_por_data.get(chave_ano_anterior, 0)
-                total_ano_anterior_item += valor_aa_periodo
-
-                # =====================================================
-                # LIMITADOR DE VARIACAO vs ANO ANTERIOR (V11) - Atualizado v5.7
-                # Evita previsoes extremas limitando variacao entre -40% e +50%
-                # do valor do ano anterior.
-                #
-                # NOVO v5.7: Para itens com tendencia de crescimento, se a previsao
-                # estiver abaixo do ano anterior, ajusta para pelo menos igualar o AA
-                # (respeitando o fator de tendencia detectado).
-                # =====================================================
-                previsao_periodo_limitada = previsao_periodo
-                variacao_limitada = False
-
-                if valor_aa_periodo > 0:
-                    variacao_vs_aa = previsao_periodo / valor_aa_periodo
-
-                    # NOVO v5.7: Ajuste para itens em crescimento
-                    # Se item tem tendencia de crescimento mas previsao < AA, corrigir
-                    if fator_tendencia_yoy > 1.05 and variacao_vs_aa < 1.0:
-                        # Usar o fator de tendencia para projetar sobre o AA
-                        # Limitado a +40% para evitar exageros
-                        previsao_periodo_limitada = valor_aa_periodo * min(fator_tendencia_yoy, 1.4)
-                        variacao_limitada = True
-                    # Limitar variacao maxima para cima (+50%)
-                    elif variacao_vs_aa > 1.5:
-                        previsao_periodo_limitada = valor_aa_periodo * 1.5
-                        variacao_limitada = True
-                    # Limitar variacao maxima para baixo (-40%)
-                    elif variacao_vs_aa < 0.6:
-                        previsao_periodo_limitada = valor_aa_periodo * 0.6
-                        variacao_limitada = True
-
-                # Usar valor limitado se aplicavel
-                previsao_periodo = previsao_periodo_limitada
-
-                # Arredondar previsao do periodo para inteiro (como exibido no frontend)
-                previsao_periodo_int = round(previsao_periodo)
-
-                # =====================================================
-                # VERIFICAR SE EXISTE AJUSTE MANUAL PARA ESTE ITEM/PERIODO
-                # Se existir, usar o valor ajustado em vez do calculado
-                # =====================================================
-                chave_ajuste = (str(cod_produto), data_prev)
-                tem_ajuste = chave_ajuste in ajustes_por_item_periodo
-                if tem_ajuste:
-                    previsao_periodo_int = int(ajustes_por_item_periodo[chave_ajuste])
+                    previsao_periodo_int = 0
+                    valor_aa_periodo = 0
+                    tem_ajuste = False
 
                 previsao_item_periodos.append({
                     'periodo': data_prev,
                     'previsao': previsao_periodo_int,
-                    'ano_anterior': round(valor_aa_periodo),
-                    'ajuste_manual': tem_ajuste  # Flag para indicar que foi ajustado
+                    'ano_anterior': valor_aa_periodo,
+                    'ajuste_manual': tem_ajuste
                 })
                 previsoes_agregadas_por_periodo[data_prev] += previsao_periodo_int
                 total_previsao_item += previsao_periodo_int
+                total_ano_anterior_item += valor_aa_periodo
+
+            # Se nao tem dados pre-calculados E nao tem vendas historicas, pular item
+            if not tem_dados_pre_calc:
+                vendas_hist = vendas_item_dict.get(cod_produto, [])
+                if not vendas_hist:
+                    continue
+
+            if metodo_usado is None:
+                metodo_usado = 'sem_dados'
 
             # =====================================================
             # APLICAR EVENTOS (promocoes, sazonais, etc.)
-            # Ajusta a previsao de cada periodo pelo fator do evento
             # =====================================================
             try:
                 from core.event_manager_v2 import EventManagerV2
@@ -801,7 +593,7 @@ def _api_gerar_previsao_banco_v2_interno():
                 cat_item = item.get('categoria')
                 linha3_item = item.get('descricao_linha')
 
-                total_previsao_item = 0  # Recalcular com eventos
+                total_previsao_item = 0
                 for pp in previsao_item_periodos:
                     try:
                         data_prev_str = pp['periodo']
@@ -834,7 +626,6 @@ def _api_gerar_previsao_banco_v2_interno():
                         pass
                     total_previsao_item += pp['previsao']
 
-                # Atualizar agregado por periodo
                 for pp in previsao_item_periodos:
                     if pp.get('evento_fator') and pp.get('previsao_original') is not None:
                         diff = pp['previsao'] - pp['previsao_original']
@@ -842,52 +633,25 @@ def _api_gerar_previsao_banco_v2_interno():
             except Exception as e_evt:
                 print(f"[EVENTOS] Erro ao aplicar eventos para item {cod_produto}: {e_evt}")
 
-            # Mapeamento de metodos para nomes simplificados
-            mapeamento_metodos = {
-                'media_simples': 'SMA',
-                'media_ponderada': 'WMA',
-                'media_movel_exp': 'EMA',
-                'tendencia': 'Regressao com Tendencia',
-                'sazonal': 'Decomposicao Sazonal',
-                'tsb': 'TSB',
-                'tsb_simplificado': 'TSB',
-                'wma': 'WMA',
-                'ema': 'EMA',
-                'wma_adaptativo_estavel': 'WMA',
-                'wma_adaptativo_crescente': 'Regressao com Tendencia',
-                'wma_adaptativo_decrescente': 'Regressao com Tendencia',
-                'tsb_intermitente_extremo': 'TSB',
-                'sma': 'SMA',
-                'tendencia_linear': 'Tendencia',
-                'sazonal_decomposicao': 'Sazonal'
-            }
-            # Se metodo composto (ex: ruptura_saneada+tsb), extrai apenas o metodo estatistico
+            # Metodo de exibicao
             chave_metodo = metodo_usado.split('+')[-1] if '+' in metodo_usado else metodo_usado
             metodo_exibicao = mapeamento_metodos.get(chave_metodo, mapeamento_metodos.get(metodo_usado, chave_metodo.upper()))
 
-            # Se algum periodo tem ajuste manual, indicar no metodo
             tem_algum_ajuste = any(p.get('ajuste_manual') for p in previsao_item_periodos)
             if tem_algum_ajuste:
                 metodo_exibicao = 'Ajuste Manual'
 
-            # Calcular variacao percentual (mantida como informacao)
+            # Variacao percentual
             variacao_pct = 0
             if total_ano_anterior_item > 0:
                 variacao_pct = ((total_previsao_item - total_ano_anterior_item) / total_ano_anterior_item) * 100
 
-            # Calcular CV (Coeficiente de Variacao) para indicador de risco (V50)
-            # CV = desvio_mensal / media_previsao_mensal
+            # CV e sinal de alerta
             num_periodos_prev = len(previsao_item_periodos) if previsao_item_periodos else 1
             media_previsao_mensal = total_previsao_item / num_periodos_prev if num_periodos_prev > 0 else 0
             desvio_mensal = desvio_diario_base * math.sqrt(30)
             cv = desvio_mensal / media_previsao_mensal if media_previsao_mensal > 0 else 0
 
-            # Determinar sinal de alerta baseado no CV (V50)
-            # 🔴 Risco critico: CV > 80% (previsao muito incerta)
-            # 🟡 Atencao: CV > 50% (alta variabilidade)
-            # 🔵 Baixo risco: CV > 30% (variabilidade moderada)
-            # 🟢 Confiavel: CV <= 30% (previsao estavel)
-            # ⚪ Sem dados: sem base para calcular
             if media_previsao_mensal == 0:
                 sinal_emoji = '⚪'
             elif cv > 0.80:
@@ -899,7 +663,6 @@ def _api_gerar_previsao_banco_v2_interno():
             else:
                 sinal_emoji = '🟢'
 
-            # Mapeamento emoji -> texto para filtro frontend
             sinal_alerta_map = {
                 '⚪': 'cinza', '🔴': 'vermelho', '🟡': 'amarelo',
                 '🔵': 'azul', '🟢': 'verde'
@@ -927,7 +690,6 @@ def _api_gerar_previsao_banco_v2_interno():
                 'cue': round(cue_por_item.get(cod_produto, 0), 4)
             })
 
-            # Contar modelos
             if metodo_exibicao not in contagem_modelos:
                 contagem_modelos[metodo_exibicao] = 0
             contagem_modelos[metodo_exibicao] += 1
