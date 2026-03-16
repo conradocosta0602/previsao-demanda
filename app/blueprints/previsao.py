@@ -424,7 +424,8 @@ def _api_gerar_previsao_banco_v2_interno():
                                    d.taxa_disponibilidade,
                                    d.demanda_censurada_corrigida,
                                    d.ajuste_manual,
-                                   d.limitador_aplicado
+                                   d.limitador_aplicado,
+                                   d.editado_manualmente
                             FROM demanda_pre_calculada d
                             WHERE d.cod_empresa IS NULL
                               AND d.tipo_granularidade = 'mensal'
@@ -464,7 +465,8 @@ def _api_gerar_previsao_banco_v2_interno():
                                    d.taxa_disponibilidade,
                                    d.demanda_censurada_corrigida,
                                    d.ajuste_manual,
-                                   d.limitador_aplicado
+                                   d.limitador_aplicado,
+                                   d.editado_manualmente
                             FROM demanda_pre_calculada d
                             WHERE d.cod_empresa IS NULL
                               AND d.tipo_granularidade = 'semanal'
@@ -551,7 +553,7 @@ def _api_gerar_previsao_banco_v2_interno():
                     tem_dados_pre_calc = True
                     previsao_periodo_int = round(float(dados_pc['demanda_efetiva'] or 0))
                     valor_aa_periodo = round(float(dados_pc['valor_ano_anterior'] or 0))
-                    tem_ajuste = dados_pc['ajuste_manual'] is not None
+                    tem_editado = bool(dados_pc.get('editado_manualmente', False))
 
                     # Capturar metadados do primeiro periodo encontrado
                     if metodo_usado is None:
@@ -562,13 +564,13 @@ def _api_gerar_previsao_banco_v2_interno():
                 else:
                     previsao_periodo_int = 0
                     valor_aa_periodo = 0
-                    tem_ajuste = False
+                    tem_editado = False
 
                 previsao_item_periodos.append({
                     'periodo': data_prev,
                     'previsao': previsao_periodo_int,
                     'ano_anterior': valor_aa_periodo,
-                    'ajuste_manual': tem_ajuste
+                    'ajuste_manual': tem_editado
                 })
                 previsoes_agregadas_por_periodo[data_prev] += previsao_periodo_int
                 total_previsao_item += previsao_periodo_int
@@ -1147,40 +1149,40 @@ def api_salvar_demanda_tela():
 
                     divisor = 7.0
 
-                    # V56: Verificar se valor eh diferente do atual
+                    # V56: flag editado indica se usuario REALMENTE alterou o valor
+                    foi_editado = bool(pp.get('editado', False))
+
                     cursor.execute("""
-                        SELECT demanda_prevista FROM demanda_pre_calculada
+                        SELECT id FROM demanda_pre_calculada
                         WHERE cod_produto = %s AND cnpj_fornecedor = %s
                           AND cod_empresa IS NULL AND ano = %s AND semana = %s
                           AND tipo_granularidade = 'semanal'
                     """, (cod_produto, cnpj_fornecedor, ano, semana))
                     row_sem = cursor.fetchone()
-                    valor_atual_sem = float(row_sem[0]) if row_sem and row_sem[0] is not None else None
 
                     if row_sem:
-                        if valor_atual_sem is not None and round(float(previsao_val)) == round(valor_atual_sem):
-                            continue  # Valor nao mudou
-                        else:
-                            cursor.execute("""
-                                UPDATE demanda_pre_calculada
-                                SET demanda_prevista      = %s,
-                                    demanda_diaria_base   = %s,
-                                    ajuste_manual         = %s,
-                                    ajuste_manual_data    = NOW(),
-                                    ajuste_manual_usuario = %s,
-                                    ajuste_manual_motivo  = 'salvo_tela_demanda',
-                                    data_calculo          = NOW()
-                                WHERE cod_produto = %s
-                                  AND cnpj_fornecedor = %s
-                                  AND cod_empresa IS NULL
-                                  AND ano = %s
-                                  AND semana = %s
-                                  AND tipo_granularidade = 'semanal'
-                            """, (
-                                float(previsao_val), float(previsao_val) / divisor,
-                                float(previsao_val), usuario,
-                                cod_produto, cnpj_fornecedor, ano, semana
-                            ))
+                        cursor.execute("""
+                            UPDATE demanda_pre_calculada
+                            SET demanda_prevista      = %s,
+                                demanda_diaria_base   = %s,
+                                ajuste_manual         = %s,
+                                ajuste_manual_data    = NOW(),
+                                ajuste_manual_usuario = %s,
+                                ajuste_manual_motivo  = 'salvo_tela_demanda',
+                                editado_manualmente   = CASE WHEN %s THEN TRUE ELSE editado_manualmente END,
+                                data_calculo          = NOW()
+                            WHERE cod_produto = %s
+                              AND cnpj_fornecedor = %s
+                              AND cod_empresa IS NULL
+                              AND ano = %s
+                              AND semana = %s
+                              AND tipo_granularidade = 'semanal'
+                        """, (
+                            float(previsao_val), float(previsao_val) / divisor,
+                            float(previsao_val), usuario,
+                            foi_editado,
+                            cod_produto, cnpj_fornecedor, ano, semana
+                        ))
                     else:
                         cursor.execute("""
                             INSERT INTO demanda_pre_calculada (
@@ -1189,19 +1191,22 @@ def api_salvar_demanda_tela():
                                 demanda_prevista, demanda_diaria_base,
                                 ajuste_manual, ajuste_manual_data,
                                 ajuste_manual_usuario, ajuste_manual_motivo,
+                                editado_manualmente,
                                 data_calculo
                             ) VALUES (
                                 %s, %s, NULL, %s, NULL,
                                 %s, 'semanal', %s,
                                 %s, %s,
                                 %s, NOW(), %s, 'salvo_tela_demanda',
+                                %s,
                                 NOW()
                             )
                         """, (
                             cod_produto, cnpj_fornecedor, ano,
                             semana, data_inicio_semana,
                             float(previsao_val), float(previsao_val) / divisor,
-                            float(previsao_val), usuario
+                            float(previsao_val), usuario,
+                            foi_editado
                         ))
                 else:
                     # Formato mensal: '2026-07-01' ou '2026-07'
@@ -1211,46 +1216,41 @@ def api_salvar_demanda_tela():
                     except (ValueError, IndexError):
                         continue
 
-                    # V56: Verificar se valor eh diferente do demanda_prevista atual
-                    # So marcar ajuste_manual se usuario realmente alterou o valor
+                    # V56: flag editado indica se usuario REALMENTE alterou o valor
+                    foi_editado = bool(pp.get('editado', False))
+
                     cursor.execute("""
-                        SELECT demanda_prevista FROM demanda_pre_calculada
+                        SELECT id FROM demanda_pre_calculada
                         WHERE cod_produto = %s AND cnpj_fornecedor = %s
                           AND cod_empresa IS NULL AND ano = %s AND mes = %s
                           AND tipo_granularidade = 'mensal'
                     """, (cod_produto, cnpj_fornecedor, ano, mes))
                     row_existente = cursor.fetchone()
-                    valor_atual = float(row_existente[0]) if row_existente and row_existente[0] is not None else None
 
                     if row_existente:
-                        if valor_atual is not None and round(float(previsao_val)) == round(valor_atual):
-                            # Valor nao mudou - nao marcar como ajuste manual
-                            # Se ja tinha ajuste_manual igual ao previsto, limpar
-                            continue
-                        else:
-                            # Valor mudou - marcar como ajuste manual
-                            cursor.execute("""
-                                UPDATE demanda_pre_calculada
-                                SET demanda_prevista      = %s,
-                                    demanda_diaria_base   = %s,
-                                    ajuste_manual         = %s,
-                                    ajuste_manual_data    = NOW(),
-                                    ajuste_manual_usuario = %s,
-                                    ajuste_manual_motivo  = 'salvo_tela_demanda',
-                                    data_calculo          = NOW()
-                                WHERE cod_produto = %s
-                                  AND cnpj_fornecedor = %s
-                                  AND cod_empresa IS NULL
-                                  AND ano = %s
-                                  AND mes = %s
-                                  AND tipo_granularidade = 'mensal'
-                            """, (
-                                float(previsao_val), float(previsao_val) / 30.0,
-                                float(previsao_val), usuario,
-                                cod_produto, cnpj_fornecedor, ano, mes
-                            ))
+                        cursor.execute("""
+                            UPDATE demanda_pre_calculada
+                            SET demanda_prevista      = %s,
+                                demanda_diaria_base   = %s,
+                                ajuste_manual         = %s,
+                                ajuste_manual_data    = NOW(),
+                                ajuste_manual_usuario = %s,
+                                ajuste_manual_motivo  = 'salvo_tela_demanda',
+                                editado_manualmente   = CASE WHEN %s THEN TRUE ELSE editado_manualmente END,
+                                data_calculo          = NOW()
+                            WHERE cod_produto = %s
+                              AND cnpj_fornecedor = %s
+                              AND cod_empresa IS NULL
+                              AND ano = %s
+                              AND mes = %s
+                              AND tipo_granularidade = 'mensal'
+                        """, (
+                            float(previsao_val), float(previsao_val) / 30.0,
+                            float(previsao_val), usuario,
+                            foi_editado,
+                            cod_produto, cnpj_fornecedor, ano, mes
+                        ))
                     else:
-                        # Registro nao existe - inserir com ajuste
                         cursor.execute("""
                             INSERT INTO demanda_pre_calculada (
                                 cod_produto, cnpj_fornecedor, cod_empresa, ano, mes,
@@ -1258,18 +1258,21 @@ def api_salvar_demanda_tela():
                                 demanda_prevista, demanda_diaria_base,
                                 ajuste_manual, ajuste_manual_data,
                                 ajuste_manual_usuario, ajuste_manual_motivo,
+                                editado_manualmente,
                                 data_calculo
                             ) VALUES (
                                 %s, %s, NULL, %s, %s,
                                 'mensal',
                                 %s, %s,
                                 %s, NOW(), %s, 'salvo_tela_demanda',
+                                %s,
                                 NOW()
                             )
                         """, (
                             cod_produto, cnpj_fornecedor, ano, mes,
                             float(previsao_val), float(previsao_val) / 30.0,
-                            float(previsao_val), usuario
+                            float(previsao_val), usuario,
+                            foi_editado
                         ))
 
                 total_registros += 1

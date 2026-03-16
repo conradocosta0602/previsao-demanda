@@ -5621,7 +5621,10 @@ async function salvarDemandaPreCalculada() {
                 itens: itensSalvos.map(i => ({
                     cod_produto: i.cod_produto,
                     cnpj_fornecedor: i.cnpj_fornecedor,
-                    previsao_por_periodo: i.previsao_por_periodo
+                    previsao_por_periodo: i.previsao_por_periodo.map(p => ({
+                        ...p,
+                        editado: !!(ajustesPendentes[i.cod_produto] && ajustesPendentes[i.cod_produto][p.periodo] !== undefined)
+                    }))
                 })),
                 usuario: 'tela_demanda'
             })

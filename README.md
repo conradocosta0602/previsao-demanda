@@ -1,6 +1,12 @@
-# Sistema de Demanda e Reabastecimento v6.31
+# Sistema de Demanda e Reabastecimento v6.33
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.33 - Sinalizacao de Edicao Manual + Demanda Semanal Derivada (Mar/2026):**
+- **V56 - Sinalizacao persistente de edicao manual**: Nova coluna `editado_manualmente` separa protecao contra cronjob (ajuste_manual) de sinalizacao visual (amarelo); celulas editadas ficam amarelas permanentemente na Tela de Demanda; badge "Ajuste Manual" na Tela de Pedido
+- **V55 - Demanda semanal derivada da mensal**: Cronjob decompoe demanda mensal em semanas ISO usando pesos sazonais (soma semanal = mensal); correcao do desvio padrao no ES
+- **V54 - Tela de Demanda usa demanda_pre_calculada**: Previsao lida da tabela em vez de recalcular em tempo real
+- **V53 - Saneamento de ruptura por loja**: Correcao censurada opera por loja individual com limiter 3x; fatores sazonais recalculados
 
 **Novidades v6.31 - Demanda Censurada + FVA Baseline + Redistribuicao CD (Mar/2026):**
 - **V51b - Correcao de Demanda Censurada**: Corrige subestimacao sistematica causada por ruptura (vendas=0 por falta de estoque, nao por falta de demanda); pre-carrega estoque diario consolidado; correcao dia-a-dia e semanal com limiter 3x media
