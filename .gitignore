@@ -130,3 +130,33 @@ importar_*.py
 verificar_*.py
 criar_tabelas_ajuste.py
 exportar_*.py
+
+# -----------------------------------------------------------------------------
+# CLAUDE CODE (configuracoes locais do agente)
+# -----------------------------------------------------------------------------
+.claude/
+
+# -----------------------------------------------------------------------------
+# ARQUIVOS AUXILIARES E DOCUMENTOS AVULSOS
+# -----------------------------------------------------------------------------
+*.pptx
+*.docx
+*.jpg
+*.png
+*.html
+!templates/*.html
+Solis Abertas*.csv
+TEXTO_PARA_COPIAR_NO_WORD.txt
+_ul
+gerar_apresentacao.py
+gerar_documento_melhorias.py
+
+# Scripts e relatorios avulsos na raiz
+scripts/database_structure*.txt
+scripts/database_structure_report.py
+
+# Migrations avulsas
+database/migration_v11_otimizar_tabelas.sql
+
+# Jobs scripts auxiliares
+jobs/scripts/

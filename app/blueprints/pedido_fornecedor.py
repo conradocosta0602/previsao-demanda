@@ -1811,12 +1811,30 @@ def api_pedido_fornecedor_integrado():
                     item['critica_pedido_minimo'] = f"Abaixo do pedido minimo"
 
         # Estatisticas
+        # V53b: Media ponderada pela demanda diaria (mais representativa que media aritmetica)
         itens_nao_bloqueados = [r for r in resultados if not r.get('bloqueado')]
-        coberturas_atuais = [r.get('cobertura_atual_dias', 0) for r in itens_nao_bloqueados if r.get('cobertura_atual_dias', 0) < 900]
-        coberturas_pos = [r.get('cobertura_pos_pedido_dias', 0) for r in itens_pedido if r.get('cobertura_pos_pedido_dias', 0) < 900]
 
-        cobertura_media_atual = round(np.mean(coberturas_atuais), 1) if coberturas_atuais else 0
-        cobertura_media_pos = round(np.mean(coberturas_pos), 1) if coberturas_pos else 0
+        # Cobertura atual: ponderada por demanda
+        soma_cob_atual_pond = 0
+        soma_dem_atual = 0
+        for r in itens_nao_bloqueados:
+            cob = r.get('cobertura_atual_dias', 0)
+            dem = r.get('demanda_prevista_diaria', 0) or 0
+            if 0 < cob < 900 and dem > 0:
+                soma_cob_atual_pond += cob * dem
+                soma_dem_atual += dem
+        cobertura_media_atual = round(soma_cob_atual_pond / soma_dem_atual, 1) if soma_dem_atual > 0 else 0
+
+        # Cobertura pos-pedido: ponderada por demanda
+        soma_cob_pos_pond = 0
+        soma_dem_pos = 0
+        for r in itens_pedido:
+            cob = r.get('cobertura_pos_pedido_dias', 0)
+            dem = r.get('demanda_prevista_diaria', 0) or 0
+            if 0 < cob < 900 and dem > 0:
+                soma_cob_pos_pond += cob * dem
+                soma_dem_pos += dem
+        cobertura_media_pos = round(soma_cob_pos_pond / soma_dem_pos, 1) if soma_dem_pos > 0 else 0
 
         if math.isnan(cobertura_media_atual) or math.isinf(cobertura_media_atual):
             cobertura_media_atual = 0

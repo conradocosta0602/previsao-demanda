@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saude do Sistema - Demanda e Reabastecimento</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --cor-ok: #10b981;
+            --cor-alerta: #f59e0b;
+            --cor-falha: #ef4444;
+            --cor-primaria: #667eea;
+            --cor-secundaria: #764ba2;
+        }
+
+        .saude-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .page-header {
+            background: linear-gradient(135deg, var(--cor-primaria) 0%, var(--cor-secundaria) 100%);
+            color: white;
+            padding: 25px 30px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .page-header h1 { margin: 0 0 8px 0; font-size: 1.8em; }
+        .page-header p { margin: 0; opacity: 0.9; font-size: 0.95em; }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .header-actions a, .header-actions button {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9em;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .header-actions button:hover, .header-actions a:hover {
+            background: rgba(255,255,255,0.35);
+        }
+
+        .header-actions button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Cards */
+        .cards-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 4px solid #ddd;
+        }
+
+        .card.status-aprovado { border-left-color: var(--cor-ok); }
+        .card.status-alerta { border-left-color: var(--cor-alerta); }
+        .card.status-reprovado { border-left-color: var(--cor-falha); }
+
+        .card-label {
+            font-size: 0.8em;
+            color: #6c757d;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+
+        .card-valor {
+            font-size: 2em;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .card-detalhe {
+            font-size: 0.8em;
+            color: #6c757d;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 1em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .status-badge.aprovado { background: #d1fae5; color: #065f46; }
+        .status-badge.alerta { background: #fef3c7; color: #92400e; }
+        .status-badge.reprovado { background: #fee2e2; color: #991b1b; }
+
+        /* Secoes */
+        .section {
+            background: white;
+            padding: 20px 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 25px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .section-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+        }
+
+        /* Filtros de status */
+        .filter-pills {
+            display: flex;
+            gap: 8px;
+        }
+
+        .filter-pill {
+            padding: 5px 14px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+            cursor: pointer;
+            background: #f8f9fa;
+            transition: all 0.2s;
+        }
+
+        .filter-pill:hover { background: #e9ecef; }
+        .filter-pill.active { background: var(--cor-primaria); color: white; border-color: var(--cor-primaria); }
+
+        .filter-pill .count {
+            display: inline-block;
+            background: rgba(0,0,0,0.1);
+            border-radius: 10px;
+            padding: 0 6px;
+            margin-left: 4px;
+            font-size: 0.9em;
+        }
+
+        .filter-pill.active .count {
+            background: rgba(255,255,255,0.3);
+        }
+
+        /* Tabela de verificacoes */
+        .verif-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+
+        .verif-table th {
+            background: #f8f9fa;
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #495057;
+            border-bottom: 2px solid #dee2e6;
+            white-space: nowrap;
+        }
+
+        .verif-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .verif-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .verif-table tr.clickable {
+            cursor: pointer;
+        }
+
+        .badge-status {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        .badge-status.ok { background: #d1fae5; color: #065f46; }
+        .badge-status.alerta { background: #fef3c7; color: #92400e; }
+        .badge-status.falha { background: #fee2e2; color: #991b1b; }
+
+        /* Detalhes expandidos */
+        .verif-detalhes {
+            display: none;
+            background: #f8f9fa;
+            padding: 12px 20px;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .verif-detalhes.aberto {
+            display: table-row;
+        }
+
+        .verif-detalhes td {
+            padding: 12px 20px;
+        }
+
+        .detalhes-content {
+            font-size: 0.85em;
+            color: #555;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .detalhes-content pre {
+            background: #e9ecef;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        /* Grafico */
+        .chart-container {
+            position: relative;
+            height: 250px;
+        }
+
+        /* Historico execucoes */
+        .exec-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+        }
+
+        .exec-table th {
+            background: #f8f9fa;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 600;
+            color: #495057;
+            border-bottom: 2px solid #dee2e6;
+        }
+
+        .exec-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .exec-table tr:hover { background: #f8f9fa; }
+
+        .tipo-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+
+        .tipo-badge.cronjob { background: #e0e7ff; color: #3730a3; }
+        .tipo-badge.manual { background: #fce7f3; color: #9d174d; }
+
+        /* Loading */
+        #loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--cor-primaria);
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsivo */
+        @media (max-width: 768px) {
+            .cards-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <div class="saude-container">
+        <!-- Header -->
+        <div class="page-header">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                <div>
+                    <h1>Saude do Sistema</h1>
+                    <p>Conformidade Metodologica — Verificacoes Automaticas</p>
+                </div>
+                <div class="header-actions">
+                    <button id="btn-executar" onclick="executarChecklist()">Executar Agora</button>
+                    <a href="/menu">Menu Principal</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cards de Resumo -->
+        <div class="cards-row">
+            <div class="card" id="card-status">
+                <div class="card-label">Status Geral</div>
+                <div class="card-valor" id="status-valor">-</div>
+                <div class="card-detalhe" id="status-detalhe">Carregando...</div>
+            </div>
+
+            <div class="card" id="card-conformidade">
+                <div class="card-label">Conformidade</div>
+                <div class="card-valor" id="conformidade-valor">-</div>
+                <div class="card-detalhe" id="conformidade-detalhe">-</div>
+            </div>
+
+            <div class="card" id="card-execucao">
+                <div class="card-label">Ultima Execucao</div>
+                <div class="card-valor" id="execucao-valor">-</div>
+                <div class="card-detalhe" id="execucao-detalhe">-</div>
+            </div>
+        </div>
+
+        <!-- Lista de Verificacoes -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Verificacoes da Ultima Execucao</div>
+                <div class="filter-pills" id="filtros-status">
+                    <span class="filter-pill active" data-filter="todos" onclick="filtrarVerificacoes('todos')">Todos <span class="count" id="count-todos">0</span></span>
+                    <span class="filter-pill" data-filter="ok" onclick="filtrarVerificacoes('ok')">OK <span class="count" id="count-ok">0</span></span>
+                    <span class="filter-pill" data-filter="alerta" onclick="filtrarVerificacoes('alerta')">Alerta <span class="count" id="count-alerta">0</span></span>
+                    <span class="filter-pill" data-filter="falha" onclick="filtrarVerificacoes('falha')">Falha <span class="count" id="count-falha">0</span></span>
+                </div>
+            </div>
+
+            <div style="overflow-x: auto;">
+                <table class="verif-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 60px;">Codigo</th>
+                            <th>Verificacao</th>
+                            <th style="width: 80px;">Status</th>
+                            <th>Mensagem</th>
+                            <th style="width: 70px;">Tempo</th>
+                        </tr>
+                    </thead>
+                    <tbody id="verif-tbody">
+                        <tr>
+                            <td colspan="5" style="text-align: center; color: #6c757d; padding: 2rem 0;">
+                                Carregando verificacoes...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Grafico Historico -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Historico de Conformidade (Ultimos 30 dias)</div>
+            </div>
+            <div class="chart-container">
+                <canvas id="chart-historico"></canvas>
+            </div>
+        </div>
+
+        <!-- Historico de Execucoes -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Ultimas Execucoes</div>
+            </div>
+            <table class="exec-table">
+                <thead>
+                    <tr>
+                        <th>Data/Hora</th>
+                        <th>Tipo</th>
+                        <th>Status</th>
+                        <th>OK</th>
+                        <th>Alerta</th>
+                        <th>Falha</th>
+                        <th>Tempo</th>
+                    </tr>
+                </thead>
+                <tbody id="exec-tbody">
+                    <tr>
+                        <td colspan="7" style="text-align: center; color: #6c757d; padding: 1rem 0;">
+                            Carregando...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+    // ========================================
+    // ESTADO
+    // ========================================
+    let verificacoesData = [];
+    let filtroAtual = 'todos';
+    let chartHistorico = null;
+
+    // ========================================
+    // INICIALIZACAO
+    // ========================================
+    document.addEventListener('DOMContentLoaded', function() {
+        carregarDados();
+    });
+
+    function carregarDados() {
+        mostrarLoading(true);
+        Promise.all([
+            carregarDashboard(),
+            carregarHistoricoExecucoes()
+        ]).then(() => {
+            mostrarLoading(false);
+        }).catch(err => {
+            console.error('Erro:', err);
+            mostrarLoading(false);
+        });
+    }
+
+    // ========================================
+    // DASHBOARD (cards + verificacoes + grafico)
+    // ========================================
+    function carregarDashboard() {
+        return fetch('/api/validacao/dashboard?dias=30')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.sucesso) {
+                    console.error('Erro dashboard:', data);
+                    return;
+                }
+                atualizarCards(data);
+                atualizarVerificacoes(data.ultima_execucao);
+                atualizarGrafico(data.historico_diario || []);
+            });
+    }
+
+    function atualizarCards(data) {
+        const ult = data.ultima_execucao;
+        const met = data.metricas;
+
+        // Card Status
+        const cardStatus = document.getElementById('card-status');
+        const statusValor = document.getElementById('status-valor');
+        const statusDetalhe = document.getElementById('status-detalhe');
+
+        if (ult) {
+            const status = ult.status || 'desconhecido';
+            statusValor.innerHTML = `<span class="status-badge ${status}">${status.toUpperCase()}</span>`;
+            statusDetalhe.textContent = `${ult.verificacoes_ok || 0}/${ult.total_verificacoes || 0} verificacoes OK`;
+            cardStatus.className = `card status-${status}`;
+        }
+
+        // Card Conformidade
+        const confValor = document.getElementById('conformidade-valor');
+        const confDetalhe = document.getElementById('conformidade-detalhe');
+
+        if (met) {
+            confValor.textContent = met.taxa_conformidade ? met.taxa_conformidade.toFixed(1) + '%' : '-';
+            confDetalhe.textContent = `${met.total_execucoes || 0} execucoes nos ultimos 30 dias`;
+            const cardConf = document.getElementById('card-conformidade');
+            if (met.taxa_conformidade >= 95) cardConf.className = 'card status-aprovado';
+            else if (met.taxa_conformidade >= 80) cardConf.className = 'card status-alerta';
+            else cardConf.className = 'card status-reprovado';
+        }
+
+        // Card Ultima Execucao
+        const execValor = document.getElementById('execucao-valor');
+        const execDetalhe = document.getElementById('execucao-detalhe');
+
+        if (ult && ult.data) {
+            const dt = new Date(ult.data);
+            execValor.textContent = dt.toLocaleDateString('pt-BR') + ' ' + dt.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+            const tipo = (ult.tipo || '').includes('cronjob') ? 'Cronjob' : 'Manual';
+            execDetalhe.textContent = `${tipo} — ${ult.tempo_ms || 0}ms`;
+        }
+    }
+
+    function atualizarVerificacoes(ultimaExecucao) {
+        if (!ultimaExecucao || !ultimaExecucao.detalhes) {
+            // Tentar buscar detalhes completos
+            return;
+        }
+
+        let verificacoes = [];
+        const det = ultimaExecucao.detalhes;
+
+        if (det.verificacoes) {
+            verificacoes = det.verificacoes;
+        } else if (Array.isArray(det)) {
+            verificacoes = det;
+        }
+
+        verificacoesData = verificacoes;
+
+        // Atualizar contadores
+        const countOk = verificacoes.filter(v => v.status === 'ok').length;
+        const countAlerta = verificacoes.filter(v => v.status === 'alerta').length;
+        const countFalha = verificacoes.filter(v => v.status === 'falha').length;
+
+        document.getElementById('count-todos').textContent = verificacoes.length;
+        document.getElementById('count-ok').textContent = countOk;
+        document.getElementById('count-alerta').textContent = countAlerta;
+        document.getElementById('count-falha').textContent = countFalha;
+
+        renderizarVerificacoes();
+    }
+
+    function renderizarVerificacoes() {
+        const tbody = document.getElementById('verif-tbody');
+        let dados = verificacoesData;
+
+        if (filtroAtual !== 'todos') {
+            dados = dados.filter(v => v.status === filtroAtual);
+        }
+
+        if (dados.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #6c757d; padding: 2rem 0;">
+                ${verificacoesData.length === 0 ? 'Nenhuma execucao encontrada' : 'Nenhuma verificacao com este status'}
+            </td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = '';
+
+        dados.forEach((v, idx) => {
+            // Linha principal
+            const tr = document.createElement('tr');
+            tr.className = 'clickable';
+            tr.dataset.idx = idx;
+            tr.onclick = function() { toggleDetalhes(this, v); };
+
+            const tempoFormatado = v.tempo_ms !== undefined ? v.tempo_ms + 'ms' : '-';
+
+            tr.innerHTML = `
+                <td><strong>${v.codigo || '-'}</strong></td>
+                <td>${v.nome || '-'}</td>
+                <td><span class="badge-status ${v.status}">${(v.status || '').toUpperCase()}</span></td>
+                <td style="max-width: 500px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${v.mensagem || '-'}</td>
+                <td>${tempoFormatado}</td>
+            `;
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    function toggleDetalhes(trElement, verificacao) {
+        // Verificar se ja existe linha de detalhes aberta para esta verificacao
+        const nextRow = trElement.nextElementSibling;
+        if (nextRow && nextRow.classList.contains('verif-detalhes')) {
+            nextRow.remove();
+            return;
+        }
+
+        // Fechar outros abertos
+        document.querySelectorAll('.verif-detalhes').forEach(el => el.remove());
+
+        // Criar linha de detalhes
+        const detRow = document.createElement('tr');
+        detRow.className = 'verif-detalhes aberto';
+
+        let conteudo = `<strong>Mensagem:</strong> ${verificacao.mensagem || '-'}`;
+
+        if (verificacao.detalhes && Object.keys(verificacao.detalhes).length > 0) {
+            conteudo += `<br><br><strong>Detalhes:</strong><pre>${JSON.stringify(verificacao.detalhes, null, 2)}</pre>`;
+        }
+
+        detRow.innerHTML = `<td colspan="5"><div class="detalhes-content">${conteudo}</div></td>`;
+        trElement.after(detRow);
+    }
+
+    function filtrarVerificacoes(filtro) {
+        filtroAtual = filtro;
+
+        document.querySelectorAll('.filter-pill').forEach(pill => {
+            pill.classList.toggle('active', pill.dataset.filter === filtro);
+        });
+
+        renderizarVerificacoes();
+    }
+
+    // ========================================
+    // GRAFICO HISTORICO
+    // ========================================
+    function atualizarGrafico(historico) {
+        const ctx = document.getElementById('chart-historico');
+        if (!ctx) return;
+
+        if (chartHistorico) {
+            chartHistorico.destroy();
+        }
+
+        if (!historico.length) {
+            return;
+        }
+
+        const labels = historico.map(d => {
+            const dt = new Date(d.data + 'T00:00:00');
+            return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        });
+
+        const aprovadas = historico.map(d => d.aprovadas || 0);
+        const alertas = historico.map(d => (d.total || 0) - (d.aprovadas || 0) - (d.falhas || 0));
+        const falhas = historico.map(d => d.falhas || 0);
+
+        chartHistorico = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Aprovadas',
+                        data: aprovadas,
+                        backgroundColor: '#10b981',
+                        borderRadius: 2
+                    },
+                    {
+                        label: 'Alertas',
+                        data: alertas,
+                        backgroundColor: '#f59e0b',
+                        borderRadius: 2
+                    },
+                    {
+                        label: 'Falhas',
+                        data: falhas,
+                        backgroundColor: '#ef4444',
+                        borderRadius: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { usePointStyle: true, padding: 15, font: { size: 11 } }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        padding: 12,
+                        cornerRadius: 8
+                    }
+                },
+                scales: {
+                    x: {
+                        stacked: true,
+                        grid: { display: false }
+                    },
+                    y: {
+                        stacked: true,
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Execucoes',
+                            font: { size: 12, weight: 'bold' }
+                        },
+                        grid: { color: 'rgba(0,0,0,0.05)' }
+                    }
+                }
+            }
+        });
+    }
+
+    // ========================================
+    // HISTORICO DE EXECUCOES
+    // ========================================
+    function carregarHistoricoExecucoes() {
+        return fetch('/api/validacao/historico?limite=15')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.sucesso) return;
+                renderizarHistorico(data.execucoes || []);
+            });
+    }
+
+    function renderizarHistorico(execucoes) {
+        const tbody = document.getElementById('exec-tbody');
+
+        if (!execucoes.length) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #6c757d; padding: 1rem 0;">
+                Nenhuma execucao encontrada</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = '';
+
+        execucoes.forEach(ex => {
+            const tr = document.createElement('tr');
+
+            const dt = new Date(ex.data_execucao);
+            const dataFormatada = dt.toLocaleDateString('pt-BR') + ' ' + dt.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+
+            const tipo = (ex.tipo || '').includes('cronjob') ? 'cronjob' : 'manual';
+            const tipoLabel = tipo === 'cronjob' ? 'Cronjob' : 'Manual';
+
+            const status = ex.status || '-';
+            const ok = ex.verificacoes_ok || 0;
+            const alerta = ex.verificacoes_alerta || 0;
+            const falha = ex.verificacoes_falha || 0;
+            const tempo = ex.tempo_execucao_ms ? ex.tempo_execucao_ms + 'ms' : '-';
+
+            tr.innerHTML = `
+                <td>${dataFormatada}</td>
+                <td><span class="tipo-badge ${tipo}">${tipoLabel}</span></td>
+                <td><span class="badge-status ${status}">${status.toUpperCase()}</span></td>
+                <td>${ok}</td>
+                <td>${alerta}</td>
+                <td>${falha}</td>
+                <td>${tempo}</td>
+            `;
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    // ========================================
+    // EXECUTAR CHECKLIST
+    // ========================================
+    function executarChecklist() {
+        const btn = document.getElementById('btn-executar');
+        btn.disabled = true;
+        btn.textContent = 'Executando...';
+        mostrarLoading(true);
+
+        fetch('/api/validacao/executar-checklist', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.textContent = 'Executar Agora';
+
+                if (data.sucesso) {
+                    // Recarregar todos os dados
+                    carregarDados();
+                } else {
+                    alert('Erro ao executar checklist: ' + (data.erro || 'desconhecido'));
+                    mostrarLoading(false);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                btn.textContent = 'Executar Agora';
+                mostrarLoading(false);
+                alert('Erro de comunicacao: ' + err.message);
+            });
+    }
+
+    // ========================================
+    // UTILITARIOS
+    // ========================================
+    function mostrarLoading(show) {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) overlay.style.display = show ? 'flex' : 'none';
+    }
+    </script>
+</body>
+</html>

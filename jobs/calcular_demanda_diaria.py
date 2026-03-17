@@ -64,6 +64,7 @@ SEMANAS_PREVISAO = 54  # Calcular ~13 meses de previsao semanal
 MAX_WORKERS = 4      # Threads para paralelizacao
 DIAS_HISTORICO = 730 # 2 anos de historico
 LIMITER_CORRECAO = 3.0  # V53: correcao maxima de 3x a media dos dias com estoque
+FREQUENCIA_MINIMA_CORRECAO = 0.25  # V53b: so corrige loja se vendeu em >=25% dos dias com estoque
 
 
 def obter_conexao():
@@ -381,6 +382,19 @@ def _corrigir_loja(
     if meta_loja['dias_verificados'] == 0:
         return serie_corrigida, meta_loja
 
+    # V53b: Filtro de frequencia - nao corrigir itens intermitentes nesta loja
+    # Se o item vendeu em menos de 25% dos dias com estoque, venda=0 e normal
+    # (demanda intermitente), nao ruptura. TSB ja lida com esses itens.
+    dias_com_venda = len(vendas_com_estoque)  # dias com estoque E venda > 0
+    if meta_loja['dias_com_estoque'] > 0:
+        frequencia_venda = dias_com_venda / meta_loja['dias_com_estoque']
+    else:
+        frequencia_venda = 0
+
+    if frequencia_venda < FREQUENCIA_MINIMA_CORRECAO:
+        # Demanda intermitente nesta loja - nao corrigir
+        return serie_corrigida, meta_loja
+
     # Contar dias de ruptura
     for i, data in enumerate(datas_serie):
         estoque_dia = estoque_loja_por_data.get(data, None)
@@ -606,6 +620,14 @@ def _corrigir_consolidado_fallback(
                     vendas_com_estoque.append(serie_vendas[i])
 
     if dias_verificados == 0:
+        return serie_vendas, meta
+
+    # V53b: Filtro de frequencia consolidado
+    dias_com_venda = len(vendas_com_estoque)
+    frequencia_venda = dias_com_venda / dias_com_estoque if dias_com_estoque > 0 else 0
+    if frequencia_venda < FREQUENCIA_MINIMA_CORRECAO:
+        # Demanda intermitente - nao corrigir
+        meta['taxa_disponibilidade'] = dias_com_estoque / dias_verificados if dias_verificados > 0 else 1.0
         return serie_vendas, meta
 
     media_com_estoque = np.mean(vendas_com_estoque) if vendas_com_estoque else 0
@@ -1266,13 +1288,21 @@ def calcular_demanda_item_semanal(
                         continue
 
                     vendas_boas_loja = []
+                    semanas_com_estoque_ok = 0
                     for i, s in enumerate(semanas_ordenadas):
                         chave_loja = (s[0], s[1], loja)
                         venda_loja = vendas_semanal_por_loja.get(chave_loja, 0)
                         if chave_loja in estoque_semanal:
                             d_ok, d_tot = estoque_semanal[chave_loja]
-                            if d_tot > 0 and d_ok / d_tot >= 0.5 and venda_loja > 0:
-                                vendas_boas_loja.append(venda_loja)
+                            if d_tot > 0 and d_ok / d_tot >= 0.5:
+                                semanas_com_estoque_ok += 1
+                                if venda_loja > 0:
+                                    vendas_boas_loja.append(venda_loja)
+
+                    # V53b: Filtro de frequencia semanal
+                    freq_semanal = len(vendas_boas_loja) / semanas_com_estoque_ok if semanas_com_estoque_ok > 0 else 0
+                    if freq_semanal < FREQUENCIA_MINIMA_CORRECAO:
+                        continue  # Demanda intermitente nesta loja - nao corrigir
 
                     media_boa_loja = np.mean(vendas_boas_loja) if vendas_boas_loja else 0
                     limite_loja = media_boa_loja * LIMITER_CORRECAO

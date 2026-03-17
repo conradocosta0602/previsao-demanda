@@ -1471,8 +1471,10 @@ class PedidoFornecedorIntegrado:
         if np.isnan(cobertura_atual) or np.isinf(cobertura_atual):
             cobertura_atual = 999
 
+        # V53b: Usar estoque projetado na entrega (V37) em vez do estoque hoje
+        # O pedido so chega apos LT dias, entao o estoque disponivel sera consumido
         cobertura_pos_pedido = calcular_cobertura_pos_pedido(
-            estoque_disponivel=estoque['estoque_disponivel'],
+            estoque_disponivel=estoque_disp_projetado,
             estoque_transito=estoque['estoque_transito'],
             quantidade_pedido=pedido_info['quantidade_pedido'],
             demanda_media_diaria=demanda_prevista_diaria
