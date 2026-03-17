@@ -21,6 +21,12 @@ def index():
     return render_template('index.html')
 
 
+@menu_bp.route('/saude')
+def saude():
+    """Pagina de saude do sistema - conformidade metodologica"""
+    return render_template('saude.html')
+
+
 @menu_bp.route('/download/<filename>')
 def download_file(filename):
     """Download do arquivo Excel gerado ou exemplo"""

@@ -10,6 +10,8 @@
     <style>
         :root {
             --cor-ruptura: #ef4444;
+            --cor-cobertura: #3b82f6;
+            --cor-excesso: #f59e0b;
             --cor-primaria: #667eea;
             --cor-secundaria: #764ba2;
         }
@@ -167,7 +169,7 @@
         /* Cards de KPI */
         .kpi-cards {
             display: grid;
-            grid-template-columns: repeat(1, 1fr);
+            grid-template-columns: repeat(3, 1fr);
             gap: 20px;
             margin-bottom: 25px;
         }
@@ -187,6 +189,8 @@
         }
 
         .kpi-card.ruptura { border-left-color: var(--cor-ruptura); }
+        .kpi-card.cobertura { border-left-color: var(--cor-cobertura); }
+        .kpi-card.excesso { border-left-color: var(--cor-excesso); }
 
         .kpi-header {
             display: flex;
@@ -201,6 +205,16 @@
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+        }
+
+        .kpi-sublabel {
+            font-size: 0.7em;
+            color: #9ca3af;
+            font-weight: 400;
+            display: block;
+            margin-top: 2px;
+            text-transform: none;
+            letter-spacing: 0;
         }
 
         .kpi-badge {
@@ -231,12 +245,67 @@
         .tendencia-positiva { color: #28a745; }
         .tendencia-negativa { color: #dc3545; }
 
+        /* Faixas de excesso */
+        .faixas-excesso {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .faixa-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .faixa-label {
+            font-size: 0.72em;
+            color: #6c757d;
+            width: 80px;
+            flex-shrink: 0;
+        }
+
+        .faixa-bar-container {
+            flex: 1;
+            height: 8px;
+            background: #f3f4f6;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .faixa-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        .faixa-valor {
+            font-size: 0.72em;
+            font-weight: 600;
+            color: #374151;
+            width: 70px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .faixa-pct {
+            color: #9ca3af;
+            font-weight: 400;
+        }
+
         /* Graficos */
         .charts-section {
             display: grid;
             grid-template-columns: 1fr;
             gap: 25px;
             margin-bottom: 25px;
+        }
+
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
         }
 
         .chart-card {
@@ -263,10 +332,12 @@
         }
 
         .chart-title .icon.ruptura { background: var(--cor-ruptura); }
+        .chart-title .icon.cobertura { background: var(--cor-cobertura); }
+        .chart-title .icon.excesso { background: var(--cor-excesso); }
 
         .chart-container {
             position: relative;
-            height: 300px;
+            height: 280px;
         }
 
         /* Ranking */
@@ -413,10 +484,16 @@
         .py-4 { padding: 2rem 0; }
 
         /* Responsivo */
-        @media (max-width: 768px) {
+        @media (max-width: 1024px) {
             .kpi-cards {
                 grid-template-columns: 1fr;
             }
+            .charts-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 768px) {
             .filters-row {
                 flex-direction: column;
             }
@@ -446,7 +523,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
                 <div>
                     <h1>Painel de KPIs</h1>
-                    <p>Acompanhamento de Ruptura</p>
+                    <p>Acompanhamento de Ruptura, Cobertura e Excesso</p>
                 </div>
                 <div style="display: flex; gap: 10px;">
                     <a href="/menu" style="background: rgba(255,255,255,0.2); color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.9em;">
@@ -524,18 +601,50 @@
 
         <!-- Cards de KPI -->
         <div class="kpi-cards">
+            <!-- Card Ruptura -->
             <div class="kpi-card ruptura">
                 <div class="kpi-header">
-                    <span class="kpi-label">Ruptura</span>
+                    <span class="kpi-label">
+                        Ruptura
+                        <span class="kpi-sublabel">% pontos sem estoque</span>
+                    </span>
                     <span class="kpi-badge badge-cinza" id="kpi-ruptura-badge">-</span>
                 </div>
                 <div class="kpi-valor" id="kpi-ruptura-valor">-</div>
                 <div class="kpi-tendencia" id="kpi-ruptura-tendencia">-</div>
             </div>
+
+            <!-- Card Cobertura -->
+            <div class="kpi-card cobertura">
+                <div class="kpi-header">
+                    <span class="kpi-label">
+                        Cobertura Media
+                        <span class="kpi-sublabel">Dias de estoque disponivel</span>
+                    </span>
+                    <span class="kpi-badge badge-cinza" id="kpi-cobertura-badge">-</span>
+                </div>
+                <div class="kpi-valor" id="kpi-cobertura-valor">-</div>
+                <div class="kpi-tendencia" id="kpi-cobertura-tendencia">-</div>
+            </div>
+
+            <!-- Card Excesso -->
+            <div class="kpi-card excesso">
+                <div class="kpi-header">
+                    <span class="kpi-label">
+                        Excesso
+                        <span class="kpi-sublabel">% itens com cobertura > 90 dias</span>
+                    </span>
+                    <span class="kpi-badge badge-cinza" id="kpi-excesso-badge">-</span>
+                </div>
+                <div class="kpi-valor" id="kpi-excesso-valor">-</div>
+                <div class="kpi-tendencia" id="kpi-excesso-tendencia">-</div>
+                <div class="faixas-excesso" id="excesso-faixas"></div>
+            </div>
         </div>
 
         <!-- Graficos -->
         <div class="charts-section" id="graficos-container">
+            <!-- Grafico Ruptura (topo, largura total) -->
             <div class="chart-card">
                 <div class="chart-title">
                     <span class="icon ruptura"></span>
@@ -545,11 +654,29 @@
                     <canvas id="chart-ruptura"></canvas>
                 </div>
             </div>
-        </div>
 
-        <!-- Container para graficos de item (oculto por padrao) -->
-        <div id="graficos-item-container" style="display: none;">
-            <!-- Sera preenchido dinamicamente quando agregacao = item -->
+            <!-- Graficos Cobertura e Excesso (lado a lado) -->
+            <div class="charts-row">
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <span class="icon cobertura"></span>
+                        Evolucao da Cobertura Media
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chart-cobertura"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <span class="icon excesso"></span>
+                        Evolucao do Excesso
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chart-excesso"></canvas>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Ranking -->
@@ -558,24 +685,28 @@
                 <div class="ranking-title">Ranking por Agregacao</div>
             </div>
 
-            <table class="ranking-table">
-                <thead>
-                    <tr>
-                        <th class="sortable" data-sort="identificador">Identificador <span class="sort-icon">&#8597;</span></th>
-                        <th>Descricao</th>
-                        <th class="sortable" data-sort="ruptura">Ruptura <span class="sort-icon">&#8597;</span></th>
-                        <th>Total SKUs</th>
-                        <th>SKUs Ruptura</th>
-                    </tr>
-                </thead>
-                <tbody id="ranking-tbody">
-                    <tr>
-                        <td colspan="5" class="text-center text-muted py-4">
-                            Carregando dados...
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+            <div style="overflow-x: auto;">
+                <table class="ranking-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable" data-sort="identificador">Identificador <span class="sort-icon">&#8597;</span></th>
+                            <th>Descricao</th>
+                            <th class="sortable" data-sort="ruptura">Ruptura <span class="sort-icon">&#8597;</span></th>
+                            <th class="sortable" data-sort="cobertura">Cobertura <span class="sort-icon">&#8597;</span></th>
+                            <th class="sortable" data-sort="excesso">Excesso <span class="sort-icon">&#8597;</span></th>
+                            <th>Total Pontos</th>
+                            <th>Pontos Ruptura</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ranking-tbody">
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-4">
+                                Carregando dados...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
 
             <div class="pagination">
                 <button id="btn-pagina-anterior" onclick="paginaAnterior()" disabled>Anterior</button>

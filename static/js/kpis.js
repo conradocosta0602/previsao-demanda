@@ -1,6 +1,6 @@
-// KPIs Dashboard - JavaScript Reformulado
-// Controla filtros, gráficos e visualizações
-// Versão 2.0 - Fevereiro 2026
+// KPIs Dashboard - JavaScript
+// Controla filtros, graficos e visualizacoes
+// Versao 3.0 - Marco 2026 (Ruptura + Cobertura + Excesso)
 
 // ========================================
 // ESTADO GLOBAL
@@ -22,41 +22,36 @@ let state = {
     }
 };
 
-let charts = {};  // Armazena instâncias dos gráficos
-let filtrosData = {};  // Dados dos filtros carregados
+let charts = {};
+let filtrosData = {};
 
-// Cores padrão para os gráficos
+// Cores padrao
 const CORES = {
     ruptura: '#ef4444',
-    melhorHistorico: '#9ca3af'
+    cobertura: '#3b82f6',
+    excesso: '#f59e0b',
+    melhorHistorico: '#9ca3af',
+    meta90: '#10b981'
 };
 
 // Faixas de alerta
 const FAIXAS = {
-    ruptura: {
-        verde: 5,      // < 5%
-        amarelo: 10    // 5-10%, > 10% = vermelho
-    }
+    ruptura: { verde: 5, amarelo: 10 },           // < 5% verde, 5-10% amarelo, >10% vermelho
+    cobertura: { vermelhoBaixo: 30, verde: 90, amarelo: 120 },  // <30 vermelho, 30-90 verde, 90-120 amarelo, >120 vermelho
+    excesso: { verde: 10, amarelo: 20 }            // < 10% verde, 10-20% amarelo, >20% vermelho
 };
 
 // ========================================
-// INICIALIZAÇÃO
+// INICIALIZACAO
 // ========================================
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('Inicializando Dashboard de KPIs v2.0...');
-
-    // Inicializar event listeners
+    console.log('Inicializando Dashboard de KPIs v3.0...');
     inicializarEventListeners();
-
-    // Carregar filtros do servidor
     carregarFiltros();
-
-    // Carregar dados iniciais
     carregarDados();
 });
 
 function inicializarEventListeners() {
-    // Visão temporal
     document.querySelectorAll('input[name="visao-temporal"]').forEach(radio => {
         radio.addEventListener('change', (e) => {
             state.visaoTemporal = e.target.value;
@@ -64,16 +59,13 @@ function inicializarEventListeners() {
         });
     });
 
-    // Agregação
     document.querySelectorAll('input[name="agregacao"]').forEach(radio => {
         radio.addEventListener('change', (e) => {
             state.agregacao = e.target.value;
-            atualizarVisibilidadeGraficos();
             carregarDados();
         });
     });
 
-    // Ordenação da tabela
     document.querySelectorAll('.sortable').forEach(th => {
         th.addEventListener('click', () => {
             const campo = th.dataset.sort;
@@ -98,42 +90,33 @@ function carregarFiltros() {
         .then(data => {
             filtrosData = data;
 
-            // Criar multi-select para Fornecedor
             if (data.fornecedores && data.fornecedores.length > 0) {
-                const fornecedoresOptions = data.fornecedores.map(f => ({
-                    value: f,
-                    label: f
-                }));
-                MultiSelect.create('filter-fornecedor', fornecedoresOptions, {
+                MultiSelect.create('filter-fornecedor', data.fornecedores.map(f => ({
+                    value: f, label: f
+                })), {
                     allSelectedText: 'Todos os fornecedores',
                     selectAllByDefault: true,
                     onchange: () => {}
                 });
             }
 
-            // Criar multi-select para Categoria (Linha1)
             if (data.categorias && data.categorias.length > 0) {
-                const categoriasOptions = data.categorias.map(c => ({
-                    value: c,
-                    label: c
-                }));
-                MultiSelect.create('filter-categoria', categoriasOptions, {
+                MultiSelect.create('filter-categoria', data.categorias.map(c => ({
+                    value: c, label: c
+                })), {
                     allSelectedText: 'Todas as categorias',
                     selectAllByDefault: true,
                     onchange: () => atualizarLinhas3()
                 });
             }
 
-            // Criar multi-select para Linha3 (dependente de Categoria)
             atualizarLinhas3();
 
-            // Criar multi-select para Filial
             if (data.filiais && data.filiais.length > 0) {
-                const filiaisOptions = data.filiais.map(f => ({
+                MultiSelect.create('filter-filial', data.filiais.map(f => ({
                     value: f.codigo.toString(),
                     label: `${f.codigo} - ${f.nome}`
-                }));
-                MultiSelect.create('filter-filial', filiaisOptions, {
+                })), {
                     allSelectedText: 'Todas as filiais',
                     selectAllByDefault: true,
                     onchange: () => {}
@@ -146,20 +129,15 @@ function carregarFiltros() {
 }
 
 function atualizarLinhas3() {
-    // Pegar categorias selecionadas
     const categoriasSelecionadas = MultiSelect.getSelected('filter-categoria') || [];
-
-    // Filtrar linhas3 pelas categorias selecionadas
     let linhas3Filtradas = [];
 
     if (filtrosData.linhas3_por_categoria) {
         if (categoriasSelecionadas.length === 0) {
-            // Se nenhuma categoria selecionada, mostrar todas as linhas3
             Object.values(filtrosData.linhas3_por_categoria).forEach(linhas => {
                 linhas3Filtradas = linhas3Filtradas.concat(linhas);
             });
         } else {
-            // Filtrar pelas categorias selecionadas
             categoriasSelecionadas.forEach(cat => {
                 if (filtrosData.linhas3_por_categoria[cat]) {
                     linhas3Filtradas = linhas3Filtradas.concat(filtrosData.linhas3_por_categoria[cat]);
@@ -168,16 +146,12 @@ function atualizarLinhas3() {
         }
     }
 
-    // Remover duplicatas
     linhas3Filtradas = [...new Set(linhas3Filtradas)];
 
-    // Recriar multi-select de Linha3
-    const linhas3Options = linhas3Filtradas.map(l => ({
+    MultiSelect.create('filter-linha3', linhas3Filtradas.map(l => ({
         value: l.codigo,
         label: `${l.codigo} - ${l.descricao}`
-    }));
-
-    MultiSelect.create('filter-linha3', linhas3Options, {
+    })), {
         allSelectedText: 'Todas as linhas',
         selectAllByDefault: true,
         onchange: () => {}
@@ -191,9 +165,7 @@ function aplicarFiltros() {
         linhas3: MultiSelect.getSelected('filter-linha3') || [],
         filiais: MultiSelect.getSelected('filter-filial') || []
     };
-
-    state.ranking.pagina = 1;  // Reset paginação
-
+    state.ranking.pagina = 1;
     console.log('Aplicando filtros:', state.filtros);
     carregarDados();
 }
@@ -210,7 +182,6 @@ function limparFiltros() {
         linhas3: [],
         filiais: []
     };
-
     state.ranking.pagina = 1;
     carregarDados();
 }
@@ -221,7 +192,6 @@ function limparFiltros() {
 function carregarDados() {
     mostrarLoading(true);
 
-    // Carregar resumo, evolução e ranking em paralelo
     Promise.all([
         carregarResumo(),
         carregarEvolucao(),
@@ -239,17 +209,22 @@ function buildQueryParams() {
     params.append('visao', state.visaoTemporal);
     params.append('agregacao', state.agregacao);
 
+    // Dias baseado na visao temporal
+    const diasMap = { mensal: 365, semanal: 180, diario: 30 };
+    params.append('dias', diasMap[state.visaoTemporal] || 365);
+
+    // Enviar filtros como valores individuais (formato getlist)
     if (state.filtros.fornecedores.length > 0) {
-        params.append('fornecedores', JSON.stringify(state.filtros.fornecedores));
+        state.filtros.fornecedores.forEach(v => params.append('fornecedor', v));
     }
     if (state.filtros.categorias.length > 0) {
-        params.append('categorias', JSON.stringify(state.filtros.categorias));
+        state.filtros.categorias.forEach(v => params.append('categoria', v));
     }
     if (state.filtros.linhas3.length > 0) {
-        params.append('linhas3', JSON.stringify(state.filtros.linhas3));
+        state.filtros.linhas3.forEach(v => params.append('codigo_linha', v));
     }
     if (state.filtros.filiais.length > 0) {
-        params.append('filiais', JSON.stringify(state.filtros.filiais));
+        state.filtros.filiais.forEach(v => params.append('cod_empresa', v));
     }
 
     return params;
@@ -257,7 +232,6 @@ function buildQueryParams() {
 
 function carregarResumo() {
     const params = buildQueryParams();
-
     return fetch(`/api/kpis/resumo?${params}`)
         .then(response => response.json())
         .then(data => {
@@ -267,7 +241,6 @@ function carregarResumo() {
 
 function carregarEvolucao() {
     const params = buildQueryParams();
-
     return fetch(`/api/kpis/evolucao?${params}`)
         .then(response => response.json())
         .then(data => {
@@ -290,14 +263,23 @@ function carregarRanking() {
 }
 
 // ========================================
-// ATUALIZAÇÃO DOS CARDS KPI
+// ATUALIZACAO DOS CARDS KPI
 // ========================================
 function atualizarCardsKPI(data) {
     // Ruptura
-    atualizarCardKPI('ruptura', data.ruptura, '%', getCorRuptura);
+    atualizarCardKPI('ruptura', data.ruptura, '%', getCorRuptura, true);
+
+    // Cobertura
+    atualizarCardKPI('cobertura', data.cobertura, ' dias', getCorCobertura, false);
+
+    // Excesso
+    atualizarCardKPI('excesso', data.excesso, '%', getCorExcesso, true);
+
+    // Faixas de excesso
+    atualizarFaixasExcesso(data.excesso);
 }
 
-function atualizarCardKPI(id, dados, sufixo, getCorFunc) {
+function atualizarCardKPI(id, dados, sufixo, getCorFunc, menorMelhor) {
     if (!dados) return;
 
     const valorEl = document.getElementById(`kpi-${id}-valor`);
@@ -305,34 +287,40 @@ function atualizarCardKPI(id, dados, sufixo, getCorFunc) {
     const badgeEl = document.getElementById(`kpi-${id}-badge`);
 
     if (valorEl) {
-        const valorFormatado = dados.valor !== null && dados.valor !== undefined
-            ? dados.valor.toFixed(1) + sufixo
-            : '-';
-        valorEl.textContent = valorFormatado;
+        const valor = dados.valor;
+        if (valor !== null && valor !== undefined) {
+            valorEl.textContent = (id === 'cobertura' ? Math.round(valor) : valor.toFixed(1)) + sufixo;
+        } else {
+            valorEl.textContent = '-';
+        }
     }
 
     if (tendenciaEl) {
-        // Mostrar periodo de referencia e variacao
-        let textoTendencia = '';
-
-        if (dados.periodo) {
-            textoTendencia = dados.periodo;
-        }
+        let texto = dados.periodo || '';
 
         if (dados.variacao !== undefined && dados.variacao !== 0) {
-            const variacao = dados.variacao;
-            const sinal = variacao > 0 ? '+' : '';
-            textoTendencia += ` | ${sinal}${variacao.toFixed(1)}% vs anterior`;
+            const sinal = dados.variacao > 0 ? '+' : '';
+            const unidade = id === 'cobertura' ? 'd' : '%';
+            texto += ` | ${sinal}${dados.variacao.toFixed(1)}${unidade} vs anterior`;
         }
 
-        tendenciaEl.textContent = textoTendencia;
+        tendenciaEl.textContent = texto;
         tendenciaEl.className = 'kpi-tendencia';
 
-        // Para ruptura e WMAPE, diminuir é bom
-        // Para cobertura, aumentar é bom
         if (dados.variacao !== undefined && dados.variacao !== 0) {
-            // Para ruptura, diminuir é bom
-            tendenciaEl.classList.add(dados.variacao <= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
+            if (menorMelhor) {
+                // Para ruptura e excesso: diminuir e bom
+                tendenciaEl.classList.add(dados.variacao <= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
+            } else {
+                // Para cobertura: depende da faixa
+                // Se cobertura < 90 e subiu, e bom. Se cobertura > 90 e subiu, pode ser ruim
+                const cobAtual = dados.valor || 0;
+                if (cobAtual <= 90) {
+                    tendenciaEl.classList.add(dados.variacao >= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
+                } else {
+                    tendenciaEl.classList.add(dados.variacao <= 0 ? 'tendencia-positiva' : 'tendencia-negativa');
+                }
+            }
         }
     }
 
@@ -343,6 +331,34 @@ function atualizarCardKPI(id, dados, sufixo, getCorFunc) {
     }
 }
 
+function atualizarFaixasExcesso(dados) {
+    if (!dados) return;
+
+    const container = document.getElementById('excesso-faixas');
+    if (!container) return;
+
+    const total = dados.total_itens || 1;
+    const faixas = [
+        { label: '> 180 dias', valor: dados.faixa_acima_180 || 0, cor: '#dc2626' },
+        { label: '120-180 dias', valor: dados.faixa_120_180 || 0, cor: '#f59e0b' },
+        { label: '90-120 dias', valor: dados.faixa_90_120 || 0, cor: '#fbbf24' }
+    ];
+
+    container.innerHTML = faixas.map(f => {
+        const pct = total > 0 ? ((f.valor / total) * 100).toFixed(1) : 0;
+        const barWidth = Math.min(pct * 2, 100); // Escala visual
+        return `
+            <div class="faixa-item">
+                <div class="faixa-label">${f.label}</div>
+                <div class="faixa-bar-container">
+                    <div class="faixa-bar" style="width: ${barWidth}%; background: ${f.cor};"></div>
+                </div>
+                <div class="faixa-valor">${f.valor} <span class="faixa-pct">(${pct}%)</span></div>
+            </div>
+        `;
+    }).join('');
+}
+
 function getCorRuptura(valor) {
     if (valor === null || valor === undefined) return 'cinza';
     if (valor < FAIXAS.ruptura.verde) return 'verde';
@@ -350,12 +366,26 @@ function getCorRuptura(valor) {
     return 'vermelho';
 }
 
+function getCorCobertura(valor) {
+    if (valor === null || valor === undefined) return 'cinza';
+    if (valor < FAIXAS.cobertura.vermelhoBaixo) return 'vermelho';
+    if (valor <= FAIXAS.cobertura.verde) return 'verde';
+    if (valor <= FAIXAS.cobertura.amarelo) return 'amarelo';
+    return 'vermelho';
+}
+
+function getCorExcesso(valor) {
+    if (valor === null || valor === undefined) return 'cinza';
+    if (valor < FAIXAS.excesso.verde) return 'verde';
+    if (valor <= FAIXAS.excesso.amarelo) return 'amarelo';
+    return 'vermelho';
+}
 
 function getTextoStatus(cor) {
     const textos = {
         'verde': 'Bom',
-        'amarelo': 'Atenção',
-        'vermelho': 'Crítico',
+        'amarelo': 'Atencao',
+        'vermelho': 'Critico',
         'azul': 'Excelente',
         'cinza': '-'
     };
@@ -363,35 +393,19 @@ function getTextoStatus(cor) {
 }
 
 // ========================================
-// ATUALIZAÇÃO DOS GRÁFICOS
+// ATUALIZACAO DOS GRAFICOS
 // ========================================
-function atualizarVisibilidadeGraficos() {
-    const containerGraficos = document.getElementById('graficos-container');
-    const containerItem = document.getElementById('graficos-item-container');
-
-    if (state.agregacao === 'item') {
-        // Para nível item, mostrar gráficos também (como solicitado)
-        if (containerGraficos) containerGraficos.style.display = 'grid';
-        if (containerItem) containerItem.style.display = 'block';
-    } else {
-        if (containerGraficos) containerGraficos.style.display = 'grid';
-        if (containerItem) containerItem.style.display = 'none';
-    }
-}
-
 function atualizarGraficos(data) {
     if (!data) return;
 
-    // Destruir gráficos existentes
     Object.keys(charts).forEach(key => {
-        if (charts[key]) {
-            charts[key].destroy();
-        }
+        if (charts[key]) charts[key].destroy();
     });
     charts = {};
 
-    // Criar novos gráficos
     criarGraficoRuptura(data.ruptura || []);
+    criarGraficoCobertura(data.cobertura || []);
+    criarGraficoExcesso(data.excesso || []);
 }
 
 function criarGraficoRuptura(dados) {
@@ -400,7 +414,7 @@ function criarGraficoRuptura(dados) {
 
     const labels = dados.map(d => d.periodo);
     const valores = dados.map(d => d.valor);
-    const melhorHistorico = dados.map(d => d.melhor_historico);
+    const melhor = dados.map(d => d.melhor_historico);
 
     charts['ruptura'] = new Chart(ctx, {
         type: 'line',
@@ -419,8 +433,8 @@ function criarGraficoRuptura(dados) {
                     pointHoverRadius: 6
                 },
                 {
-                    label: 'Melhor Histórico',
-                    data: melhorHistorico,
+                    label: 'Melhor Historico',
+                    data: melhor,
                     borderColor: CORES.melhorHistorico,
                     borderWidth: 2,
                     borderDash: [5, 5],
@@ -434,6 +448,85 @@ function criarGraficoRuptura(dados) {
     });
 }
 
+function criarGraficoCobertura(dados) {
+    const ctx = document.getElementById('chart-cobertura');
+    if (!ctx || !dados.length) return;
+
+    const labels = dados.map(d => d.periodo);
+    const valores = dados.map(d => d.valor);
+    const meta = dados.map(() => 90);
+
+    charts['cobertura'] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Cobertura (dias)',
+                    data: valores,
+                    borderColor: CORES.cobertura,
+                    backgroundColor: hexToRgba(CORES.cobertura, 0.1),
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                },
+                {
+                    label: 'Meta (90 dias)',
+                    data: meta,
+                    borderColor: CORES.meta90,
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0,
+                    fill: false,
+                    pointRadius: 0
+                }
+            ]
+        },
+        options: getOptionsGrafico('Cobertura Media (dias)', true)
+    });
+}
+
+function criarGraficoExcesso(dados) {
+    const ctx = document.getElementById('chart-excesso');
+    if (!ctx || !dados.length) return;
+
+    const labels = dados.map(d => d.periodo);
+    const valores = dados.map(d => d.valor);
+    const melhor = dados.map(d => d.melhor_historico);
+
+    charts['excesso'] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Excesso (%)',
+                    data: valores,
+                    borderColor: CORES.excesso,
+                    backgroundColor: hexToRgba(CORES.excesso, 0.1),
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                },
+                {
+                    label: 'Melhor Historico',
+                    data: melhor,
+                    borderColor: CORES.melhorHistorico,
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 0
+                }
+            ]
+        },
+        options: getOptionsGrafico('Itens em Excesso (%)', true)
+    });
+}
 
 function getOptionsGrafico(titulo, beginAtZero = true) {
     return {
@@ -450,9 +543,7 @@ function getOptionsGrafico(titulo, beginAtZero = true) {
                 labels: {
                     usePointStyle: true,
                     padding: 15,
-                    font: {
-                        size: 11
-                    }
+                    font: { size: 11 }
                 }
             },
             tooltip: {
@@ -471,14 +562,10 @@ function getOptionsGrafico(titulo, beginAtZero = true) {
                     text: titulo,
                     font: { size: 12, weight: 'bold' }
                 },
-                grid: {
-                    color: 'rgba(0, 0, 0, 0.05)'
-                }
+                grid: { color: 'rgba(0, 0, 0, 0.05)' }
             },
             x: {
-                grid: {
-                    display: false
-                },
+                grid: { display: false },
                 ticks: {
                     maxRotation: 45,
                     minRotation: 0
@@ -500,7 +587,7 @@ function atualizarTabelaRanking(data) {
     if (!data || !data.itens || data.itens.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="5" class="text-center text-muted py-4">
+                <td colspan="7" class="text-center text-muted py-4">
                     Nenhum dado encontrado para os filtros selecionados
                 </td>
             </tr>
@@ -511,17 +598,19 @@ function atualizarTabelaRanking(data) {
 
     tbody.innerHTML = '';
 
-    data.itens.forEach((item, index) => {
+    data.itens.forEach(item => {
         const tr = document.createElement('tr');
 
-        const statusRuptura = getCorRuptura(item.ruptura);
+        const badgeRuptura = item.ruptura !== null ? `<span class="badge badge-${getCorRuptura(item.ruptura)}">${item.ruptura.toFixed(1)}%</span>` : '-';
+        const badgeCobertura = item.cobertura !== null ? `<span class="badge badge-${getCorCobertura(item.cobertura)}">${Math.round(item.cobertura)}d</span>` : '-';
+        const badgeExcesso = item.excesso !== null ? `<span class="badge badge-${getCorExcesso(item.excesso)}">${item.excesso.toFixed(1)}%</span>` : '-';
 
         tr.innerHTML = `
             <td class="fw-medium">${item.identificador || '-'}</td>
             <td>${item.descricao || '-'}</td>
-            <td>
-                <span class="badge badge-${statusRuptura}">${item.ruptura !== null ? item.ruptura.toFixed(1) + '%' : '-'}</span>
-            </td>
+            <td>${badgeRuptura}</td>
+            <td>${badgeCobertura}</td>
+            <td>${badgeExcesso}</td>
             <td>${item.total_skus || '-'}</td>
             <td>${item.skus_ruptura || '-'}</td>
         `;
@@ -529,14 +618,12 @@ function atualizarTabelaRanking(data) {
         tbody.appendChild(tr);
     });
 
-    // Atualizar informações de paginação
     if (paginacaoInfo) {
         const inicio = (data.pagina - 1) * data.por_pagina + 1;
         const fim = Math.min(data.pagina * data.por_pagina, data.total);
         paginacaoInfo.textContent = `Mostrando ${inicio}-${fim} de ${data.total}`;
     }
 
-    // Atualizar botões de paginação
     atualizarBotoesPaginacao(data);
 }
 
@@ -544,13 +631,8 @@ function atualizarBotoesPaginacao(data) {
     const btnAnterior = document.getElementById('btn-pagina-anterior');
     const btnProxima = document.getElementById('btn-pagina-proxima');
 
-    if (btnAnterior) {
-        btnAnterior.disabled = data.pagina <= 1;
-    }
-
-    if (btnProxima) {
-        btnProxima.disabled = data.pagina >= data.total_paginas;
-    }
+    if (btnAnterior) btnAnterior.disabled = data.pagina <= 1;
+    if (btnProxima) btnProxima.disabled = data.pagina >= data.total_paginas;
 }
 
 function paginaAnterior() {
@@ -570,10 +652,10 @@ function atualizarIconesOrdenacao() {
         const icone = th.querySelector('.sort-icon');
         if (icone) {
             if (th.dataset.sort === state.ranking.ordenarPor) {
-                icone.textContent = state.ranking.ordem === 'asc' ? '↑' : '↓';
+                icone.textContent = state.ranking.ordem === 'asc' ? '\u2191' : '\u2193';
                 icone.style.opacity = '1';
             } else {
-                icone.textContent = '↕';
+                icone.textContent = '\u2195';
                 icone.style.opacity = '0.3';
             }
         }
@@ -581,7 +663,7 @@ function atualizarIconesOrdenacao() {
 }
 
 // ========================================
-// UTILITÁRIOS
+// UTILITARIOS
 // ========================================
 function hexToRgba(hex, alpha) {
     const r = parseInt(hex.slice(1, 3), 16);
@@ -592,32 +674,11 @@ function hexToRgba(hex, alpha) {
 
 function mostrarLoading(show) {
     const overlay = document.getElementById('loading-overlay');
-    if (overlay) {
-        overlay.style.display = show ? 'flex' : 'none';
-    }
+    if (overlay) overlay.style.display = show ? 'flex' : 'none';
 }
 
-function formatarNumero(valor, decimais = 1) {
-    if (valor === null || valor === undefined) return '-';
-    return valor.toLocaleString('pt-BR', {
-        minimumFractionDigits: decimais,
-        maximumFractionDigits: decimais
-    });
-}
-
-// ========================================
-// EXPORTAÇÃO
-// ========================================
-function exportarDados(formato) {
-    const params = buildQueryParams();
-    params.append('formato', formato);
-
-    window.location.href = `/api/kpis/exportar?${params}`;
-}
-
-// Expor funções globalmente para uso no HTML
+// Expor funcoes globalmente
 window.aplicarFiltros = aplicarFiltros;
 window.limparFiltros = limparFiltros;
 window.paginaAnterior = paginaAnterior;
 window.proximaPagina = proximaPagina;
-window.exportarDados = exportarDados;
