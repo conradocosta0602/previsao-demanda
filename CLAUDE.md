@@ -8,7 +8,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
-**Porta padrao**: 5001
+**Porta padrao**: 5000
 
 ## Estrutura de Pastas Principais
 
