@@ -336,6 +336,30 @@
                     </small>
                 </div>
 
+                <!-- V57: Pesos de cobertura por proximidade -->
+                <div class="form-group" id="grupoPesos" style="display:block;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <label style="margin-bottom:0;">Ponderacao por Proximidade</label>
+                        <label style="font-weight:normal;font-size:0.75em;cursor:pointer;display:flex;align-items:center;gap:4px;">
+                            <input type="checkbox" id="togglePesos" onchange="togglePesosCobertura()" style="width:auto;">
+                            Ativar
+                        </label>
+                    </div>
+                    <div id="pesosContainer" style="display:none;">
+                        <div id="pesosInputs" style="display:flex;flex-direction:column;gap:4px;">
+                            <!-- Preenchido dinamicamente -->
+                        </div>
+                        <div style="display:flex;gap:4px;margin-top:4px;">
+                            <button type="button" onclick="adicionarPeso()" style="flex:1;padding:3px 6px;font-size:0.7em;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;">+ Mes</button>
+                            <button type="button" onclick="removerPeso()" style="flex:1;padding:3px 6px;font-size:0.7em;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;">- Mes</button>
+                            <button type="button" onclick="resetarPesos()" style="flex:1;padding:3px 6px;font-size:0.7em;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;">Resetar</button>
+                        </div>
+                        <small style="color:#6b7280;font-size:0.68em;margin-top:4px;display:block;line-height:1.3;">
+                            Peso 1.0 = 100% da demanda. Meses distantes recebem peso menor pois serao repostos em entregas futuras.
+                        </small>
+                    </div>
+                </div>
+
                 <!-- Datas de entrega -->
                 <div class="datas-container">
                     <div class="header-row">
@@ -404,6 +428,10 @@
     let datasEntregaCount = 0;
     let leadTimeFornecedor = 15; // default
     let modoCalculo = 'reabastecimento'; // 'reabastecimento' ou 'negociacao'
+    // V57: Pesos decrescentes por proximidade da entrega
+    const PESOS_DEFAULT = [1.0, 0.7, 0.5];
+    let pesosCobertura = [...PESOS_DEFAULT];
+    let pesosAtivos = false;
 
     // ================================================================
     // INICIALIZACAO
@@ -533,11 +561,15 @@
         } catch(e) { console.error('Erro ao carregar sublinhas:', e); }
     }
 
-    // Linha1 -> Linha3 cascata
+    // Linha1 -> Linha3 cascata + V57: cobertura -> pesos
     document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('linha1').addEventListener('change', async function() {
             const cat = this.value && this.value !== 'TODAS' ? this.value : null;
             await carregarSublinhas(cat);
+        });
+        // V57: Mostrar/esconder pesos quando cobertura muda
+        document.getElementById('coberturaDias').addEventListener('change', function() {
+            document.getElementById('grupoPesos').style.display = this.value ? 'block' : 'none';
         });
     });
 
@@ -564,6 +596,55 @@
         }
 
         atualizarFaseLabels();
+    }
+
+    // ================================================================
+    // V57: PESOS DE COBERTURA POR PROXIMIDADE
+    // ================================================================
+    function togglePesosCobertura() {
+        pesosAtivos = document.getElementById('togglePesos').checked;
+        document.getElementById('pesosContainer').style.display = pesosAtivos ? 'block' : 'none';
+        if (pesosAtivos) renderizarPesos();
+    }
+
+    function renderizarPesos() {
+        const container = document.getElementById('pesosInputs');
+        container.innerHTML = '';
+        pesosCobertura.forEach((peso, idx) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+            row.innerHTML = `
+                <span style="font-size:0.72em;color:#6b7280;min-width:42px;">Mes ${idx+1}:</span>
+                <input type="range" min="10" max="100" value="${Math.round(peso*100)}"
+                       oninput="atualizarPeso(${idx}, this.value)"
+                       style="flex:1;height:6px;accent-color:#667eea;">
+                <span id="pesoVal_${idx}" style="font-size:0.78em;font-weight:600;color:#374151;min-width:32px;text-align:right;">${(peso*100).toFixed(0)}%</span>
+            `;
+            container.appendChild(row);
+        });
+    }
+
+    function atualizarPeso(idx, valor) {
+        pesosCobertura[idx] = parseInt(valor) / 100;
+        document.getElementById(`pesoVal_${idx}`).textContent = valor + '%';
+    }
+
+    function adicionarPeso() {
+        const ultimo = pesosCobertura[pesosCobertura.length - 1];
+        pesosCobertura.push(Math.max(0.1, ultimo - 0.2));
+        renderizarPesos();
+    }
+
+    function removerPeso() {
+        if (pesosCobertura.length > 1) {
+            pesosCobertura.pop();
+            renderizarPesos();
+        }
+    }
+
+    function resetarPesos() {
+        pesosCobertura = [...PESOS_DEFAULT];
+        renderizarPesos();
     }
 
     // ================================================================
@@ -676,6 +757,7 @@
             linha3: document.getElementById('linha3').value,
             cobertura_dias: coberturaVal ? parseInt(coberturaVal) : null,
             modo_calculo: modoCalculo,
+            pesos_cobertura: pesosAtivos ? pesosCobertura : null,
         };
 
         // UI: mostrar progresso
@@ -778,6 +860,11 @@
                     </div>
                 `;
             })()}
+            ${data.pesos_cobertura ? `
+                <div style="margin-top:6px;padding:6px 12px;background:rgba(255,255,255,0.15);border-radius:8px;font-size:0.72em;color:rgba(255,255,255,0.9);">
+                    V57 Ponderacao: ${data.pesos_cobertura.map((p,i) => 'M'+(i+1)+': '+(p*100).toFixed(0)+'%').join(' | ')}
+                </div>
+            ` : ''}
         `;
 
         // Fases

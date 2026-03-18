@@ -3003,19 +3003,8 @@ document.getElementById('bancoForm').addEventListener('submit', async (e) => {
                 const modeloData = resultado.modelos?.[melhorModelo] || {};
                 const metricasMelhor = modeloData.metricas || resultado.metricas?.[melhorModelo] || {};
 
-                // Calcular totais de previsão futura
-                const previsaoFuturo = modeloData?.futuro?.valores || [];
-                const totalPrevisao = previsaoFuturo.reduce((sum, val) => sum + val, 0);
-
-                // Total do ano anterior (apenas os períodos correspondentes à previsão)
-                const valoresAnoAnterior = resultado.ano_anterior?.valores || [];
-                const numPeriodos = previsaoFuturo.length;
-                const totalAnoAnterior = valoresAnoAnterior.slice(0, numPeriodos).reduce((sum, val) => sum + val, 0);
-
-                // Calcular variação de demanda: (total previsão - total ano anterior) / total ano anterior * 100
-                const variacaoDemanda = totalAnoAnterior > 0
-                    ? ((totalPrevisao - totalAnoAnterior) / totalAnoAnterior * 100)
-                    : 0;
+                // Usar variação calculada no backend (consistente com tabela comparativa)
+                const variacaoDemanda = resultado.variacao_demanda_pct ?? 0;
 
                 // Preencher KPIs no topo (métricas do período de teste)
                 document.getElementById('kpi_wmape').textContent = `${(metricasMelhor.wmape || 0).toFixed(1)}%`;

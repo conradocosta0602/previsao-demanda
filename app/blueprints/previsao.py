@@ -391,6 +391,7 @@ def _api_gerar_previsao_banco_v2_interno():
         # =====================================================
         relatorio_itens = []
         previsoes_agregadas_por_periodo = {d: 0 for d in datas_previsao}
+        ano_anterior_agregado_por_periodo = {d: 0 for d in datas_previsao}
         contagem_modelos = {}
 
         demanda_pre_calc = {}  # {(cod_produto_str, periodo_str): {campos...}}
@@ -573,6 +574,7 @@ def _api_gerar_previsao_banco_v2_interno():
                     'ajuste_manual': tem_editado
                 })
                 previsoes_agregadas_por_periodo[data_prev] += previsao_periodo_int
+                ano_anterior_agregado_por_periodo[data_prev] += valor_aa_periodo
                 total_previsao_item += previsao_periodo_int
                 total_ano_anterior_item += valor_aa_periodo
 
@@ -880,12 +882,14 @@ def _api_gerar_previsao_banco_v2_interno():
             previsao_base = previsoes_agregadas_por_periodo.get(data_prev, 0)
             previsao_agregada.append(round(previsao_base, 2))
 
-        # Buscar ano anterior
+        # Ano anterior - usar mesma fonte dos itens (demanda_pre_calculada.valor_ano_anterior)
+        # para consistencia entre card de variacao e tabela comparativa
         ano_anterior_valores = []
         ano_anterior_datas = []
         ano_anterior_total = 0
 
         for data_prev in datas_previsao:
+            valor_aa = ano_anterior_agregado_por_periodo.get(data_prev, 0)
             try:
                 if '-S' in data_prev:
                     ano_str, sem_str = data_prev.split('-S')
@@ -897,14 +901,11 @@ def _api_gerar_previsao_banco_v2_interno():
                         ano_anterior_str = f"{data_aa.year:04d}-{data_aa.month:02d}-01"
                     else:
                         ano_anterior_str = data_aa.strftime('%Y-%m-%d')
-
-                valor_aa = vendas_agregadas_por_periodo.get(ano_anterior_str, 0)
-                ano_anterior_valores.append(valor_aa)
                 ano_anterior_datas.append(ano_anterior_str)
-                ano_anterior_total += valor_aa
             except:
-                ano_anterior_valores.append(0)
                 ano_anterior_datas.append('')
+            ano_anterior_valores.append(valor_aa)
+            ano_anterior_total += valor_aa
 
         # Formatar periodos
         periodos_formatados = []
@@ -1002,6 +1003,13 @@ def _api_gerar_previsao_banco_v2_interno():
 
         print(f"  Comparacao YoY montada para {len(comparacao_yoy_por_fornecedor)} fornecedores", flush=True)
 
+        # Calcular variacao demanda consolidada (mesma fonte da tabela comparativa)
+        total_previsao_consolidado = sum(item.get('demanda_prevista_total', 0) for item in relatorio_itens)
+        total_ano_anterior_consolidado = sum(item.get('demanda_ano_anterior', 0) for item in relatorio_itens)
+        variacao_demanda_pct = 0
+        if total_ano_anterior_consolidado > 0:
+            variacao_demanda_pct = round(((total_previsao_consolidado - total_ano_anterior_consolidado) / total_ano_anterior_consolidado) * 100, 1)
+
         # Montar resposta
         resposta = {
             'sucesso': True,
@@ -1057,7 +1065,8 @@ def _api_gerar_previsao_banco_v2_interno():
             'estatisticas_modelos': contagem_modelos,
             'periodos_previsao_formatados': datas_previsao,
             'periodos_previsao_display': [formatar_periodo_display(d, granularidade) for d in datas_previsao],
-            'comparacao_yoy_por_fornecedor': comparacao_yoy_por_fornecedor
+            'comparacao_yoy_por_fornecedor': comparacao_yoy_por_fornecedor,
+            'variacao_demanda_pct': variacao_demanda_pct
         }
 
         cursor.close()

@@ -122,6 +122,12 @@ def api_compra_planejada_calcular():
         datas_entrega_raw = dados.get('datas_entrega', [])
         cobertura_dias = dados.get('cobertura_dias', None)  # None = ABC automatica
         modo_calculo = dados.get('modo_calculo', 'reabastecimento')  # 'reabastecimento' ou 'negociacao'
+        # V57: Pesos decrescentes por distancia da entrega (Declining Balance Coverage)
+        # Default: [1.0, 0.7, 0.5] para 3 meses; None = peso uniforme (comportamento original)
+        pesos_cobertura_raw = dados.get('pesos_cobertura', None)
+        pesos_cobertura = None
+        if pesos_cobertura_raw and isinstance(pesos_cobertura_raw, list) and len(pesos_cobertura_raw) > 0:
+            pesos_cobertura = [max(0.1, min(1.0, float(p))) for p in pesos_cobertura_raw]
 
         # Validar datas de entrega
         if not datas_entrega_raw or len(datas_entrega_raw) == 0:
@@ -167,6 +173,8 @@ def api_compra_planejada_calcular():
         print(f"  Modo: {modo_calculo.upper()}")
         print(f"  Datas de entrega: {[d.isoformat() for d in datas_entrega]}")
         print(f"  Cobertura: {cobertura_dias if cobertura_dias else 'ABC (automatica)'}")
+        if pesos_cobertura:
+            print(f"  V57 Pesos cobertura: {pesos_cobertura}")
 
         conn = get_db_connection()
 
@@ -348,10 +356,15 @@ def api_compra_planejada_calcular():
 
         # ---- Verificar demanda pre-calculada ----
         # Buscar demanda para todos os meses cobertos
+        # Inclui meses do periodo de cobertura (entrega + cobertura_alvo dias)
+        # para que o calculo do target OUL tenha dados sazonais corretos
+        cobertura_calc = cobertura_dias if cobertura_dias else cobertura_ultima_fase
         meses_necessarios = set()
         for p in periodos:
             dt_atual = p['data_inicio_cobertura']
-            while dt_atual <= p['data_fim_cobertura']:
+            # Fim do periodo de cobertura real (entrega + cobertura_alvo)
+            dt_fim_cobertura_real = p['data_entrega'] + timedelta(days=max(cobertura_calc, p['dias']) - 1)
+            while dt_atual <= dt_fim_cobertura_real:
                 meses_necessarios.add((dt_atual.year, dt_atual.month))
                 # Pular para proximo mes
                 if dt_atual.month == 12:
@@ -383,13 +396,15 @@ def api_compra_planejada_calcular():
         semanas_necessarias = set()
         for p in periodos:
             dt_atual = p['data_inicio_cobertura']
-            while dt_atual <= p['data_fim_cobertura']:
+            dt_fim_cob_real = p['data_entrega'] + timedelta(days=max(cobertura_calc, p['dias']) - 1)
+            while dt_atual <= dt_fim_cob_real:
                 iso_cal = dt_atual.isocalendar()
                 semanas_necessarias.add((iso_cal[0], iso_cal[1]))
                 dt_atual += timedelta(days=7)
-        # Tambem incluir semanas desde hoje ate primeira entrega (consumo durante LT)
+        # Tambem incluir semanas desde hoje ate ultima cobertura
+        dt_ultima_cob = periodos[-1]['data_entrega'] + timedelta(days=max(cobertura_calc, periodos[-1]['dias']) - 1)
         dt_atual = hoje
-        while dt_atual <= periodos[-1]['data_fim_cobertura']:
+        while dt_atual <= dt_ultima_cob:
             iso_cal = dt_atual.isocalendar()
             semanas_necessarias.add((iso_cal[0], iso_cal[1]))
             dt_atual += timedelta(days=7)
@@ -774,6 +789,15 @@ def api_compra_planejada_calcular():
                 dias_ate_entrega = (periodo['data_entrega'] - hoje).days
                 dias_periodo = periodo['dias']
 
+                # Periodo de cobertura: da entrega ate entrega + cobertura_alvo dias
+                # Usado para calcular demanda diaria do TARGET (media ponderada pela cobertura real)
+                # Diferente do periodo entre entregas que e usado apenas para exibicao
+                periodo_cobertura = {
+                    'data_inicio_cobertura': periodo['data_entrega'],
+                    'data_fim_cobertura': periodo['data_entrega'] + timedelta(days=cobertura_alvo - 1),
+                    'dias': cobertura_alvo
+                }
+
                 for idx, row in df_produtos.iterrows():
                     codigo = int(row['codigo'])
                     cnpj_forn = row.get('codigo_fornecedor', '')
@@ -782,10 +806,12 @@ def api_compra_planejada_calcular():
                     if codigo in itens_bloqueados:
                         continue
 
-                    # Demanda diaria para este periodo (com sazonalidade)
+                    # Demanda diaria para o PERIODO DE COBERTURA (com sazonalidade)
+                    # Usa periodo de cobertura (90 dias a partir da entrega) para calcular o target,
+                    # nao o intervalo entre entregas (que pode ser 30 dias em mes de alta sazonalidade)
                     demanda_diaria_periodo = _calcular_demanda_diaria_periodo(
                         cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                        str(codigo), periodo, lojas_demanda, is_pedido_multiloja,
+                        str(codigo), periodo_cobertura, lojas_demanda, is_pedido_multiloja,
                         cache_demanda_por_semana=cache_demanda_por_semana
                     )
 
@@ -819,13 +845,16 @@ def api_compra_planejada_calcular():
                             )
                             est_proj_loja = max(0, est_loja + ped_ant_loja - consumo_loja)
 
-                            # Demanda diaria desta loja no periodo alvo
-                            dem_dia_loja = _calcular_demanda_diaria_periodo(
+                            # V57: Target ponderado por distancia da entrega
+                            # Com pesos: blocos de 30d com peso decrescente
+                            # Sem pesos: demanda_media_cobertura * cobertura_alvo (original)
+                            target_loja = _calcular_target_ponderado(
                                 cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                                str(codigo), periodo, [loja], True,
-                                cache_demanda_por_semana=cache_demanda_por_semana
+                                str(codigo), periodo['data_entrega'], cobertura_alvo, pesos_cobertura,
+                                lojas_demanda, is_pedido_multiloja,
+                                cache_demanda_por_semana=cache_demanda_por_semana,
+                                lojas_subset=[loja]
                             )
-                            target_loja = dem_dia_loja * cobertura_alvo
                             nec_loja = max(0.0, target_loja - est_proj_loja)
 
                             necessidade_total += nec_loja
@@ -875,7 +904,13 @@ def api_compra_planejada_calcular():
                             cache_demanda_por_semana=cache_demanda_por_semana
                         )
                         estoque_projetado = max(0, estoque_hoje + pedidos_ant - consumo_ate_entrega)
-                        target_estoque = demanda_diaria_periodo * cobertura_alvo
+                        # V57: Target ponderado por distancia da entrega
+                        target_estoque = _calcular_target_ponderado(
+                            cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                            str(codigo), periodo['data_entrega'], cobertura_alvo, pesos_cobertura,
+                            lojas_demanda, is_pedido_multiloja,
+                            cache_demanda_por_semana=cache_demanda_por_semana
+                        )
                         necessidade = target_estoque - estoque_projetado
 
                         # V51: Redistribuicao CD (fallback mono-loja)
@@ -983,6 +1018,14 @@ def api_compra_planejada_calcular():
 
                 dias_ate_entrega = (periodo['data_entrega'] - hoje).days
 
+                # Periodo de cobertura: da entrega ate entrega + cobertura_alvo dias
+                # Usado para calcular demanda diaria do TARGET (media ponderada pela cobertura real)
+                periodo_cobertura_reb = {
+                    'data_inicio_cobertura': periodo['data_entrega'],
+                    'data_fim_cobertura': periodo['data_entrega'] + timedelta(days=target_cobertura - 1),
+                    'dias': target_cobertura
+                }
+
                 for idx, row in df_produtos.iterrows():
                     codigo = int(row['codigo'])
                     cnpj_forn = row.get('codigo_fornecedor', '')
@@ -990,9 +1033,10 @@ def api_compra_planejada_calcular():
                     if codigo in itens_bloqueados:
                         continue
 
+                    # Demanda diaria para o PERIODO DE COBERTURA (com sazonalidade)
                     demanda_diaria_periodo = _calcular_demanda_diaria_periodo(
                         cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                        str(codigo), periodo, lojas_demanda, is_pedido_multiloja,
+                        str(codigo), periodo_cobertura_reb, lojas_demanda, is_pedido_multiloja,
                         cache_demanda_por_semana=cache_demanda_por_semana
                     )
 
@@ -1019,11 +1063,6 @@ def api_compra_planejada_calcular():
                         for loja in lojas_do_item_reb:
                             est_loja = estoque_por_loja_cache.get((codigo, loja), 0)
                             ped_ant_loja = pedidos_por_loja_acumulados.get((codigo, loja), 0)
-                            dem_diaria_loja = _calcular_demanda_diaria_periodo(
-                                cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
-                                str(codigo), periodo, [loja], True,
-                                cache_demanda_por_semana=cache_demanda_por_semana
-                            )
                             consumo_loja = _calcular_consumo_total_periodo(
                                 cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
                                 str(codigo), hoje, periodo['data_entrega'] - timedelta(days=1),
@@ -1031,7 +1070,14 @@ def api_compra_planejada_calcular():
                                 cache_demanda_por_semana=cache_demanda_por_semana
                             )
                             est_proj_loja = max(0, est_loja + ped_ant_loja - consumo_loja)
-                            target_loja = dem_diaria_loja * target_cobertura
+                            # V57: Target ponderado por distancia da entrega
+                            target_loja = _calcular_target_ponderado(
+                                cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                                str(codigo), periodo['data_entrega'], target_cobertura, pesos_cobertura,
+                                lojas_demanda, is_pedido_multiloja,
+                                cache_demanda_por_semana=cache_demanda_por_semana,
+                                lojas_subset=[loja]
+                            )
                             nec_loja = max(0.0, target_loja - est_proj_loja)
 
                             necessidade_total_reb += nec_loja
@@ -1074,7 +1120,13 @@ def api_compra_planejada_calcular():
                         dem_diaria_media = demanda_diaria_cache.get(codigo, demanda_diaria_periodo)
                         consumo_ate_entrega = dem_diaria_media * dias_ate_entrega
                         estoque_projetado = estoque_atual + pedidos_ant - consumo_ate_entrega
-                        target_estoque = demanda_diaria_periodo * target_cobertura
+                        # V57: Target ponderado por distancia da entrega
+                        target_estoque = _calcular_target_ponderado(
+                            cache_demanda_por_mes, cache_proporcoes, cache_demanda_fase1,
+                            str(codigo), periodo['data_entrega'], target_cobertura, pesos_cobertura,
+                            lojas_demanda, is_pedido_multiloja,
+                            cache_demanda_por_semana=cache_demanda_por_semana
+                        )
                         necessidade = target_estoque - max(0, estoque_projetado)
 
                         # V51: Redistribuicao CD (fallback mono-loja)
@@ -1203,6 +1255,7 @@ def api_compra_planejada_calcular():
             'is_destino_cd': is_destino_cd,
             'fornecedores': fornecedores_a_processar,
             'modo_calculo': modo_calculo,
+            'pesos_cobertura': pesos_cobertura,
         })
 
     except Exception as e:
@@ -1304,6 +1357,87 @@ def _calcular_consumo_total_periodo(
             dt_atual = date(dt_atual.year, dt_atual.month + 1, 1)
 
     return consumo_total
+
+
+def _calcular_target_ponderado(
+    cache_demanda_por_mes, cache_proporcoes, cache_fallback,
+    cod_produto, data_entrega, cobertura_dias, pesos_cobertura,
+    lojas_demanda, is_multiloja,
+    cache_demanda_por_semana=None,
+    lojas_subset=None
+):
+    """
+    V57: Calcula target de estoque com pesos decrescentes por distancia da entrega.
+
+    Em vez de target = demanda_media_90d * 90 (peso uniforme),
+    decompoe a cobertura em blocos de ~30 dias e aplica pesos decrescentes:
+      Mes 1 (0-30d): peso 1.0  - certeza alta, preciso cobrir
+      Mes 2 (31-60d): peso 0.7 - proxima entrega repoe parte
+      Mes 3 (61-90d): peso 0.5 - 2 entregas depois repoem
+
+    Referencia: Declining Balance Coverage / Time-Phased Order Point
+    (Silver, Pyke & Peterson, 2017)
+
+    Retorna: target_total (float) - quantidade total target ponderada
+
+    Se pesos_cobertura = None, usa comportamento original (peso uniforme).
+    """
+    if not pesos_cobertura:
+        # Fallback: comportamento original (peso uniforme = demanda_media * cobertura)
+        periodo_cobertura = {
+            'data_inicio_cobertura': data_entrega,
+            'data_fim_cobertura': data_entrega + timedelta(days=cobertura_dias - 1),
+            'dias': cobertura_dias
+        }
+        lojas_calc = lojas_subset if lojas_subset else lojas_demanda
+        is_multi = is_multiloja if lojas_subset is None else (len(lojas_calc) > 1)
+        dem_dia = _calcular_demanda_diaria_periodo(
+            cache_demanda_por_mes, cache_proporcoes, cache_fallback,
+            cod_produto, periodo_cobertura, lojas_calc, is_multi,
+            cache_demanda_por_semana=cache_demanda_por_semana
+        )
+        return dem_dia * cobertura_dias
+
+    # V57: Decompor cobertura em blocos de ~30 dias e aplicar pesos
+    target_total = 0.0
+    dias_restantes = cobertura_dias
+    bloco_idx = 0
+    dt_bloco_inicio = data_entrega
+
+    while dias_restantes > 0:
+        dias_bloco = min(30, dias_restantes)
+        dt_bloco_fim = dt_bloco_inicio + timedelta(days=dias_bloco - 1)
+
+        # Peso: usar o do indice ou extrapolar com decaimento de 0.2 (minimo 0.1)
+        if bloco_idx < len(pesos_cobertura):
+            peso = pesos_cobertura[bloco_idx]
+        else:
+            # Extrapolar: ultimo peso - 0.2 por bloco adicional, minimo 0.1
+            ultimo_peso = pesos_cobertura[-1]
+            blocos_extras = bloco_idx - len(pesos_cobertura) + 1
+            peso = max(0.1, ultimo_peso - 0.2 * blocos_extras)
+
+        # Demanda diaria deste bloco (com sazonalidade)
+        periodo_bloco = {
+            'data_inicio_cobertura': dt_bloco_inicio,
+            'data_fim_cobertura': dt_bloco_fim,
+            'dias': dias_bloco
+        }
+        lojas_calc = lojas_subset if lojas_subset else lojas_demanda
+        is_multi = is_multiloja if lojas_subset is None else (len(lojas_calc) > 1)
+        dem_dia_bloco = _calcular_demanda_diaria_periodo(
+            cache_demanda_por_mes, cache_proporcoes, cache_fallback,
+            cod_produto, periodo_bloco, lojas_calc, is_multi,
+            cache_demanda_por_semana=cache_demanda_por_semana
+        )
+
+        target_total += dem_dia_bloco * dias_bloco * peso
+
+        dias_restantes -= dias_bloco
+        dt_bloco_inicio = dt_bloco_fim + timedelta(days=1)
+        bloco_idx += 1
+
+    return target_total
 
 
 def _calcular_demanda_diaria_periodo(

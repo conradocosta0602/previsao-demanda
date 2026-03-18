@@ -4,7 +4,7 @@ Este arquivo serve como "memoria" para assistentes de IA (Claude, etc.) entender
 
 ## Visao Geral
 
-**Sistema de Demanda e Reabastecimento v6.33** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
+**Sistema de Demanda e Reabastecimento v6.35** - Sistema de previsao de demanda e gestao de pedidos para varejo multi-loja com Centro de Distribuicao (CD).
 
 **Stack**: Python 3.8+, Flask, PostgreSQL 15+, Pandas, NumPy, SciPy
 
@@ -153,9 +153,11 @@ Garante consistencia entre Tela de Demanda e Pedido Fornecedor.
 - V52: FVA Baseline na acuracia - Forecast Value Added com naive forecast (vendas ano anterior); card, ranking e evolucao temporal
 - V51: Redistribuicao CD nas fases 2+ da Compra Planejada - simula distribuicao do estoque CD para lojas com deficit; estoque_cd_cache construido apos Fase 1 (query banco - redistribuicoes F1); reduz necessidade_total antes de arredondar pedido; atua em ambos os modos (Negociacao e Reabastecimento)
 - V53: Saneamento de ruptura por loja - cronjob corrige demanda censurada por loja individual com limiter 3x; recalcula fatores sazonais e bypassa limitador V11 em meses com ruptura
+- V53b: Filtro de frequencia no saneamento de ruptura - so corrige loja se item vendeu em >=25% dos dias com estoque (FREQUENCIA_MINIMA_CORRECAO=0.25); itens intermitentes (TSB) nao sao corrigidos; cobertura media ponderada por demanda diaria
 - V54: Tela de Demanda usa demanda_pre_calculada - previsao lida da tabela em vez de recalcular; consistencia entre todas as telas
 - V55: Demanda semanal derivada da mensal - cronjob decompoe demanda mensal em semanas usando pesos sazonais semanais (consistencia mensal-semanal garantida); correcao do desvio padrao no ES (era dividido por sqrt(30) duas vezes); demanda semanal reabilitada na Compra Planejada
 - V56: Sinalizacao persistente de edicao manual - coluna `editado_manualmente` (BOOLEAN) separa protecao (ajuste_manual IS NOT NULL) de sinalizacao visual (amarelo); celulas editadas pelo usuario ficam amarelas permanentemente na Tela de Demanda e badge "Ajuste Manual" na Tela de Pedido; Salvar Demanda envia flag `editado` por periodo (apenas itens realmente alterados pelo usuario); cronjob reseta automaticamente (DEFAULT FALSE)
+- V57: Ponderacao por proximidade na Compra Planejada (Declining Balance Coverage) - target de cobertura usa pesos decrescentes por distancia da entrega (default [1.0, 0.7, 0.5]); meses proximos da entrega recebem peso maior, meses distantes menor (serao repostos em entregas futuras); pesos customizaveis na interface; extrapola automaticamente para coberturas >3 meses; aplica-se a ambos os modos (Negociacao e Reabastecimento) nas fases 2+
 
 ### 5. Transferencias entre Lojas (V13/V25)
 
@@ -578,6 +580,20 @@ Quando ABC automatica: `LT_max + Transit_CD + Ciclo(7) + Seguranca(4)`.
 **Demanda sazonal**: Para cada fase, a demanda diaria e ponderada pelos meses cobertos,
 usando a demanda pre-calculada com fatores sazonais. Funcao `_calcular_demanda_diaria_periodo()`.
 
+**V57 - Ponderacao por Proximidade (Declining Balance Coverage)**:
+Quando ativado, o target OUL e decomposto em blocos de ~30 dias com pesos decrescentes:
+```
+Bloco 1 (0-30d da entrega):  peso 1.00 — certeza alta, cobrir 100%
+Bloco 2 (31-60d):            peso 0.70 — proxima entrega repoe
+Bloco 3 (61-90d):            peso 0.50 — 2 entregas depois repoem
+Bloco N (alem):              extrapola -0.20/bloco (minimo 0.10)
+```
+- Funcao: `_calcular_target_ponderado()` em `app/blueprints/compra_planejada.py`
+- Pesos default: `[1.0, 0.7, 0.5]` — customizaveis via interface (sliders)
+- Quando desativado: target = demanda_media × cobertura (comportamento original)
+- Aplica-se a fases 2+ em ambos os modos (Negociacao e Reabastecimento)
+- Referencia: Silver, Pyke & Peterson (2017) - Rolling Horizon Planning
+
 **Exemplo pratico** (cobertura 90d, entregas a cada 30d):
 - Pedido 1 (13/04): reabastecimento normal, garante 90 dias
 - Pedido 2 (13/05): repoe ~30 dias consumidos desde Pedido 1 para voltar a 90
@@ -866,6 +882,8 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 - V54: Tela de Demanda usa demanda_pre_calculada - endpoint previsao.py busca previsao da tabela demanda_pre_calculada (COALESCE ajuste_manual, demanda_prevista) em vez de recalcular em tempo real; garante consistencia com Pedido, Compra Planejada e Acuracia; herda automaticamente V53 (saneamento por loja), backtesting V48, e todas as correcoes do cronjob; query de estoque removida; DemandCalculator removido do endpoint; eventos mantidos; backtest e grafico mantidos; Salvar Demanda continua gravando ajuste_manual na mesma tabela (v6.32)
 - V55: Demanda semanal derivada da mensal + correcao ES - cronjob decompoe demanda mensal em semanas ISO usando pesos sazonais (soma semanal = mensal); herda metodo, YoY, desvio, limitador do registro mensal; fix desvio_padrao no ES (era diario da tabela mas dividido por sqrt(30) como se fosse mensal, subestimando ES ~5.5x); conversao mensal->diario no fallback DemandCalculator; demanda semanal reabilitada na Compra Planejada (v6.33)
 - V56: Sinalizacao persistente de edicao manual - coluna `editado_manualmente` (BOOLEAN DEFAULT FALSE) separa protecao contra cronjob (ajuste_manual) de sinalizacao visual (amarelo); frontend envia flag `editado` por periodo ao Salvar Demanda; badge "Ajuste Manual" na Tela de Pedido usa editado_manualmente; amarelo permanente na Tela de Demanda para itens realmente editados pelo usuario (v6.33)
+- V53b: Filtro de frequencia no saneamento de ruptura + cobertura ponderada - so corrige loja se item vendeu em >=25% dos dias com estoque (FREQUENCIA_MINIMA_CORRECAO=0.25); itens intermitentes nao sao corrigidos (TSB ja lida com demanda intermitente); sem filtro, item com 3 un/mes era inflado para 370 un/mes (211x); cobertura media ponderada por demanda diaria (nao aritmetica simples) (v6.34)
+- V57: Ponderacao por proximidade na Compra Planejada - Declining Balance Coverage: target OUL decomposto em blocos de 30d com pesos decrescentes [1.0, 0.7, 0.5]; meses proximos da entrega cobertos 100%, meses distantes parcialmente (proximas entregas repoem); pesos customizaveis via UI com sliders; extrapola para coberturas >3 meses (decai 0.2/bloco, min 0.1); funcao _calcular_target_ponderado() (v6.35)
 
 ## Documentacao Complementar
 
@@ -881,4 +899,4 @@ Fluxo 2 - Compra Planejada (Forward Buying):
 
 ---
 
-**Ultima atualizacao**: Marco 2026 (v6.33)
+**Ultima atualizacao**: Marco 2026 (v6.35)

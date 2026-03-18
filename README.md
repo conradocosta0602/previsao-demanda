@@ -1,6 +1,9 @@
-# Sistema de Demanda e Reabastecimento v6.33
+# Sistema de Demanda e Reabastecimento v6.34
 
 Sistema completo para gestao de estoque multi-loja com Centro de Distribuicao (CD), combinando previsao de demanda Bottom-Up com politica de estoque baseada em curva ABC.
+
+**Novidades v6.34 - Filtro de Frequencia no Saneamento de Ruptura (Mar/2026):**
+- **V53b - Filtro de frequencia no saneamento de ruptura**: So corrige loja se item vendeu em >=25% dos dias com estoque (FREQUENCIA_MINIMA_CORRECAO=0.25); itens intermitentes nao sao corrigidos (TSB ja lida); cobertura media ponderada por demanda diaria
 
 **Novidades v6.33 - Sinalizacao de Edicao Manual + Demanda Semanal Derivada (Mar/2026):**
 - **V56 - Sinalizacao persistente de edicao manual**: Nova coluna `editado_manualmente` separa protecao contra cronjob (ajuste_manual) de sinalizacao visual (amarelo); celulas editadas ficam amarelas permanentemente na Tela de Demanda; badge "Ajuste Manual" na Tela de Pedido
